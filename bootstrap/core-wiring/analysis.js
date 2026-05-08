@@ -1,0 +1,197 @@
+const {
+    createDeclarationGuardsCore,
+    createDeclarationParsingCore
+} = require('../../core/declarations/index');
+const { createValidationCore } = require('../../core/validation/index');
+const { createCallAnalysisCore } = require('../../core/call-analysis/index');
+const { createIndexedAccessCore } = require('../../core/indexed-access/index');
+
+function createAnalysisRuntime(deps) {
+    const {
+        vscode,
+        fs,
+        t,
+        normalizeFsPath,
+        getActiveCtrlChar,
+        isEscapedQuote,
+        measurePawnStringLiteral,
+        splitTopLevel,
+        splitTopLevelWithRanges,
+        escapeRegExp,
+        unwrapOuterParens,
+        parseTopLevelTernaryExpression,
+        extractEnumSymbolName,
+        findDeclByNameCached,
+        isFunctionLikeDecl,
+        BUILTIN_DECLS,
+        FORBIDDEN,
+        TAG_RE,
+        MOD_RE,
+        NAME_RE,
+        VAR_MODS,
+        getLookupTokenAtPosition,
+        findDefinitionContext,
+        collectDeclarationText,
+        getCtrlCharStateForContent,
+        withCtrlCharForContent,
+        stripLineComment,
+        stripCommentsFromLines,
+        extractParenContent,
+        parseEnumHeaderSpec,
+        formatAutoEnumValueDisplay,
+        formatResolvedEnumValueDisplay,
+        applyEnumStep,
+        extractDocs,
+        parseDims,
+        parseValueAndRemainder,
+        parsePreprocessorDirectiveLine,
+        parsePreprocessorSingleIdentifierPayload,
+        parsePreprocessorDefineDirective,
+        parseFunctionStateSpecTail,
+        computeLineDepths,
+        preprocessPawnContent,
+        buildDependencyStampMap,
+        areDependencyStampsFresh,
+        fileDeclParseCache,
+        getFileSnapshot,
+        isObjectLikeDefineDecl,
+        isFunctionLikeDefineDecl,
+        parseSingleStatementBodyDecls,
+        findForScopeEndLine,
+        findDepthScopeEndLine,
+        getFuncArgsParseCacheKey,
+        funcArgsParseCache,
+        getDocumentTextAndResolver,
+        isKnownFunctionName
+    } = deps;
+
+    const validationRuntime = createValidationCore({
+        vscode,
+        fs,
+        t,
+        getActiveCtrlChar,
+        isEscapedQuote,
+        measurePawnStringLiteral,
+        splitTopLevel,
+        escapeRegExp,
+        unwrapOuterParens,
+        extractEnumSymbolName,
+        findDeclByNameCached,
+        isFunctionLikeDecl,
+        BUILTIN_DECLS,
+        FORBIDDEN,
+        TAG_RE,
+        isPawnIdentifierStartChar: deps.isPawnIdentifierStartChar,
+        isPawnIdentifierContinueChar: deps.isPawnIdentifierContinueChar
+    });
+
+    const callAnalysisRuntime = createCallAnalysisCore({
+        vscode,
+        t,
+        escapeRegExp,
+        isIdentifierStartChar: validationRuntime.isIdentifierStartChar,
+        isIdentifierContinueChar: validationRuntime.isIdentifierContinueChar,
+        parseParamMeta: validationRuntime.parseParamMeta,
+        isVariadicParam: deps.isVariadicParam,
+        inferArgType: validationRuntime.inferArgType,
+        inferArrayShapeActualType: validationRuntime.inferArrayShapeActualType,
+        getExpressionAssignableInfo: validationRuntime.getExpressionAssignableInfo,
+        findArrayMustBeIndexedIssue: validationRuntime.findArrayMustBeIndexedIssue,
+        explainTypeCompat: validationRuntime.explainTypeCompat,
+        explainParamDeclCompat: validationRuntime.explainParamDeclCompat,
+        getArrayShapeIssue: validationRuntime.getArrayShapeIssue,
+        explainArrayShapeDiagnosticIssue: validationRuntime.explainArrayShapeDiagnosticIssue,
+        isEscapedQuote,
+        FORBIDDEN,
+        withCtrlCharForContent,
+        getActiveCtrlChar,
+        splitTopLevel,
+        splitTopLevelWithRanges,
+        isFunctionLikeDecl,
+        getDocumentTextAndResolver,
+        isKnownFunctionName
+    });
+
+    const declarationGuardsRuntime = createDeclarationGuardsCore({
+        vscode,
+        escapeRegExp,
+        getLookupTokenAtPosition,
+        findDefinitionContext: callAnalysisRuntime.findDefinitionContext,
+        collectDeclarationText,
+        getCtrlCharStateForContent,
+        parseOperatorOverloadToken: validationRuntime.parseOperatorOverloadToken
+    });
+
+    const declarationParsingRuntime = createDeclarationParsingCore({
+        normalizeFsPath,
+        getFuncArgsParseCacheKey,
+        funcArgsParseCache,
+        getActiveCtrlChar,
+        splitTopLevel,
+        isEscapedQuote,
+        extractParenContent,
+        stripLineComment,
+        stripCommentsFromLines,
+        parseEnumHeaderSpec,
+        parseDimsParts: validationRuntime.parseDimsParts,
+        parseDimSpec: validationRuntime.parseDimSpec,
+        evaluatePawnNumericExpr: validationRuntime.evaluatePawnNumericExpr,
+        formatAutoEnumValueDisplay,
+        formatResolvedEnumValueDisplay,
+        applyEnumStep,
+        escapeRegExp,
+        extractDocs,
+        FORBIDDEN,
+        TAG_RE,
+        NAME_RE,
+        MOD_RE,
+        VAR_MODS,
+        parseDims,
+        parseValueAndRemainder,
+        parsePreprocessorDirectiveLine,
+        parsePreprocessorSingleIdentifierPayload,
+        parsePreprocessorDefineDirective,
+        parseFunctionStateSpecTail,
+        computeLineDepths,
+        collectDeclarationText,
+        withCtrlCharForContent,
+        getCtrlCharStateForContent,
+        preprocessPawnContent,
+        buildDependencyStampMap,
+        areDependencyStampsFresh,
+        fileDeclParseCache,
+        getFileSnapshot,
+        isObjectLikeDefineDecl,
+        isFunctionLikeDefineDecl,
+        parseSingleStatementBodyDecls,
+        findForScopeEndLine,
+        findDepthScopeEndLine
+    });
+
+    const indexedAccessRuntime = createIndexedAccessCore({
+        t,
+        getActiveCtrlChar,
+        getLookupTokenAtPosition,
+        getCtrlCharStateForContent,
+        isEscapedQuote,
+        collectDeclarationText,
+        extractEnumSymbolName,
+        inferArgType: validationRuntime.inferArgType,
+        parseTopLevelTernaryExpression,
+        parseDimSpec: validationRuntime.parseDimSpec,
+        normalizeEnumName: validationRuntime.normalizeEnumName,
+        getEnumItemCellSpan: validationRuntime.getEnumItemCellSpan,
+        findUnresolvedReferenceNames: validationRuntime.findUnresolvedReferenceNames,
+        evaluatePawnNumericExpr: validationRuntime.evaluatePawnNumericExpr
+    });
+
+    return {
+        ...validationRuntime,
+        ...callAnalysisRuntime,
+        ...declarationGuardsRuntime,
+        ...declarationParsingRuntime,
+        ...indexedAccessRuntime
+    };
+}
+
+module.exports = { createAnalysisRuntime };

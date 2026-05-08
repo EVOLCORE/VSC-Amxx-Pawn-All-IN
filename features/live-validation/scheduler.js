@@ -1,0 +1,355 @@
+const { computeFunctionRangeMaps: defaultComputeFunctionRangeMaps } = require('../../core/declarations/scope');
+const { createLiveDiagnosticsCache } = require('./diagnostics-cache');
+const { EDITED_GLOBAL_REPLACEMENT_DIAGNOSTIC_CODES } = require('./diagnostic-codes');
+const {
+    SEMANTIC_EQUIVALENT_NARROW_LINE_THRESHOLD,
+    expandChangedRangesToLines,
+    shouldEscalateEditedValidation,
+    resolveEditedValidationPlan,
+    canUseLocalBodyEditedValidation
+} = require('../../core/document-context/edit-impact');
+
+function createLiveValidationScheduler(deps) {
+    const {
+        vscode,
+        t,
+        liveValidationTimers,
+        liveValidationFullResultCache,
+        normalizeFsPath,
+        isPawnDocument,
+        getLiveValidationMode,
+        shouldRunLiveValidationScanOnOpen,
+        getLiveValidationFullCacheKey,
+        getPawnDocumentContext,
+        collectLiveValidationDiagnostics,
+        buildDependencyStampMap = () => new Map(),
+        getDependencyFreshnessVersion = () => 0,
+        areDependencyStampsFresh = () => false,
+        warmDocumentContext,
+        warmIncludedDocumentModels,
+        promptRecommendedAmxxTheme,
+        settingsService,
+        readPersistentLiveDiagnosticsCache = null,
+        writePersistentLiveDiagnosticsCache = null,
+        computeFunctionRangeMaps = defaultComputeFunctionRangeMaps,
+        normalizeLiveValidationIssueMode,
+        getDocumentFingerprint: computeDocumentFingerprint,
+        liveValidationOutputChannel = null
+    } = deps;
+    const functionValidationRangeByParsedDecls = new WeakMap();
+    const diagnosticsCache = createLiveDiagnosticsCache({
+        vscode,
+        liveValidationFullResultCache,
+        normalizeFsPath,
+        isPawnDocument,
+        getLiveValidationFullCacheKey,
+        getPawnDocumentContext,
+        buildDependencyStampMap,
+        getDependencyFreshnessVersion,
+        areDependencyStampsFresh,
+        settingsService,
+        readPersistentLiveDiagnosticsCache,
+        normalizeLiveValidationIssueMode,
+        getDocumentFingerprint: computeDocumentFingerprint,
+        liveValidationOutputChannel
+    });
+    const {
+        getCachedDocumentFingerprint,
+        isDocumentSnapshotCurrent,
+        shouldAllowPublishedDiagnosticsReuse,
+        getCachedFullResultEntry,
+        buildFullResultCacheEntry,
+        setFullResultCacheEntry,
+        getValidationCacheSettingsSignature,
+        getCachedEditedResultEntry,
+        setEditedResultCacheEntry,
+        deletePublishedDiagnostics,
+        setLiveValidationDiagnostics,
+        updateLiveValidationDiagnostics
+    } = diagnosticsCache;
+
+    function isLiveValidationDocument(document) {
+        if (!isPawnDocument(document)) return false;
+        const scheme = String(document?.uri?.scheme || '').toLowerCase();
+        if (scheme && scheme !== 'file' && scheme !== 'untitled') return false;
+        const fileName = String(document?.fileName || '');
+        return !/\.git$/i.test(fileName);
+    }
+
+    function clearScheduledLiveValidation(filePath = '') {
+        const normalized = normalizeFsPath(filePath);
+        if (!normalized) return;
+        const entry = liveValidationTimers.get(normalized);
+        if (!entry) return;
+        clearTimeout(entry.timer);
+        liveValidationTimers.delete(normalized);
+    }
+
+    function findEnclosingFunctionRange(rootCtx, lineNumber, maxLine) {
+        const parsedDecls = rootCtx?.parsedDecls || null;
+        if (!parsedDecls) return null;
+        let rangeByLine = functionValidationRangeByParsedDecls.get(parsedDecls);
+        if (!rangeByLine) {
+            const functions = parsedDecls.functions || [];
+            const depths = parsedDecls.depths || [];
+            rangeByLine = computeFunctionRangeMaps(functions, depths, maxLine + 1, {
+                includeHeader: true
+            }).byLine;
+            functionValidationRangeByParsedDecls.set(parsedDecls, rangeByLine);
+        }
+        return rangeByLine[lineNumber] || null;
+    }
+
+    function expandLinesToValidationLines(document, baseLines = [], options = {}) {
+        const lines = new Set(baseLines || []);
+        if (!lines.size) return [];
+        const baseLineNumbers = [...lines].sort((left, right) => left - right);
+        const semanticEquivalentEdit = options.editImpact?.semanticEquivalent === true;
+        const bodyOnlyIncrementalEdit = !!(
+            options.editImpact?.kind === 'incremental' &&
+            options.editImpact?.bodyOnly === true &&
+            !semanticEquivalentEdit
+        );
+
+        let rootCtx = null;
+        try {
+            rootCtx = getPawnDocumentContext(document, undefined) || null;
+        } catch {
+            rootCtx = null;
+        }
+        if (!rootCtx) {
+            return baseLineNumbers;
+        }
+
+        if (
+            bodyOnlyIncrementalEdit &&
+            canUseLocalBodyEditedValidation(rootCtx, baseLineNumbers, options.editImpact)
+        ) {
+            return baseLineNumbers;
+        }
+
+        for (const line of [...lines]) {
+            const functionRange = findEnclosingFunctionRange(rootCtx, line, document.lineCount - 1);
+            if (!functionRange) continue;
+            for (let functionLine = functionRange.startLine; functionLine <= functionRange.endLine; functionLine++) {
+                lines.add(functionLine);
+            }
+        }
+
+        const expandedLineNumbers = [...lines].sort((left, right) => left - right);
+        if (
+            semanticEquivalentEdit &&
+            expandedLineNumbers.length > SEMANTIC_EQUIVALENT_NARROW_LINE_THRESHOLD
+        ) {
+            return baseLineNumbers;
+        }
+        return expandedLineNumbers;
+    }
+
+    function scheduleLiveValidation(liveValidationCollection, document, options = {}) {
+        if (!isLiveValidationDocument(document)) return;
+        const normalized = normalizeFsPath(document.fileName);
+        if (!normalized) return;
+        const mode = getLiveValidationMode();
+        const allowWhenModeOff = !!options.allowWhenModeOff;
+        if (mode === 'off' && !allowWhenModeOff) {
+            clearScheduledLiveValidation(document.fileName);
+            liveValidationCollection.delete(document.uri);
+            deletePublishedDiagnostics(normalized);
+            return;
+        }
+
+        const delayMs = options.delayMs ?? 180;
+        const full = !!options.full || mode === 'full' || allowWhenModeOff;
+        const incomingLines = full ? [] : (options.lines || []);
+        const reason = String(options.reason || 'unspecified');
+        const existing = liveValidationTimers.get(normalized);
+        const allowPublishedReuse = shouldAllowPublishedDiagnosticsReuse(reason);
+        if (full) {
+            const settingsSignature = getValidationCacheSettingsSignature();
+            const cachedResult = getCachedFullResultEntry(document, {
+                allowPublishedReuse,
+                allowPersistentReuse: false,
+                settingsSignature
+            });
+            if (cachedResult.fresh && cachedResult.diagnostics) {
+                const currentFingerprint = cachedResult.cacheEntry?.documentFingerprint ||
+                    getCachedDocumentFingerprint(document);
+                if (!isDocumentSnapshotCurrent(document, document.version, currentFingerprint)) return;
+                if (existing?.full && existing.version === document.version && existing.timer) {
+                    clearTimeout(existing.timer);
+                    liveValidationTimers.delete(normalized);
+                }
+                setLiveValidationDiagnostics(liveValidationCollection, document, cachedResult.diagnostics, {
+                    cacheEntry: cachedResult.cacheEntry,
+                    settingsSignature,
+                    reason,
+                    source: 'full-cache'
+                });
+                return;
+            }
+        }
+        const mergedLines = new Set(existing?.lines || []);
+        for (const line of incomingLines) mergedLines.add(line);
+        if (existing?.timer) clearTimeout(existing.timer);
+        const timer = setTimeout(() => {
+            liveValidationTimers.delete(normalized);
+            if (!isLiveValidationDocument(document)) return;
+            const runVersion = document.version;
+            const runFingerprint = getCachedDocumentFingerprint(document);
+            const settingsSignature = getValidationCacheSettingsSignature();
+
+            try {
+                if (full) {
+                    const cachedResult = getCachedFullResultEntry(document, {
+                        allowPublishedReuse,
+                        allowPersistentReuse: true,
+                        settingsSignature
+                    });
+                    if (cachedResult.fresh && cachedResult.diagnostics) {
+                        if (!isDocumentSnapshotCurrent(document, runVersion, runFingerprint)) return;
+                        setLiveValidationDiagnostics(liveValidationCollection, document, cachedResult.diagnostics, {
+                            cacheEntry: cachedResult.cacheEntry,
+                            settingsSignature,
+                            reason,
+                            source: cachedResult.cacheSource || 'full-cache'
+                        });
+                        return;
+                    }
+                    const scanStats = {};
+                    const diagnostics = collectLiveValidationDiagnostics(document, { scanStats });
+                    if (!isDocumentSnapshotCurrent(document, runVersion, runFingerprint)) return;
+                    const cacheEntry = buildFullResultCacheEntry(document, diagnostics);
+                    setFullResultCacheEntry(document, cachedResult.fullCacheKey, cacheEntry);
+                    setLiveValidationDiagnostics(liveValidationCollection, document, diagnostics, {
+                        cacheEntry,
+                        reason,
+                        source: 'full-scan',
+                        scanStats
+                    });
+                    if (document?.isDirty !== true && typeof writePersistentLiveDiagnosticsCache === 'function') {
+                        writePersistentLiveDiagnosticsCache(document, cacheEntry, {
+                            settingsSignature
+                        });
+                    }
+                    return;
+                }
+
+                const targetLines = expandLinesToValidationLines(document, [...mergedLines], {
+                    editImpact: options.editImpact || null
+                });
+                const focusLines = [...mergedLines].sort((left, right) => left - right);
+                const cachedEditedResult = getCachedEditedResultEntry(document, targetLines, focusLines, {
+                    settingsSignature
+                });
+                if (cachedEditedResult.fresh) {
+                    if (!isDocumentSnapshotCurrent(document, runVersion, runFingerprint)) return;
+                    updateLiveValidationDiagnostics(
+                        liveValidationCollection,
+                        document,
+                        targetLines,
+                        cachedEditedResult.diagnostics,
+                        {
+                            settingsSignature,
+                            reason,
+                            source: 'edited-cache',
+                            replaceDiagnosticCodes: EDITED_GLOBAL_REPLACEMENT_DIAGNOSTIC_CODES
+                        }
+                    );
+                    return;
+                }
+                const diagnostics = collectLiveValidationDiagnostics(document, {
+                    lines: targetLines,
+                    focusLines
+                });
+                if (!isDocumentSnapshotCurrent(document, runVersion, runFingerprint)) return;
+                updateLiveValidationDiagnostics(liveValidationCollection, document, targetLines, diagnostics, {
+                    settingsSignature,
+                    reason,
+                    source: 'edited-scan',
+                    replaceDiagnosticCodes: EDITED_GLOBAL_REPLACEMENT_DIAGNOSTIC_CODES
+                });
+                setEditedResultCacheEntry(document, targetLines, focusLines, diagnostics, {
+                    settingsSignature
+                });
+            } catch (error) {
+                console.error('scheduleLiveValidation:', error);
+            }
+        }, delayMs);
+
+        liveValidationTimers.set(normalized, {
+            timer,
+            lines: full ? [] : [...mergedLines],
+            full,
+            version: document.version,
+            reason
+        });
+    }
+
+    function isSameVisibleDocument(left, right) {
+        if (!left || !right) return false;
+        if (left === right) return true;
+        const leftUri = left.uri?.toString?.() || '';
+        const rightUri = right.uri?.toString?.() || '';
+        if (leftUri && rightUri && leftUri === rightUri) return true;
+        const leftPath = normalizeFsPath(left.fileName || '');
+        const rightPath = normalizeFsPath(right.fileName || '');
+        return !!leftPath && leftPath === rightPath;
+    }
+
+    function isDocumentVisibleInEditor(document) {
+        if (!document) return false;
+        return vscode.window.visibleTextEditors.some(editor =>
+            isSameVisibleDocument(editor?.document || null, document)
+        );
+    }
+
+    function handleOpenedPawnDocument(doc, liveDelayMs = 220, liveValidationCollection) {
+        if (!isLiveValidationDocument(doc)) return;
+        warmDocumentContext(doc);
+        if (shouldRunLiveValidationScanOnOpen() && isDocumentVisibleInEditor(doc)) {
+            scheduleLiveValidation(liveValidationCollection, doc, {
+                full: true,
+                allowWhenModeOff: true,
+                delayMs: liveDelayMs,
+                reason: 'openDocument'
+            });
+        }
+        const activeEditor = vscode.window.activeTextEditor;
+        if (activeEditor?.document === doc) {
+            promptRecommendedAmxxTheme(activeEditor);
+        }
+    }
+
+    function handleActivePawnEditor(editor, liveDelayMs = 160, liveValidationCollection) {
+        const doc = editor?.document || null;
+        if (!isLiveValidationDocument(doc)) return;
+        warmDocumentContext(doc);
+        warmIncludedDocumentModels(doc);
+        if (shouldRunLiveValidationScanOnOpen()) {
+            scheduleLiveValidation(liveValidationCollection, doc, {
+                full: true,
+                allowWhenModeOff: true,
+                delayMs: liveDelayMs,
+                reason: 'activeEditorChanged'
+            });
+        }
+        promptRecommendedAmxxTheme(editor);
+    }
+
+    return {
+        clearScheduledLiveValidation,
+        setLiveValidationDiagnostics,
+        updateLiveValidationDiagnostics,
+        expandChangedRangesToLines,
+        shouldEscalateEditedValidation,
+        resolveEditedValidationPlan,
+        expandLinesToValidationLines,
+        scheduleLiveValidation,
+        handleOpenedPawnDocument,
+        handleActivePawnEditor,
+        isDocumentVisibleInEditor
+    };
+}
+
+module.exports = { createLiveValidationScheduler };

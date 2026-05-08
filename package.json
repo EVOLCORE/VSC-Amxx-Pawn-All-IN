@@ -1,0 +1,353 @@
+{
+  "name": "amxx-pawn-all-in",
+  "displayName": "%displayName%",
+  "version": "1.0.0",
+  "publisher": "Faktor",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "main": "./extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onLanguage:amxxpawn",
+    "onCommand:amxxPawnAllIn.compileCurrentFile"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "amxxPawnAllIn.compileCurrentFile",
+        "title": "%commands.compileCurrentFile.title%",
+        "icon": {
+          "light": "resources/light/compile.svg",
+          "dark": "resources/dark/compile.svg"
+        }
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "amxxPawnAllIn.compileCurrentFile",
+          "when": "editorLangId == amxxpawn",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "%configuration.title%",
+      "properties": {
+        "amxxPawnAllIn.fileExtensions": {
+          "type": "array",
+          "default": [".sma"],
+          "order": 5,
+          "description": "%config.fileExtensions.description%"
+        },
+        "amxxPawnAllIn.includeFileExtensions": {
+          "type": "array",
+          "default": [".inc", ".inl"],
+          "order": 6,
+          "description": "%config.includeFileExtensions.description%"
+        },
+        "amxxPawnAllIn.detectPawnLanguageByIncludes": {
+          "type": "boolean",
+          "default": true,
+          "order": 7,
+          "markdownDescription": "%config.detectPawnLanguageByIncludes.markdownDescription%"
+        },
+        "amxxPawnAllIn.projectLocalIncludePaths": {
+          "type": "array",
+          "default": ["include"],
+          "order": 10,
+          "description": "%config.projectLocalIncludePaths.description%"
+        },
+        "amxxPawnAllIn.globalIncludePaths": {
+          "type": "array",
+          "default": [],
+          "order": 20,
+          "description": "%config.globalIncludePaths.description%"
+        },
+        "amxxPawnAllIn.globalCompilerPath": {
+          "type": "string",
+          "default": "",
+          "order": 30,
+          "markdownDescription": "%config.globalCompilerPath.markdownDescription%"
+        },
+        "amxxPawnAllIn.compilerOutputDirectory": {
+          "type": "string",
+          "default": "compiled",
+          "order": 40,
+          "markdownDescription": "%config.compilerOutputDirectory.markdownDescription%"
+        },
+        "amxxPawnAllIn.compilerOutputDirectoryBase": {
+          "type": "string",
+          "enum": ["project-root-if-available", "source-file", "compiler-root-if-available"],
+          "default": "project-root-if-available",
+          "order": 45,
+          "markdownDescription": "%config.compilerOutputDirectoryBase.markdownDescription%",
+          "enumDescriptions": [
+            "%config.compilerOutputDirectoryBase.enum.project-root-if-available%",
+            "%config.compilerOutputDirectoryBase.enum.source-file%",
+            "%config.compilerOutputDirectoryBase.enum.compiler-root-if-available%"
+          ]
+        },
+        "amxxPawnAllIn.compilerOptions": {
+          "type": "array",
+          "default": [],
+          "order": 50,
+          "description": "%config.compilerOptions.description%"
+        },
+        "amxxPawnAllIn.compileRevealTarget": {
+          "type": "string",
+          "enum": ["never", "live-errors", "compiler-errors", "compiler-warnings", "live-then-compiler", "all-issues-priority"],
+          "default": "all-issues-priority",
+          "order": 60,
+          "markdownDescription": "%config.compileRevealTarget.markdownDescription%",
+          "enumDescriptions": [
+            "%config.compileRevealTarget.enum.never%",
+            "%config.compileRevealTarget.enum.live-errors%",
+            "%config.compileRevealTarget.enum.compiler-errors%",
+            "%config.compileRevealTarget.enum.compiler-warnings%",
+            "%config.compileRevealTarget.enum.live-then-compiler%",
+            "%config.compileRevealTarget.enum.all-issues-priority%"
+          ]
+        },
+        "amxxPawnAllIn.compileStartToastMode": {
+          "type": "string",
+          "enum": ["never", "always"],
+          "default": "never",
+          "order": 70,
+          "markdownDescription": "%config.compileStartToastMode.markdownDescription%",
+          "enumDescriptions": [
+            "%config.compileStartToastMode.enum.never%",
+            "%config.compileStartToastMode.enum.always%"
+          ]
+        },
+        "amxxPawnAllIn.compileResultToastMode": {
+          "type": "string",
+          "enum": ["never", "success", "warnings", "errors", "issues", "success-or-issues"],
+          "default": "issues",
+          "order": 75,
+          "markdownDescription": "%config.compileResultToastMode.markdownDescription%",
+          "enumDescriptions": [
+            "%config.compileResultToastMode.enum.never%",
+            "%config.compileResultToastMode.enum.success%",
+            "%config.compileResultToastMode.enum.warnings%",
+            "%config.compileResultToastMode.enum.errors%",
+            "%config.compileResultToastMode.enum.issues%",
+            "%config.compileResultToastMode.enum.success-or-issues%"
+          ]
+        },
+        "amxxPawnAllIn.compilerOutputRevealMode": {
+          "type": "string",
+          "enum": ["never", "warnings", "errors", "issues", "always"],
+          "default": "issues",
+          "order": 80,
+          "markdownDescription": "%config.compilerOutputRevealMode.markdownDescription%",
+          "enumDescriptions": [
+            "%config.compilerOutputRevealMode.enum.never%",
+            "%config.compilerOutputRevealMode.enum.warnings%",
+            "%config.compilerOutputRevealMode.enum.errors%",
+            "%config.compilerOutputRevealMode.enum.issues%",
+            "%config.compilerOutputRevealMode.enum.always%"
+          ]
+        },
+        "amxxPawnAllIn.documentContextCacheFileLimit": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "order": 85,
+          "markdownDescription": "%config.documentContextCacheFileLimit.markdownDescription%"
+        },
+        "amxxPawnAllIn.includeDocumentWarmupFileLimit": {
+          "type": "integer",
+          "minimum": -1,
+          "default": 6,
+          "order": 86,
+          "markdownDescription": "%config.includeDocumentWarmupFileLimit.markdownDescription%"
+        },
+        "amxxPawnAllIn.persistentIncludeDeclarationCacheMaxMB": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 256,
+          "default": 24,
+          "order": 87,
+          "markdownDescription": "%config.persistentIncludeDeclarationCacheMaxMB.markdownDescription%"
+        },
+        "amxxPawnAllIn.liveValidationMode": {
+          "type": "string",
+          "enum": ["off", "edited", "full"],
+          "default": "off",
+          "order": 88,
+          "markdownDescription": "%config.liveValidationMode.markdownDescription%",
+          "enumDescriptions": [
+            "%config.liveValidationMode.enum.off%",
+            "%config.liveValidationMode.enum.edited%",
+            "%config.liveValidationMode.enum.full%"
+          ]
+        },
+        "amxxPawnAllIn.liveValidationScanOnOpen": {
+          "type": "boolean",
+          "default": true,
+          "order": 89,
+          "markdownDescription": "%config.liveValidationScanOnOpen.markdownDescription%"
+        },
+        "amxxPawnAllIn.liveValidationIssueMode": {
+          "type": "string",
+          "enum": ["errors-only", "errors-and-warnings"],
+          "enumItemLabels": [
+            "%config.liveValidationIssueMode.enum.errors-only.label%",
+            "%config.liveValidationIssueMode.enum.errors-and-warnings.label%"
+          ],
+          "default": "errors-and-warnings",
+          "order": 89.05,
+          "markdownDescription": "%config.liveValidationIssueMode.markdownDescription%",
+          "enumDescriptions": [
+            "%config.liveValidationIssueMode.enum.errors-only%",
+            "%config.liveValidationIssueMode.enum.errors-and-warnings%"
+          ]
+        },
+        "amxxPawnAllIn.unusedStockValidationMode": {
+          "type": "string",
+          "enum": ["skip", "reachable-only", "all"],
+          "default": "reachable-only",
+          "order": 89.1,
+          "markdownDescription": "%config.unusedStockValidationMode.markdownDescription%",
+          "enumDescriptions": [
+            "%config.unusedStockValidationMode.enum.skip%",
+            "%config.unusedStockValidationMode.enum.reachable-only%",
+            "%config.unusedStockValidationMode.enum.all%"
+          ]
+        },
+        "amxxPawnAllIn.callbackSignatureMode": {
+          "type": "string",
+          "enum": ["strict", "compiler-like"],
+          "default": "strict",
+          "order": 89.2,
+          "markdownDescription": "%config.callbackSignatureMode.markdownDescription%",
+          "enumDescriptions": [
+            "%config.callbackSignatureMode.enum.strict%",
+            "%config.callbackSignatureMode.enum.compiler-like%"
+          ]
+        },
+        "amxxPawnAllIn.includeValidationMode": {
+          "type": "string",
+          "enum": ["balanced", "strict"],
+          "default": "balanced",
+          "order": 89.3,
+          "markdownDescription": "%config.includeValidationMode.markdownDescription%",
+          "enumDescriptions": [
+            "%config.includeValidationMode.enum.balanced%",
+            "%config.includeValidationMode.enum.strict%"
+          ]
+        },
+        "amxxPawnAllIn.externalIncludeWatchMode": {
+          "type": "string",
+          "enum": ["workspace-only", "workspace-and-global", "tracked-resolved-includes"],
+          "default": "tracked-resolved-includes",
+          "order": 89.4,
+          "markdownDescription": "%config.externalIncludeWatchMode.markdownDescription%",
+          "enumDescriptions": [
+            "%config.externalIncludeWatchMode.enum.workspace-only%",
+            "%config.externalIncludeWatchMode.enum.workspace-and-global%",
+            "%config.externalIncludeWatchMode.enum.tracked-resolved-includes%"
+          ]
+        },
+        "amxxPawnAllIn.completionEnabled": {
+          "type": "boolean",
+          "default": true,
+          "order": 89.8,
+          "markdownDescription": "%config.completionEnabled.markdownDescription%"
+        },
+        "amxxPawnAllIn.hoverMode": {
+          "type": "string",
+          "enum": ["disabled", "normal", "ctrl-hack"],
+          "default": "normal",
+          "order": 90,
+          "markdownDescription": "%config.hoverMode.markdownDescription%",
+          "enumDescriptions": [
+            "%config.hoverMode.enum.disabled%",
+            "%config.hoverMode.enum.normal%",
+            "%config.hoverMode.enum.ctrl-hack%"
+          ]
+        },
+        "amxxPawnAllIn.hoverContentMode": {
+          "type": "string",
+          "enum": ["full", "compact", "signature-only"],
+          "default": "full",
+          "order": 90.5,
+          "markdownDescription": "%config.hoverContentMode.markdownDescription%",
+          "enumDescriptions": [
+            "%config.hoverContentMode.enum.full%",
+            "%config.hoverContentMode.enum.compact%",
+            "%config.hoverContentMode.enum.signature-only%"
+          ]
+        },
+        "amxxPawnAllIn.persistentHoverMode": {
+          "type": "string",
+          "enum": ["disabled", "normal", "error-context"],
+          "default": "normal",
+          "order": 91,
+          "markdownDescription": "%config.persistentHoverMode.markdownDescription%",
+          "enumDescriptions": [
+            "%config.persistentHoverMode.enum.disabled%",
+            "%config.persistentHoverMode.enum.normal%",
+            "%config.persistentHoverMode.enum.error-context%"
+          ]
+        },
+        "amxxPawnAllIn.hoverGoToDefinitionLinksEnabled": {
+          "type": "boolean",
+          "default": false,
+          "order": 95,
+          "description": "%config.hoverGoToDefinitionLinksEnabled.description%"
+        },
+        "amxxPawnAllIn.showThemeRecommendation": {
+          "type": "boolean",
+          "default": true,
+          "order": 100,
+          "description": "%config.showThemeRecommendation.description%"
+        }
+      }
+    },
+    "languages": [
+      {
+        "id": "amxxpawn",
+        "aliases": ["AMXX Pawn", "pawn"],
+        "extensions": [".sma", ".inc", ".inl"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "amxxpawn",
+        "scopeName": "source.amxxpawn",
+        "path": "./syntaxes/amxxpawn.tmLanguage.json"
+      }
+    ],
+    "themes": [
+      {
+        "label": "AmxxPawnAllIn Olive",
+        "uiTheme": "vs-dark",
+        "path": "./themes/olive-color-theme.json"
+      },
+      {
+        "label": "AmxxPawnAllIn Dark",
+        "uiTheme": "vs-dark",
+        "path": "./themes/dark-color-theme.json"
+      },
+      {
+        "label": "AmxxPawnAllIn Light",
+        "uiTheme": "vs",
+        "path": "./themes/light-color-theme.json"
+      },
+      {
+        "label": "AmxxPawnAllIn Graphite",
+        "uiTheme": "vs-dark",
+        "path": "./themes/graphite-color-theme.json"
+      },
+      {
+        "label": "AmxxPawnAllIn Aurora",
+        "uiTheme": "vs-dark",
+        "path": "./themes/aurora-color-theme.json"
+      }
+    ]
+  }
+}
