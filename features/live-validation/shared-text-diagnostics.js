@@ -82,7 +82,6 @@ function createSharedTextDiagnostics(deps) {
 
 
     function collectMultilinePawnStringLiteralDiagnostics(document, rootCtx, docLength, options = {}) {
-        if (typeof collectPawnMultilineStringLiteralIssues !== 'function') return [];
         const lineStartOffsets = rootCtx.lineStartOffsets || null;
         const issues = collectPawnMultilineStringLiteralIssues(
             rootCtx.strippedLines || rootCtx.rawLines || String(rootCtx.text || '').split(/\r?\n/),

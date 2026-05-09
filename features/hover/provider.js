@@ -287,15 +287,15 @@ function createHoverFeature(deps) {
             return wasRunning || ctrlHackTracker.start();
         };
         const getEffectiveHoverMode = () => {
-            const configuredMode = typeof getHoverMode === 'function' ? getHoverMode() : 'normal';
+            const configuredMode = getHoverMode();
             if (configuredMode !== 'ctrl-hack') return configuredMode;
             if (process.platform !== 'win32') return 'normal';
             if (ensureCtrlHackTracker()) return 'ctrl-hack';
             return 'normal';
         };
         const refreshHoverModeRuntime = () => {
-            refreshExtensionSettings?.();
-            const mode = typeof getHoverMode === 'function' ? getHoverMode() : 'normal';
+            refreshExtensionSettings();
+            const mode = getHoverMode();
             if (mode === 'ctrl-hack' && process.platform === 'win32') {
                 ensureCtrlHackTracker();
             } else {
@@ -328,7 +328,7 @@ function createHoverFeature(deps) {
         if (typeof vscode.workspace?.onDidChangeConfiguration === 'function') {
             context.subscriptions.push(
                 vscode.workspace.onDidChangeConfiguration(event => {
-                    if (!affectsAnyConfiguration?.(event, HOVER_RELEVANT_CONFIG_KEYS || [])) return;
+                    if (!affectsAnyConfiguration(event, HOVER_RELEVANT_CONFIG_KEYS || [])) return;
                     refreshHoverModeRuntime();
                     vscode.commands.executeCommand('editor.action.closeHover').then(
                         undefined,

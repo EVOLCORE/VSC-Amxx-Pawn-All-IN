@@ -1,13 +1,17 @@
+const { createDeclarationRhsSourceReader } = require('./declaration-rhs-source');
+
 function createDeclarationDiagnostics(deps) {
     const {
         areWarningDiagnosticsEnabled,
         createIdentifierDiagnosticForOccurrence,
         createLiveValidationDiagnostic,
         createOffsetRange,
+        collectVariableDeclarationSyntaxIssuesForLine,
         explainArrayInitializerIssue,
         explainArrayShapeDiagnosticIssue,
         findArrayMustBeIndexedIssue,
         findInvalidArraySizeIssue,
+        findInitializerIssueSourceOffset,
         findTopLevelAssignmentOperatorIndex,
         findUnresolvedReferenceNames,
         getAssignmentOperatorText,
@@ -42,123 +46,7 @@ function createDeclarationDiagnostics(deps) {
         t
     } = deps;
     const EMPTY_DECLS = [];
-
-    function getAssignmentRhsSourceInfo(ctx, lineText, lineStartOffset, rhsStartInLine, fallbackText, escapeChar) {
-        const sourceText = String(ctx?.text || '');
-        const fallback = String(fallbackText || '').trim();
-        const fallbackStartOffset = lineStartOffset + Math.max(0, rhsStartInLine);
-        const fallbackEndOffset = fallbackStartOffset + fallback.length;
-        if (!sourceText || fallbackStartOffset < 0 || fallbackStartOffset >= sourceText.length) {
-            return { text: fallback, startOffset: fallbackStartOffset, endOffset: fallbackEndOffset };
-        }
-
-        const firstLineEndOffset = lineStartOffset + String(lineText || '').length;
-        const firstLineSource = sourceText.slice(fallbackStartOffset, firstLineEndOffset);
-        if (
-            !firstLineSource.includes('(') &&
-            !firstLineSource.includes('[') &&
-            !firstLineSource.includes('{')
-        ) {
-            return { text: fallback, startOffset: fallbackStartOffset, endOffset: fallbackEndOffset };
-        }
-
-        const expectedClosers = [];
-        let inString = false;
-        let stringChar = '';
-        let lineComment = false;
-        let blockComment = false;
-        let lastNonWhitespace = fallbackStartOffset - 1;
-        let sawOpenGroup = false;
-
-        const isQuoteEscaped = index =>
-            typeof isEscapedQuote === 'function'
-                ? isEscapedQuote(sourceText, index, escapeChar)
-                : sourceText[index - 1] === '\\';
-
-        for (let index = fallbackStartOffset; index < sourceText.length; index++) {
-            const char = sourceText[index];
-            const next = sourceText[index + 1] || '';
-
-            if (blockComment) {
-                if (char === '*' && next === '/') {
-                    blockComment = false;
-                    index++;
-                }
-                continue;
-            }
-            if (lineComment) {
-                if (char === '\n') {
-                    lineComment = false;
-                    if (!expectedClosers.length) break;
-                }
-                continue;
-            }
-            if (inString) {
-                if (char === stringChar && !isQuoteEscaped(index)) {
-                    inString = false;
-                }
-                if (!/\s/.test(char)) lastNonWhitespace = index;
-                continue;
-            }
-
-            if (char === '/' && next === '/') {
-                lineComment = true;
-                index++;
-                if (!expectedClosers.length) break;
-                continue;
-            }
-            if (char === '/' && next === '*') {
-                blockComment = true;
-                index++;
-                continue;
-            }
-            if (char === '"' || char === "'") {
-                inString = true;
-                stringChar = char;
-                lastNonWhitespace = index;
-                continue;
-            }
-            if (char === '(') {
-                expectedClosers.push(')');
-                sawOpenGroup = true;
-                lastNonWhitespace = index;
-                continue;
-            }
-            if (char === '[') {
-                expectedClosers.push(']');
-                sawOpenGroup = true;
-                lastNonWhitespace = index;
-                continue;
-            }
-            if (char === '{') {
-                expectedClosers.push('}');
-                sawOpenGroup = true;
-                lastNonWhitespace = index;
-                continue;
-            }
-            if (char === ')' || char === ']' || char === '}') {
-                if (expectedClosers[expectedClosers.length - 1] === char) {
-                    expectedClosers.pop();
-                }
-                lastNonWhitespace = index;
-                continue;
-            }
-            if ((char === '\r' || char === '\n' || char === ';') && !expectedClosers.length) {
-                break;
-            }
-            if (!/\s/.test(char)) {
-                lastNonWhitespace = index;
-            }
-        }
-
-        if (!sawOpenGroup || lastNonWhitespace < fallbackStartOffset) {
-            return { text: fallback, startOffset: fallbackStartOffset, endOffset: fallbackEndOffset };
-        }
-
-        const endOffset = Math.max(fallbackStartOffset, lastNonWhitespace + 1);
-        const text = sourceText.slice(fallbackStartOffset, endOffset).trim();
-        return { text, startOffset: fallbackStartOffset, endOffset };
-    }
+    const { getAssignmentRhsSourceInfo } = createDeclarationRhsSourceReader({ isEscapedQuote });
 
     function collectDeclarationLiveDiagnosticsForLine(document, lineNumber, ctx, lineText, strippedLineText, lineStartOffset, docLength, analysisCacheOrFactory = null) {
         const diagnostics = [];
@@ -213,7 +101,8 @@ function createDeclarationDiagnostics(deps) {
         };
         const escapeChar = ctx.resolver.ctrlCharAtLine(lineNumber);
         const occurrenceByName = new Map();
-        const createIdentifierRangeForOccurrence = (name, occurrenceIndex = 0) => {
+        const isIdentifierChar = char => /[A-Za-z0-9_@]/.test(char || '');
+        const findIdentifierSpanForOccurrence = (name, occurrenceIndex = 0) => {
             const target = String(name || '');
             if (!target) return null;
             let seenCount = 0;
@@ -222,20 +111,29 @@ function createDeclarationDiagnostics(deps) {
                 if (foundIndex < 0) break;
                 const before = lineText[foundIndex - 1] || '';
                 const after = lineText[foundIndex + target.length] || '';
-                if (!/[A-Za-z0-9_@]/.test(before) && !/[A-Za-z0-9_@]/.test(after)) {
+                if (!isIdentifierChar(before) && !isIdentifierChar(after)) {
                     if (seenCount === occurrenceIndex) {
-                        return createOffsetRange(
-                            document,
-                            lineStartOffset + foundIndex,
-                            lineStartOffset + foundIndex + target.length,
-                            docLength
-                        );
+                        return {
+                            start: foundIndex,
+                            end: foundIndex + target.length
+                        };
                     }
                     seenCount++;
                 }
                 index = foundIndex + target.length;
             }
             return null;
+        };
+        const createIdentifierRangeForOccurrence = (name, occurrenceIndex = 0) => {
+            const span = findIdentifierSpanForOccurrence(name, occurrenceIndex);
+            return span
+                ? createOffsetRange(
+                    document,
+                    lineStartOffset + span.start,
+                    lineStartOffset + span.end,
+                    docLength
+                )
+                : null;
         };
         const pushDeclWarning = (decl, issue, occurrenceIndex = 0) => {
             if (!issue || !areWarningDiagnosticsEnabled()) return;
@@ -271,6 +169,58 @@ function createDeclarationDiagnostics(deps) {
                 docLength
             );
         };
+        const findDeclarationValueStartOffset = valueText => {
+            const sourceText = String(ctx?.text || '');
+            const assignmentIndex = lineText.indexOf('=');
+            if (assignmentIndex >= 0 && sourceText) {
+                let offset = lineStartOffset + assignmentIndex + 1;
+                while (offset < sourceText.length && /\s/.test(sourceText[offset] || '')) offset++;
+                return offset;
+            }
+            const valueIndex = String(valueText || '') ? lineText.indexOf(valueText) : -1;
+            return valueIndex >= 0 ? lineStartOffset + valueIndex : -1;
+        };
+        const createDeclarationValueRange = (valueText, issue = null) => {
+            const valueStartOffset = findDeclarationValueStartOffset(valueText);
+            if (issue?.kind === 'unexpectedToken') {
+                const tokenOffset = findInitializerIssueSourceOffset(ctx?.text || '', valueStartOffset, issue, escapeChar);
+                if (tokenOffset >= 0) {
+                    return createOffsetRange(
+                        document,
+                        tokenOffset,
+                        tokenOffset + Math.max(1, String(issue.token || '').length),
+                        docLength
+                    );
+                }
+            }
+            if (
+                valueStartOffset >= 0 &&
+                Number.isInteger(issue?.start) &&
+                Number.isInteger(issue?.end) &&
+                issue.end > issue.start
+            ) {
+                return createOffsetRange(
+                    document,
+                    valueStartOffset + issue.start,
+                    valueStartOffset + issue.end,
+                    docLength
+                );
+            }
+            const valueIndex = valueText ? lineText.indexOf(valueText) : -1;
+            return valueIndex >= 0
+                ? createOffsetRange(
+                    document,
+                    lineStartOffset + valueIndex,
+                    lineStartOffset + valueIndex + Math.max(1, valueText.length),
+                    docLength
+                )
+                : createOffsetRange(
+                    document,
+                    lineStartOffset,
+                    lineStartOffset + Math.max(1, lineText.length),
+                    docLength
+                );
+        };
 
         for (let currentIndex = 0; currentIndex < currentVariableDecls.length; currentIndex++) {
             const decl = currentVariableDecls[currentIndex];
@@ -280,9 +230,7 @@ function createDeclarationDiagnostics(deps) {
             if (decl?.name) {
                 pushDeclWarning(
                     decl,
-                    typeof getSymbolTruncationIssue === 'function'
-                        ? getSymbolTruncationIssue(decl.name)
-                        : null,
+                    getSymbolTruncationIssue(decl.name),
                     sameNameOccurrenceIndex
                 );
             }
@@ -317,11 +265,9 @@ function createDeclarationDiagnostics(deps) {
                 ) || null;
             })();
             if (priorSameName) {
-                const constantRedefinitionIssue = typeof getConstantRedefinitionIssue === 'function'
-                    ? getConstantRedefinitionIssue(priorSameName, decl, {
-                        evaluateConstantValue: value => evaluatePawnNumericExpr?.(value, ctx.allDecls)
-                    })
-                    : null;
+                const constantRedefinitionIssue = getConstantRedefinitionIssue(priorSameName, decl, {
+                    evaluateConstantValue: value => evaluatePawnNumericExpr(value, ctx.allDecls)
+                });
                 if (constantRedefinitionIssue?.severity === 'silent') {
                     continue;
                 }
@@ -370,14 +316,30 @@ function createDeclarationDiagnostics(deps) {
                 })();
                 pushDeclWarning(
                     decl,
-                    typeof getVariableShadowingIssue === 'function'
-                        ? getVariableShadowingIssue(decl, shadowedDecl, {
-                            declarationKind: shadowDeclarationKind
-                        })
-                        : null,
+                    getVariableShadowingIssue(decl, shadowedDecl, {
+                        declarationKind: shadowDeclarationKind
+                    }),
                     sameNameOccurrenceIndex
                 );
             }
+        }
+
+        const invalidTailDecls = new WeakSet();
+        for (const issue of collectVariableDeclarationSyntaxIssuesForLine(lineText, currentVariableDecls) || []) {
+            if (issue?.decl) invalidTailDecls.add(issue.decl);
+            const startIndex = Number.isInteger(issue?.startIndex) ? issue.startIndex : 0;
+            const length = Math.max(1, Number.isInteger(issue?.length) ? issue.length : 1);
+            diagnostics.push(
+                createLiveValidationDiagnostic(
+                    createOffsetRange(
+                        document,
+                        lineStartOffset + startIndex,
+                        lineStartOffset + startIndex + length,
+                        docLength
+                    ),
+                    t(issue?.messageKey || 'validation.unexpectedToken', issue?.params || {})
+                )
+            );
         }
 
         const assignmentSourceLine = String(strippedLineText || '').replace(/^\s*return\b\s*/, '');
@@ -546,9 +508,7 @@ function createDeclarationDiagnostics(deps) {
                         rhs &&
                         normalizeSelfAssignmentExpression(lhs) === normalizeSelfAssignmentExpression(rhs)
                     ) {
-                        const issue = typeof getSelfAssignmentIssue === 'function'
-                            ? getSelfAssignmentIssue(assignable, lhs)
-                            : { messageKey: 'validation.selfAssignment', params: { name: assignable.name || lhs } };
+                        const issue = getSelfAssignmentIssue(assignable, lhs);
                         diagnostics.push(
                             createLiveValidationDiagnostic(
                                 createLhsRange(),
@@ -590,8 +550,7 @@ function createDeclarationDiagnostics(deps) {
                     }
                     if (
                         areWarningDiagnosticsEnabled() &&
-                        rhs &&
-                        typeof getScalarAssignmentTagIssue === 'function'
+                        rhs
                     ) {
                         const { analysisCache, analysisDecls } = getAssignmentAnalysis();
                         const tagIssue = getScalarAssignmentTagIssue(lhs, rhs, analysisDecls, analysisCache, {
@@ -685,10 +644,47 @@ function createDeclarationDiagnostics(deps) {
         }
 
         for (const decl of currentVariableDecls) {
+            if (invalidTailDecls.has(decl)) continue;
             if (decl?.type !== 'variable' || decl.dims || !decl.value) continue;
             const analysisCache = getDeclarationAnalysisCache();
             const analysisDecls = analysisCache ? [] : ctx.allDecls;
             const valueText = String(decl.value || '').trim();
+            if (
+                areWarningDiagnosticsEnabled()
+            ) {
+                const tagIssue = getScalarAssignmentTagIssue(decl.name, valueText, analysisDecls, analysisCache, {
+                    escapeChar,
+                    assignable: {
+                        isLValue: true,
+                        isConst: false,
+                        dims: decl.dims || '',
+                        name: decl.name,
+                        baseDecl: decl
+                    }
+                });
+                if (tagIssue) {
+                    const valueIndex = valueText ? lineText.indexOf(valueText) : -1;
+                    diagnostics.push(
+                        createLiveValidationDiagnostic(
+                            valueIndex >= 0
+                                ? createOffsetRange(
+                                    document,
+                                    lineStartOffset + valueIndex,
+                                    lineStartOffset + valueIndex + valueText.length,
+                                    docLength
+                                )
+                                : createOffsetRange(
+                                    document,
+                                    lineStartOffset,
+                                    lineStartOffset + Math.max(1, lineText.length),
+                                    docLength
+                                ),
+                            tagIssue.reason,
+                            getWarningSeverity()
+                        )
+                    );
+                }
+            }
             const issue = findArrayMustBeIndexedIssue(decl.value, analysisDecls, analysisCache, { escapeChar });
             if (!issue) {
                 const actualType = inferArgType(valueText, analysisDecls, analysisCache);
@@ -735,6 +731,7 @@ function createDeclarationDiagnostics(deps) {
             );
         }
         for (const decl of currentVariableDecls) {
+            if (invalidTailDecls.has(decl)) continue;
             if (!decl?.dims) continue;
             const analysisCache = getDeclarationAnalysisCache();
             const analysisDecls = analysisCache ? [] : ctx.allDecls;
@@ -776,7 +773,6 @@ function createDeclarationDiagnostics(deps) {
                 continue;
             }
             const valueText = String(decl.value || '').trim();
-            const valueIndex = valueText ? lineText.indexOf(valueText) : -1;
             const isEnumInitializerWarning =
                 initializerIssue.kind === 'enumFieldCountOverflow' ||
                 initializerIssue.kind === 'enumFieldInitializerOverflow';
@@ -787,24 +783,14 @@ function createDeclarationDiagnostics(deps) {
                     ? t('validation.moreInitializersThanEnumFields')
                     : (initializerIssue.kind === 'enumFieldInitializerOverflow'
                         ? t('validation.enumFieldInitializerTooLong')
-                        : (initializerIssue.kind === 'constantRequired'
-                            ? t('validation.mustBeConstantExpression')
-                            : t('validation.multidimArrayMustBeFullyInitialized'))));
+                        : (initializerIssue.kind === 'unexpectedToken'
+                            ? t('validation.unexpectedToken', { token: initializerIssue.token || '' })
+                            : (initializerIssue.kind === 'constantRequired'
+                                ? t('validation.mustBeConstantExpression')
+                                : t('validation.multidimArrayMustBeFullyInitialized')))));
             diagnostics.push(
                 createLiveValidationDiagnostic(
-                    valueIndex >= 0
-                        ? createOffsetRange(
-                            document,
-                            lineStartOffset + valueIndex,
-                            lineStartOffset + valueIndex + Math.max(1, valueText.length),
-                            docLength
-                        )
-                        : createOffsetRange(
-                            document,
-                            lineStartOffset,
-                            lineStartOffset + Math.max(1, lineText.length),
-                            docLength
-                        ),
+                    createDeclarationValueRange(valueText, initializerIssue),
                     message,
                     isEnumInitializerWarning ? getWarningSeverity() : undefined
                 )

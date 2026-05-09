@@ -7,7 +7,8 @@ const {
     createBraceDepthSyntaxCore,
     createLiteralSyntaxCore,
     createLabelSyntaxCore,
-    createStateSyntaxCore
+    createStateSyntaxCore,
+    createRationalPolicySyntaxCore
 } = require('../../core/syntax/index');
 const {
     createDocumentContextUtilityCore,
@@ -67,6 +68,7 @@ function createBaseSyntaxRuntime(deps) {
         isEscapedQuote
     } = ctrlCharRuntime);
 
+    const utilityRuntime = createUtilityCore();
     const documentContextUtilityRuntime = createDocumentContextUtilityCore({
         createCtrlCharResolver: ctrlCharRuntime.createCtrlCharResolver,
         getIncludeNameFromLine: ctrlCharRuntime.getIncludeNameFromLine
@@ -75,6 +77,8 @@ function createBaseSyntaxRuntime(deps) {
     const syntaxRuntime = createSyntaxCore({
         getActiveCtrlChar,
         isEscapedQuote,
+        isPawnIdentifierStartChar: utilityRuntime.isPawnIdentifierStartChar,
+        isPawnIdentifierContinueChar: utilityRuntime.isPawnIdentifierContinueChar,
         getCommentAnalysisForLines,
         getCommentDocsForLine
     });
@@ -101,7 +105,7 @@ function createBaseSyntaxRuntime(deps) {
     });
     const labelRuntime = createLabelSyntaxCore();
     const stateRuntime = createStateSyntaxCore();
-    const utilityRuntime = createUtilityCore();
+    const rationalPolicyRuntime = createRationalPolicySyntaxCore();
 
     return {
         ...ctrlCharRuntime,
@@ -113,6 +117,7 @@ function createBaseSyntaxRuntime(deps) {
         ...literalRuntime,
         ...labelRuntime,
         ...stateRuntime,
+        ...rationalPolicyRuntime,
         ...utilityRuntime,
         buildCommentAnalysis,
         getCommentAnalysisForLines,

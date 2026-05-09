@@ -25,7 +25,8 @@ function createPreprocessorLabelSyntaxCore(deps) {
         analyzePreprocessorConditionExpression,
         getPreprocessorDirectiveIssues,
         maskStringLiteralContent,
-        stripLeadingInlineStatementPrefix
+        stripLeadingInlineStatementPrefix,
+        collectEnumMemberSyntaxIssues
     } = deps;
 
     function collectPreprocessorAndLabelIssues(rootCtx, targetLineNumbers = null, options = {}) {
@@ -45,6 +46,25 @@ function createPreprocessorLabelSyntaxCore(deps) {
         let rationalState = null;
         let includeEntryCursor = 0;
         let knownTagNames = null;
+        const unresolvedRequiredIncludes = (rootCtx.preprocessedState?.unresolvedIncludeEntries || [])
+            .filter(entry => entry?.required !== false);
+        const hasUnresolvedRequiredIncludes = unresolvedRequiredIncludes.length > 0;
+        const unresolvedRequiredIncludeByLineAndName = new Map();
+        for (const entry of unresolvedRequiredIncludes) {
+            if (!entry?.name) continue;
+            if (Number.isInteger(entry.lineNumber) && entry.lineNumber >= 0) {
+                const key = `${entry.lineNumber}|${entry.name}`;
+                if (!unresolvedRequiredIncludeByLineAndName.has(key)) {
+                    unresolvedRequiredIncludeByLineAndName.set(key, entry);
+                }
+            }
+            if (Number.isInteger(entry.parentLineNumber) && entry.parentLineNumber >= 0 && entry.parentName) {
+                const parentKey = `${entry.parentLineNumber}|${entry.parentName}`;
+                if (!unresolvedRequiredIncludeByLineAndName.has(parentKey)) {
+                    unresolvedRequiredIncludeByLineAndName.set(parentKey, entry);
+                }
+            }
+        }
         const activeDefinesByName = new Map(
             (rootCtx.incDecls || [])
                 .filter(decl => decl?.type === 'define' && decl.name)
@@ -99,7 +119,7 @@ function createPreprocessorLabelSyntaxCore(deps) {
                                 lineNumber,
                                 index,
                                 2,
-                                typeof getNestedCommentIssue === 'function' ? getNestedCommentIssue() : null
+                                getNestedCommentIssue()
                             );
                             index++;
                             continue;
@@ -161,16 +181,13 @@ function createPreprocessorLabelSyntaxCore(deps) {
             !preprocessorStack.some(frame => frame?.active === false);
         const getKnownTagNames = () => {
             if (knownTagNames) return knownTagNames;
-            knownTagNames = typeof collectDeclaredTagNames === 'function'
-                ? collectDeclaredTagNames(rootCtx.allDecls || [])
-                : new Set();
+            knownTagNames = collectDeclaredTagNames(rootCtx.allDecls || []);
             const rationalTagName = String(rootCtx.preprocessedState?.rationalState?.tagName || '').trim();
             if (rationalTagName) knownTagNames.add(rationalTagName);
             return knownTagNames;
         };
         const pushTagOverrideParenthesesIssues = (lineNumber, structuralLine, activeBranch) => {
             if (!activeBranch || !includeWarnings || structuralLine.indexOf(':') < 0) return;
-            if (typeof collectTagOverrideParenthesesIssues !== 'function') return;
             const tagIssues = collectTagOverrideParenthesesIssues(structuralLine, getKnownTagNames());
             for (const issue of tagIssues) {
                 pushWarningIssue(
@@ -181,38 +198,60 @@ function createPreprocessorLabelSyntaxCore(deps) {
                 );
             }
         };
-        const readIncludeNameFromDirective = directive => {
+        const readIncludeRequestFromDirective = directive => {
             const payload = String(directive?.payload || '').trim();
+            const payloadOffset = String(directive?.payload || '').indexOf(payload);
             const opener = payload[0] || '';
-            if (opener !== '<' && opener !== '"') return '';
+            if (opener !== '<' && opener !== '"') return null;
             const closer = opener === '<' ? '>' : '"';
             const closeIndex = payload.indexOf(closer, 1);
-            return closeIndex > 1 ? payload.slice(1, closeIndex).trim() : '';
+            if (closeIndex <= 1) return null;
+            const inner = payload.slice(1, closeIndex);
+            const leftTrimmedLength = inner.length - inner.trimStart().length;
+            const name = inner.trim();
+            if (!name) return null;
+            return {
+                name,
+                startIndex: (directive?.payloadStart || 0) + Math.max(0, payloadOffset) + 1 + leftTrimmedLength,
+                length: Math.max(1, name.length)
+            };
+        };
+        const readIncludeNameFromDirective = directive => {
+            return readIncludeRequestFromDirective(directive)?.name || '';
         };
         const applyIncludeRationalState = directive => {
             const includeName = readIncludeNameFromDirective(directive);
-            if (!includeName) return;
+            if (!includeName) return false;
             const includeEntries = rootCtx.includeEntries || [];
+            const sourceLineNumber = directive.lineNumber;
+            if (Number.isInteger(sourceLineNumber)) {
+                const lineEntryIndex = includeEntries.findIndex((entry, index) =>
+                    index >= includeEntryCursor &&
+                    (entry?.depth | 0) === 0 &&
+                    entry.lineNumber === sourceLineNumber &&
+                    String(entry.name || '') === includeName
+                );
+                if (lineEntryIndex >= 0) {
+                    includeEntryCursor = lineEntryIndex + 1;
+                    const entry = includeEntries[lineEntryIndex];
+                    if (entry.rationalState) rationalState = entry.rationalState;
+                    return true;
+                }
+            }
             for (; includeEntryCursor < includeEntries.length; includeEntryCursor++) {
                 const entry = includeEntries[includeEntryCursor];
                 if ((entry?.depth | 0) !== 0) continue;
                 if (String(entry.name || '') !== includeName) continue;
                 includeEntryCursor++;
                 if (entry.rationalState) rationalState = entry.rationalState;
-                return;
+                return true;
             }
+            return false;
         };
         const pushRationalLiteralIssues = (lineNumber, structuralLine, activeBranch) => {
+            if (hasUnresolvedRequiredIncludes) return;
             if (!activeBranch || structuralLine.indexOf('.') < 0) return;
-            const collectIssues = typeof collectRationalLiteralIssues === 'function'
-                ? collectRationalLiteralIssues
-                : (
-                    rationalState && typeof collectRationalLiteralPrecisionIssues === 'function'
-                        ? collectRationalLiteralPrecisionIssues
-                        : null
-                );
-            if (!collectIssues) return;
-            const literalIssues = collectIssues(structuralLine, rationalState);
+            const literalIssues = collectRationalLiteralIssues(structuralLine, rationalState);
             for (const issue of literalIssues) {
                 if (issue.severity === 'warning') {
                     pushWarningIssue(
@@ -241,7 +280,6 @@ function createPreprocessorLabelSyntaxCore(deps) {
                 const isDefined = !!(name && activeDefinesByName.has(name));
                 return directive.keyword === 'ifdef' ? isDefined : !isDefined;
             }
-            if (typeof analyzePreprocessorConditionExpression !== 'function') return true;
             const analysis = analyzePreprocessorConditionExpression(payload, [], activeDefinesByName);
             return analysis.valid ? !!analysis.value : true;
         };
@@ -271,9 +309,7 @@ function createPreprocessorLabelSyntaxCore(deps) {
         };
         const findLabelDeclaration = (lineNumber, sourceLine) => {
             const findAtStatementStart = source => {
-                const parsed = typeof parseLabelDeclaration === 'function'
-                    ? parseLabelDeclaration(source)
-                    : null;
+                const parsed = parseLabelDeclaration(source);
                 if (!parsed) return null;
                 return ignoredUnknownSymbolNames.has(parsed.name)
                     ? null
@@ -331,9 +367,7 @@ function createPreprocessorLabelSyntaxCore(deps) {
                 }
             }
 
-            const gotoReferences = typeof collectGotoReferences === 'function'
-                ? collectGotoReferences(structuralLine)
-                : [];
+            const gotoReferences = collectGotoReferences(structuralLine);
             const gotoFunctionKey = getFunctionKeyForLine(lineNumber);
             for (const gotoRef of gotoReferences) {
                 if (!gotoFunctionKey) continue;
@@ -360,9 +394,7 @@ function createPreprocessorLabelSyntaxCore(deps) {
                 return;
             }
 
-            const directiveSource = typeof collectPreprocessorDirectiveText === 'function'
-                ? collectPreprocessorDirectiveText(rawLines, lineNumber, strippedLines)
-                : { text: structuralLine, nextLine: lineNumber + 1, mapRange: rangeStart => ({ lineNumber, start: rangeStart, length: 1 }) };
+            const directiveSource = collectPreprocessorDirectiveText(rawLines, lineNumber, strippedLines);
             const directive = parsePreprocessorDirectiveLine(directiveSource.text, {
                 escapeChar,
                 stripLineComment: true
@@ -385,9 +417,7 @@ function createPreprocessorLabelSyntaxCore(deps) {
                 }
             );
             for (const issue of directiveIssues) {
-                const mappedRange = typeof directiveSource.mapRange === 'function'
-                    ? directiveSource.mapRange(issue.range.start, issue.range.length)
-                    : { lineNumber, start: issue.range.start, length: issue.range.length };
+                const mappedRange = directiveSource.mapRange(issue.range.start, issue.range.length);
                 pushIssue(
                     mappedRange.lineNumber,
                     mappedRange.start,
@@ -410,16 +440,12 @@ function createPreprocessorLabelSyntaxCore(deps) {
                 const pragmaName = pragmaPayload.trim().match(/^([A-Za-z_@]\w*)/)?.[1] || '';
                 const pragmaOffset = pragmaName ? pragmaPayload.indexOf(pragmaName) : 0;
                 if (pragmaName.toLowerCase() === 'rational') {
-                    const parsedRational = typeof parseRationalPragmaPayload === 'function'
-                        ? parseRationalPragmaPayload(
-                            pragmaPayload.slice(pragmaOffset + pragmaName.length),
-                            [...activeDefinesByName.values()]
-                        )
-                        : null;
+                    const parsedRational = parseRationalPragmaPayload(
+                        pragmaPayload.slice(pragmaOffset + pragmaName.length),
+                        [...activeDefinesByName.values()]
+                    );
                     if (activeBranch && parsedRational) {
-                        const precisionIssue = typeof getInvalidRationalPrecisionIssue === 'function'
-                            ? getInvalidRationalPrecisionIssue(parsedRational)
-                            : null;
+                        const precisionIssue = getInvalidRationalPrecisionIssue(parsedRational);
                         if (precisionIssue) {
                             pushIssue(
                                 lineNumber,
@@ -430,12 +456,8 @@ function createPreprocessorLabelSyntaxCore(deps) {
                                 precisionIssue.severity === 'warning' ? 'warning' : ''
                             );
                         }
-                        const nextRationalState = typeof createRationalStateFromPragma === 'function'
-                            ? createRationalStateFromPragma(parsedRational)
-                            : null;
-                        const duplicateIssue = typeof getRationalFormatAlreadyDefinedIssue === 'function'
-                            ? getRationalFormatAlreadyDefinedIssue(rationalState, nextRationalState)
-                            : null;
+                        const nextRationalState = createRationalStateFromPragma(parsedRational);
+                        const duplicateIssue = getRationalFormatAlreadyDefinedIssue(rationalState, nextRationalState);
                         if (duplicateIssue) {
                             pushIssue(
                                 lineNumber,
@@ -451,9 +473,7 @@ function createPreprocessorLabelSyntaxCore(deps) {
                     }
                     return;
                 }
-                const issue = typeof getUnknownPragmaIssue === 'function'
-                    ? getUnknownPragmaIssue(pragmaName)
-                    : null;
+                const issue = getUnknownPragmaIssue(pragmaName);
                 if (activeBranch) {
                     pushWarningIssue(
                         lineNumber,
@@ -466,9 +486,7 @@ function createPreprocessorLabelSyntaxCore(deps) {
             }
 
             if (directiveName === 'define') {
-                const parsed = typeof parsePreprocessorDefineDirective === 'function'
-                    ? parsePreprocessorDefineDirective(directive)
-                    : null;
+                const parsed = parsePreprocessorDefineDirective(directive);
                 if (parsed?.valid && parsed.name) {
                     const currentDefine = {
                         type: 'define',
@@ -483,17 +501,13 @@ function createPreprocessorLabelSyntaxCore(deps) {
                             lineNumber,
                             parsed.nameStart,
                             Math.max(1, parsed.nameEnd - parsed.nameStart),
-                            typeof getSymbolTruncationIssue === 'function'
-                                ? getSymbolTruncationIssue(parsed.name)
-                                : null
+                            getSymbolTruncationIssue(parsed.name)
                         );
                         pushWarningIssue(
                             lineNumber,
                             parsed.nameStart,
                             Math.max(1, parsed.nameEnd - parsed.nameStart),
-                            typeof getMacroRedefinitionIssue === 'function'
-                                ? getMacroRedefinitionIssue(activeDefinesByName.get(parsed.name) || null, currentDefine)
-                                : null
+                            getMacroRedefinitionIssue(activeDefinesByName.get(parsed.name) || null, currentDefine)
                         );
                         activeDefinesByName.set(parsed.name, currentDefine);
                     }
@@ -509,6 +523,21 @@ function createPreprocessorLabelSyntaxCore(deps) {
 
             if (directiveName === 'include' || directiveName === 'tryinclude') {
                 if (activeBranch) applyIncludeRationalState(directive);
+                if (activeBranch && directiveName === 'include') {
+                    const includeRequest = readIncludeRequestFromDirective(directive);
+                    const unresolvedEntry = includeRequest
+                        ? unresolvedRequiredIncludeByLineAndName.get(`${lineNumber}|${includeRequest.name}`)
+                        : null;
+                    if (unresolvedEntry && includeRequest) {
+                        pushIssue(
+                            lineNumber,
+                            includeRequest.startIndex,
+                            includeRequest.length,
+                            'validation.includeNotResolved',
+                            { name: includeRequest.name }
+                        );
+                    }
+                }
                 return;
             }
 
@@ -555,6 +584,16 @@ function createPreprocessorLabelSyntaxCore(deps) {
             if (lineNumber >= 0 && lineNumber < strippedLines.length) {
                 processPreprocessorAndLabelLine(lineNumber);
             }
+        }
+        for (const issue of collectEnumMemberSyntaxIssues(rawLines, strippedLines, lineCtrlChars, targetLines)) {
+            pushIssue(
+                issue.lineNumber,
+                issue.startIndex,
+                issue.length,
+                issue.messageKey,
+                issue.params || {},
+                issue.severity || ''
+            );
         }
         collectNestedCommentIssues();
 

@@ -1,6 +1,11 @@
 // Shared declaration-lookup helpers. These are used by multiple hot paths
 // (hover, navigation, live validation, document-context building), so keeping
 // them in one module makes later optimization safer.
+const {
+    getPrecomputedDeclNameBuckets,
+    getPrecomputedVariableNameBuckets
+} = require('./precomputed-buckets');
+
 function createDeclLookupCore(deps) {
     const {
         declNameBucketCache,
@@ -9,15 +14,13 @@ function createDeclLookupCore(deps) {
         BUILTIN_DECLS = []
     } = deps;
     const variableNameBucketCache = new WeakMap();
-    const PRECOMPUTED_DECL_NAME_BUCKETS = '__pawnDeclNameBuckets';
-    const PRECOMPUTED_VARIABLE_NAME_BUCKETS = '__pawnVariableNameBuckets';
 
     const getDeclNameBuckets = decls => {
         if (!Array.isArray(decls)) return new Map();
         const cached = declNameBucketCache.get(decls);
         if (cached) return cached;
-        const precomputed = decls[PRECOMPUTED_DECL_NAME_BUCKETS];
-        if (precomputed instanceof Map) {
+        const precomputed = getPrecomputedDeclNameBuckets(decls);
+        if (precomputed) {
             declNameBucketCache.set(decls, precomputed);
             return precomputed;
         }
@@ -55,8 +58,8 @@ function createDeclLookupCore(deps) {
         if (!Array.isArray(decls)) return new Map();
         const cached = variableNameBucketCache.get(decls);
         if (cached) return cached;
-        const precomputed = decls[PRECOMPUTED_VARIABLE_NAME_BUCKETS];
-        if (precomputed instanceof Map) {
+        const precomputed = getPrecomputedVariableNameBuckets(decls);
+        if (precomputed) {
             variableNameBucketCache.set(decls, precomputed);
             return precomputed;
         }

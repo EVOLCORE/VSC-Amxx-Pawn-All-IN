@@ -16,6 +16,7 @@ function createPreprocessorSyntaxCore(deps) {
         collectDeclarationText,
         maskPreprocessorLine,
         stripLineComment,
+        splitTopLevel,
         preprocessPawnContentRef,
         readNormalizedFileContent,
         getCachedCommentAnalysis,
@@ -67,7 +68,8 @@ function createPreprocessorSyntaxCore(deps) {
             return (count % 2) === 1;
         },
         isIdentifierStartChar: char => isDirectiveIdentifierStartCode(String(char || '').charCodeAt(0)),
-        isIdentifierContinueChar: char => isDirectiveIdentifierContinueCode(String(char || '').charCodeAt(0))
+        isIdentifierContinueChar: char => isDirectiveIdentifierContinueCode(String(char || '').charCodeAt(0)),
+        splitTopLevel
     });
 
     function skipDirectiveSpaces(source, cursor) {
@@ -93,7 +95,7 @@ function createPreprocessorSyntaxCore(deps) {
 
     function getDirectiveLineWithoutComment(line, escapeChar = undefined, shouldStripLineComment = true) {
         const sourceLine = String(line || '');
-        return shouldStripLineComment && typeof stripLineComment === 'function'
+        return shouldStripLineComment
             ? String(stripLineComment(sourceLine, escapeChar))
             : sourceLine;
     }
@@ -638,7 +640,8 @@ function createPreprocessorSyntaxCore(deps) {
                     rationalState,
                     defineStateKey: ensureDefineStateKey(),
                     directiveCandidateLines: [],
-                    includeEntries: []
+                    includeEntries: [],
+                    unresolvedIncludeEntries: []
                 };
                 if (includePreprocessedStates) {
                     state.includePreprocessedStates = includePreprocessedStates;
@@ -671,7 +674,8 @@ function createPreprocessorSyntaxCore(deps) {
                     }
                     return returnedDefineDeclIndexMap;
                 },
-                includeEntries: includeEntriesValue
+                includeEntries: includeEntriesValue,
+                unresolvedIncludeEntries
             };
             if (includePreprocessedStates) {
                 state.includePreprocessedStates = includePreprocessedStates;
@@ -709,6 +713,7 @@ function createPreprocessorSyntaxCore(deps) {
         };
         const stack = [];
         const includeEntries = [];
+        const unresolvedIncludeEntries = [];
         let rationalState = options.rationalState || null;
         const includeDepth = Number.isInteger(options.includeDepth) ? options.includeDepth : 0;
         const activeFiles = options.activeFiles || new Set();
@@ -968,7 +973,8 @@ function createPreprocessorSyntaxCore(deps) {
                         filePath: includePath,
                         defineDecls: defineDecls.slice(),
                         defineStateKey: activeDefineStateKey,
-                        depth: includeDepth
+                        depth: includeDepth,
+                        lineNumber
                     };
                     includeEntries.push(includeEntry);
 
@@ -976,7 +982,7 @@ function createPreprocessorSyntaxCore(deps) {
                     if (includeKey && !activeFiles.has(includeKey)) {
                         const nestedIncludeDepth = includeDepth + 1;
                         const nestedSearchPaths = getSearchPaths(includePath);
-                        let nestedState = !rationalState && typeof readCachedIncludePreprocessedState === 'function'
+                        let nestedState = !rationalState
                             ? readCachedIncludePreprocessedState(includePath, activeDefineStateKey, {
                                 activeFiles,
                                 includeDepth: nestedIncludeDepth,
@@ -1004,7 +1010,7 @@ function createPreprocessorSyntaxCore(deps) {
                                     writeCachedIncludePreprocessedState,
                                     returnState: true
                                 });
-                                if (!rationalState && typeof writeCachedIncludePreprocessedState === 'function') {
+                                if (!rationalState) {
                                     writeCachedIncludePreprocessedState(includePath, activeDefineStateKey, nestedState, {
                                         activeFiles,
                                         includeDepth: nestedIncludeDepth,
@@ -1019,6 +1025,18 @@ function createPreprocessorSyntaxCore(deps) {
                         if (nestedState) {
                             rationalState = nestedState.rationalState || rationalState;
                             includeEntry.rationalState = rationalState;
+                            if (Array.isArray(nestedState.unresolvedIncludeEntries)) {
+                                for (const nestedEntry of nestedState.unresolvedIncludeEntries) {
+                                    if (!nestedEntry?.name) continue;
+                                    unresolvedIncludeEntries.push({
+                                        ...nestedEntry,
+                                        parentName: nestedEntry.parentName || includeName,
+                                        parentLineNumber: Number.isInteger(nestedEntry.parentLineNumber)
+                                            ? nestedEntry.parentLineNumber
+                                            : lineNumber
+                                    });
+                                }
+                            }
                             if (includePreprocessedStates) {
                                 includePreprocessedStates.set(
                                     getIncludePreprocessedStateKey(includePath, activeDefineStateKey, defineDecls),
@@ -1027,7 +1045,8 @@ function createPreprocessorSyntaxCore(deps) {
                                         rawLines: nestedState.rawLines,
                                         rationalState: nestedState.rationalState || null,
                                         directiveCandidateLines: nestedState.directiveCandidateLines,
-                                        includeEntries: nestedState.includeEntries || []
+                                        includeEntries: nestedState.includeEntries || [],
+                                        unresolvedIncludeEntries: nestedState.unresolvedIncludeEntries || []
                                     }
                                 );
                             }
@@ -1039,6 +1058,13 @@ function createPreprocessorSyntaxCore(deps) {
                             includeEntries.push(...nestedState.includeEntries);
                         }
                     }
+                } else {
+                    unresolvedIncludeEntries.push({
+                        name: includeName,
+                        lineNumber,
+                        depth: includeDepth,
+                        required: true
+                    });
                 }
                 appendRawDirectiveLines();
                 return nextDirectiveLine;

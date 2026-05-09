@@ -1,12 +1,6 @@
 // Hover content rendering lives separately from hover-provider orchestration so
 // we can later optimize or move buildHoverAtPosition without dragging along the
 // large markdown/signature formatting layer.
-const { createUtilityCore } = require('../../core/utils');
-
-const {
-    areLiveValidationWarningsEnabled: defaultAreLiveValidationWarningsEnabled
-} = createUtilityCore();
-
 function createHoverContentFeature(deps) {
     const {
         vscode,
@@ -28,11 +22,11 @@ function createHoverContentFeature(deps) {
         parseDimSpec,
         measurePawnStringLiteral,
         getActiveCtrlChar,
-        getLiveValidationIssueMode = () => 'errors-and-warnings',
-        areLiveValidationWarningsEnabled = defaultAreLiveValidationWarningsEnabled
+        getLiveValidationIssueMode,
+        areLiveValidationWarningsEnabled
     } = deps;
     const areHoverWarningIssuesEnabled = () =>
-        areLiveValidationWarningsEnabled(getLiveValidationIssueMode?.());
+        areLiveValidationWarningsEnabled(getLiveValidationIssueMode());
 
     function appendEnumMembersSection(md, enumDecl, title = 'Members') {
         if (!Array.isArray(enumDecl?.enumMembers) || !enumDecl.enumMembers.length) return;
@@ -288,9 +282,7 @@ function createHoverContentFeature(deps) {
         } = options;
         const md = new vscode.MarkdownString();
         md.isTrusted = true;
-        const hoverContentMode = typeof getHoverContentMode === 'function'
-            ? getHoverContentMode()
-            : 'full';
+        const hoverContentMode = getHoverContentMode();
         const isCompactMode = hoverContentMode === 'compact';
         const isSignatureOnlyMode = hoverContentMode === 'signature-only';
         const trailingDescriptions = [];

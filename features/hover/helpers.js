@@ -81,7 +81,7 @@ function createHoverHelpersFeature(deps) {
             const tagCast = trimmedExpr.match(/^([A-Za-z_@]\w*)\s*:\s*(.+)$/);
             if (!tagCast || tagCast[1] !== hoveredWord) return hoveredWord;
         }
-        return resolveDefaultAccessSymbolName?.(argExpr, { forbiddenTags: FORBIDDEN }) || null;
+        return resolveDefaultAccessSymbolName(argExpr, { forbiddenTags: FORBIDDEN }) || null;
     }
 
     function resolvePersistentHoverTarget(document, position, functions, incDecls, cursorDepth = null, lookup = null) {

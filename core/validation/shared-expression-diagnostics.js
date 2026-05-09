@@ -300,11 +300,8 @@ function createSharedExpressionDiagnostics(deps) {
 
     function getDeclDimPartsForSizeof(decl) {
         if (!decl?.dims) return [];
-        if (typeof getEffectiveDeclDimParts === 'function') {
-            const effective = getEffectiveDeclDimParts(decl);
-            if (Array.isArray(effective)) return effective;
-        }
-        return typeof parseDimsParts === 'function' ? parseDimsParts(decl.dims || '') : [];
+        const effective = getEffectiveDeclDimParts(decl);
+        return Array.isArray(effective) ? effective : parseDimsParts(decl.dims || '');
     }
 
 
@@ -312,7 +309,6 @@ function createSharedExpressionDiagnostics(deps) {
     function isIndeterminateSizeofDimPart(dimPart, ctx, analysisCache) {
         const raw = String(dimPart ?? '').trim();
         if (!raw) return true;
-        if (typeof parseDimSpec !== 'function') return false;
         const decls = analysisCache ? [] : (ctx?.allDecls || []);
         const spec = analysisCache?.getDimSpec?.(raw) ||
             parseDimSpec(raw, decls, new Set(), analysisCache);

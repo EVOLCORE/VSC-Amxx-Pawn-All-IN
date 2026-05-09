@@ -6,11 +6,15 @@ function createSyntaxCore(deps) {
     const {
         getActiveCtrlChar,
         isEscapedQuote,
+        isPawnIdentifierStartChar,
+        isPawnIdentifierContinueChar,
         getCommentAnalysisForLines,
         getCommentDocsForLine
     } = deps;
     const semanticSyntaxCore = createSemanticSyntaxCore({
-        isEscapedQuote
+        isEscapedQuote,
+        isIdentifierStartChar: isPawnIdentifierStartChar,
+        isIdentifierContinueChar: isPawnIdentifierContinueChar
     });
 
     function stripLineComment(line, escapeChar = getActiveCtrlChar()) {
@@ -201,6 +205,8 @@ function createSyntaxCore(deps) {
         semanticSyntaxCore.parseTopLevelTernaryExpression(expr, { escapeChar });
     const parseBraceArrayLiteralExpression = (expr, escapeChar = getActiveCtrlChar()) =>
         semanticSyntaxCore.parseBraceArrayLiteralExpression(expr, { escapeChar });
+    const parseBraceArrayLiteralExpressionDetailed = (expr, escapeChar = getActiveCtrlChar()) =>
+        semanticSyntaxCore.parseBraceArrayLiteralExpressionDetailed(expr, { escapeChar });
     const parseWholeCallExpression = (expr, escapeChar = getActiveCtrlChar()) =>
         semanticSyntaxCore.parseWholeCallExpression(expr, { escapeChar });
     function looksLikePawnExpressionFragment(expr, options = {}) {
@@ -259,6 +265,7 @@ function createSyntaxCore(deps) {
         parseIndexedAccessExpression,
         parseTopLevelTernaryExpression,
         parseBraceArrayLiteralExpression,
+        parseBraceArrayLiteralExpressionDetailed,
         parseWholeCallExpression,
         looksLikePawnExpressionFragment,
         extractDocs,

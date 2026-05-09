@@ -53,11 +53,11 @@ function createHeaderDiagnostics(deps) {
         const openRelative = segment.indexOf('(', nameIndex + functionDecl.name.length);
         if (openRelative < 0) return diagnostics;
         const pushHeaderWarning = (range, issue) => {
-            if (!issue || !areWarningDiagnosticsEnabled?.()) return;
+            if (!issue || !areWarningDiagnosticsEnabled()) return;
             diagnostics.push(createLiveValidationDiagnostic(
                 range,
                 t(issue.messageKey, issue.params || {}),
-                getWarningSeverity?.()
+                getWarningSeverity()
             ));
         };
         const nameRange = createOffsetRange(
@@ -68,22 +68,16 @@ function createHeaderDiagnostics(deps) {
         );
         pushHeaderWarning(
             nameRange,
-            typeof getSymbolTruncationIssue === 'function'
-                ? getSymbolTruncationIssue(functionDecl.name)
-                : null
+            getSymbolTruncationIssue(functionDecl.name)
         );
         pushHeaderWarning(
             createOffsetRange(document, startOffset + nameIndex, endOffset, docLength),
-            typeof getOldStylePrototypeIssue === 'function'
-                ? getOldStylePrototypeIssue(functionDecl, segment)
-                : null
+            getOldStylePrototypeIssue(functionDecl, segment)
         );
         const openOffset = startOffset + openRelative;
         const closeOffset = findMatchingParenOffset(ctx.text, openOffset, endOffset, ctx.resolver);
         if (closeOffset < 0) return diagnostics;
-        const stateSpecFromHeader = typeof parseFunctionStateSpecFromHeaderText === 'function'
-            ? parseFunctionStateSpecFromHeaderText(segment)
-            : null;
+        const stateSpecFromHeader = parseFunctionStateSpecFromHeaderText(segment);
 
         const localArgPieces = splitTopLevelWithRanges(
             ctx.text.slice(openOffset + 1, closeOffset),
@@ -134,9 +128,7 @@ function createHeaderDiagnostics(deps) {
             ) || null;
             pushHeaderWarning(
                 createOffsetRange(document, piece.startOffset, piece.endOffset, docLength),
-                typeof getVariableShadowingIssue === 'function'
-                    ? getVariableShadowingIssue({ name, type: 'variable' }, shadowedGlobal)
-                    : null
+                getVariableShadowingIssue({ name, type: 'variable' }, shadowedGlobal)
             );
         }
 
@@ -208,10 +200,8 @@ function createHeaderDiagnostics(deps) {
                 severity
             ));
         };
-        if (typeof collectFunctionStateIssues === 'function') {
-            for (const issue of collectFunctionStateIssues(functionDecl, ctx.parsedDecls?.functions || [])) {
-                pushStateIssueDiagnostic(issue);
-            }
+        for (const issue of collectFunctionStateIssues(functionDecl, ctx.parsedDecls?.functions || [])) {
+            pushStateIssueDiagnostic(issue);
         }
 
         const includeDecl = hasIncludeFunctionTwin(functionDecl.name, ctx.incDecls, ctx.lookup)
@@ -272,8 +262,7 @@ function createHeaderDiagnostics(deps) {
                 }
             } else if (
                 !isAliasWrapperRedeclaration &&
-                !(typeof areStatefulFunctionRedeclarationsAllowed === 'function' &&
-                    areStatefulFunctionRedeclarationsAllowed(previousPrototype, functionDecl)) &&
+                !areStatefulFunctionRedeclarationsAllowed(previousPrototype, functionDecl) &&
                 previousPrototype.type !== 'define' &&
                 functionDecl.type !== 'forward' &&
                 functionDecl.type !== 'native'

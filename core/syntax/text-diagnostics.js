@@ -505,6 +505,20 @@ function createTextSyntaxDiagnosticsCore(deps) {
         let inChar = initialQuote === '\'';
         const isInvalidAsciiPawnCodeChar = char =>
             char === '$' || char === '`';
+        const isAsciiPawnIdentifierChar = char =>
+            !!char && /[A-Za-z0-9_@]/.test(char);
+        const isInvalidPawnCodeChar = char =>
+            !!char && (char.charCodeAt(0) > 0x7f || isInvalidAsciiPawnCodeChar(char));
+        const isInvalidCodeTokenChar = char =>
+            isInvalidPawnCodeChar(char) || isAsciiPawnIdentifierChar(char);
+        const expandInvalidCodeTokenStart = start => {
+            while (start > 0 && isInvalidCodeTokenChar(text[start - 1])) start--;
+            return start;
+        };
+        const expandInvalidCodeTokenEnd = end => {
+            while (end < text.length && isInvalidCodeTokenChar(text[end])) end++;
+            return end;
+        };
         const pushRun = (start, end) => {
             runs.push({
                 start,
@@ -536,19 +550,17 @@ function createTextSyntaxDiagnosticsCore(deps) {
             }
             if (char.charCodeAt(0) <= 0x7f) {
                 if (!isInvalidAsciiPawnCodeChar(char)) continue;
-                const start = index;
-                while (index + 1 < text.length && isInvalidAsciiPawnCodeChar(text[index + 1])) {
-                    index++;
-                }
-                pushRun(start, index + 1);
+                const start = expandInvalidCodeTokenStart(index);
+                const end = expandInvalidCodeTokenEnd(index + 1);
+                pushRun(start, end);
+                index = end - 1;
                 continue;
             }
 
-            const start = index;
-            while (index + 1 < text.length && text.charCodeAt(index + 1) > 0x7f) {
-                index++;
-            }
-            pushRun(start, index + 1);
+            const start = expandInvalidCodeTokenStart(index);
+            const end = expandInvalidCodeTokenEnd(index + 1);
+            pushRun(start, end);
+            index = end - 1;
         }
         return runs;
     }

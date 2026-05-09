@@ -1,10 +1,8 @@
-const { createHoverAccessPlanFeature } = require('./access-plan');
+const { createHoverAccessHoverFeature } = require('./access-hover');
 const { createHoverCallPlanFeature } = require('./call-plan');
+const { createHoverCallContextCache } = require('./call-context-cache');
 const { createHoverSessionFactory } = require('./session');
-const {
-    touchLimitedMap,
-    getSemanticSessionMap
-} = require('../../core/document-context/semantic-session');
+const { createHoverSemanticCache } = require('./semantic-cache');
 
 function createHoverBuilderFeature(deps) {
     const {
@@ -55,13 +53,8 @@ function createHoverBuilderFeature(deps) {
         expandObjectLikeDefineTupleCallArgs,
         isMeaningfulCallCursorPosition,
         isMeaningfulCallPosition,
-        getHoverCacheSignature = null
+        getHoverCacheSignature
     } = deps;
-    const semanticHoverCache = new Map();
-    const semanticSessionIds = new WeakMap();
-    const SEMANTIC_HOVER_CACHE_LIMIT = 128;
-    let nextSemanticSessionId = 1;
-
     const { createHoverSession } = createHoverSessionFactory({
         t,
         getPawnDocumentContext,
@@ -70,46 +63,11 @@ function createHoverBuilderFeature(deps) {
         getCtrlCharStateForContent,
         createHoverTypeAnalysisCache
     });
-
-    function getSemanticSessionId(semanticSession) {
-        if (!semanticSession || (typeof semanticSession !== 'object' && typeof semanticSession !== 'function')) {
-            return 'no-session';
-        }
-        let id = semanticSessionIds.get(semanticSession);
-        if (!id) {
-            id = `s${nextSemanticSessionId++}`;
-            semanticSessionIds.set(semanticSession, id);
-        }
-        return id;
-    }
-
-    function getDocumentSemanticKey(document, semanticSession = null) {
-        const uri = document?.uri?.toString?.() || document?.fileName || '';
-        const version = Number.isInteger(document?.version) ? document.version : 0;
-        const cacheSignature = typeof getHoverCacheSignature === 'function'
-            ? getHoverCacheSignature()
-            : '';
-        return `${uri}|v${version}|${getSemanticSessionId(semanticSession)}|${cacheSignature}`;
-    }
-
-    function getSemanticHoverCacheEntry(key) {
-        if (!key) return null;
-        const cached = semanticHoverCache.get(key) || null;
-        if (!cached) return null;
-        semanticHoverCache.delete(key);
-        semanticHoverCache.set(key, cached);
-        return cached;
-    }
-
-    function setSemanticHoverCacheEntry(key, hover) {
-        if (!key || !hover) return hover;
-        semanticHoverCache.set(key, hover);
-        while (semanticHoverCache.size > SEMANTIC_HOVER_CACHE_LIMIT) {
-            const oldestKey = semanticHoverCache.keys().next().value;
-            semanticHoverCache.delete(oldestKey);
-        }
-        return hover;
-    }
+    const {
+        getDocumentSemanticKey,
+        getSemanticHoverCacheEntry,
+        setSemanticHoverCacheEntry
+    } = createHoverSemanticCache({ limit: 128 });
 
     function buildHoverAtPosition(document, position) {
         const createHoverRangeFromOffsets = (startOffset, endOffset) => {
@@ -175,7 +133,11 @@ function createHoverBuilderFeature(deps) {
             getRawIndexedExpressionsForLine,
             findIndexedAccessContextAtPositionCached
         } = hoverSession;
-        const documentSemanticKey = getDocumentSemanticKey(document, ctx.semanticSession || null);
+        const documentSemanticKey = getDocumentSemanticKey(
+            document,
+            ctx.semanticSession || null,
+            getHoverCacheSignature()
+        );
         const lineText = document.lineAt(position.line).text;
         const inCommentOrString = isLinePositionInsideCommentOrString(
             lineText,
@@ -212,85 +174,32 @@ function createHoverBuilderFeature(deps) {
             return null;
         };
         const callContextOptions = createLazyCallContextOptions(document, ctx.semanticSession || null);
-        const getPositionCacheKey = hoverPosition =>
-            `${documentSemanticKey}|${hoverPosition?.line ?? -1}:${hoverPosition?.character ?? -1}`;
         const isSamePosition = (left, right) =>
             !!left &&
             !!right &&
             left.line === right.line &&
             left.character === right.character;
-        const findPreferredKnownCallContextCached = hoverPosition => {
-            const cache = getSemanticSessionMap(ctx.semanticSession || null, 'hoverPreferredKnownCallContextByPosition');
-            const key = `${getPositionCacheKey(hoverPosition)}|preferred-known-call`;
-            if (cache?.has(key)) return cache.get(key);
-            const value = findPreferredKnownCallContext(
-                document,
-                hoverPosition,
-                functions,
-                incDecls,
-                lookup,
-                callContextOptions
-            );
-            return cache ? touchLimitedMap(cache, key, value, 256) : value;
-        };
-        const findNestedParentCallNameContextCached = hoverPosition => {
-            const cache = getSemanticSessionMap(ctx.semanticSession || null, 'hoverNestedParentCallNameContextByPosition');
-            const key = `${getPositionCacheKey(hoverPosition)}|nested-parent-call-name`;
-            if (cache?.has(key)) return cache.get(key);
-            const value = findNestedParentCallNameContext(
-                document,
-                hoverPosition,
-                functions,
-                incDecls,
-                lookup,
-                callContextOptions
-            );
-            return cache ? touchLimitedMap(cache, key, value, 256) : value;
-        };
-        const findFunctionCallNameContextCached = (hoverPosition, activeCtx) => {
-            const cache = getSemanticSessionMap(ctx.semanticSession || null, 'hoverFunctionCallNameContextByPosition');
-            const activeKey = activeCtx
-                ? `${activeCtx.funcName || ''}@${activeCtx.openOffset ?? -1}:${activeCtx.closeOffset ?? -1}:${activeCtx.argIndex ?? -1}`
-                : 'none';
-            const key = `${getPositionCacheKey(hoverPosition)}|function-call-name|${activeKey}`;
-            if (cache?.has(key)) return cache.get(key);
-            const value = findFunctionCallNameContext(
-                document,
-                hoverPosition,
-                functions,
-                incDecls,
-                activeCtx,
-                lookup,
-                callContextOptions
-            );
-            return cache ? touchLimitedMap(cache, key, value, 256) : value;
-        };
-        const extractCallSiteArgsCached = openOffset => {
-            const boundedOpenOffset = Number.isInteger(openOffset) ? openOffset : -1;
-            if (boundedOpenOffset < 0) return extractCallSiteArgs(text, openOffset);
-            const cache = getSemanticSessionMap(ctx.semanticSession || null, 'hoverCallSiteArgsByOpenOffset');
-            const key = `${documentSemanticKey}|call-site-args|${boundedOpenOffset}`;
-            if (cache?.has(key)) return cache.get(key);
-            const value = extractCallSiteArgs(text, boundedOpenOffset);
-            return cache ? touchLimitedMap(cache, key, value, 512) : value;
-        };
-        const buildCallArgLayoutCached = (signatureArgs, rawCallSiteArgs, currentArgIndex = null) => {
-            const cache = getSemanticSessionMap(ctx.semanticSession || null, 'hoverCallArgLayoutBySignature');
-            if (!cache) return buildCallArgLayout(signatureArgs, rawCallSiteArgs, currentArgIndex);
-            const callArgsKey = Array.isArray(rawCallSiteArgs)
-                ? rawCallSiteArgs.join('\u0001')
-                : '';
-            const key = [
-                documentSemanticKey,
-                'call-arg-layout',
-                String(signatureArgs || ''),
-                currentArgIndex ?? -1,
-                callArgsKey
-            ].join('\u0000');
-            if (cache.has(key)) return cache.get(key);
-            const value = buildCallArgLayout(signatureArgs, rawCallSiteArgs, currentArgIndex);
-            return touchLimitedMap(cache, key, value, 512);
-        };
+        const {
+            buildCallArgLayoutCached,
+            extractCallSiteArgsCached,
+            findFunctionCallNameContextCached,
+            findNestedParentCallNameContextCached,
+            findPreferredKnownCallContextCached
+        } = createHoverCallContextCache({
+            semanticSession: ctx.semanticSession || null,
+            document,
+            documentSemanticKey,
+            functions,
+            incDecls,
+            lookup,
+            callContextOptions,
+            text,
+            findPreferredKnownCallContext,
+            findNestedParentCallNameContext,
+            findFunctionCallNameContext,
+            extractCallSiteArgs,
+            buildCallArgLayout
+        });
         const getWordMatches = targetName => {
             const key = String(targetName || '');
             if (!key) return [];
@@ -626,216 +535,6 @@ function createHoverBuilderFeature(deps) {
             }
         }
 
-        const getDisplayAccessIndex = accessCtx =>
-            accessCtx?.accesses?.length
-                ? (accessCtx.activeAccessIndex != null ? accessCtx.activeAccessIndex : 0)
-                : null;
-        const getDeclarationAccessIndex = (match, accessCtx) => {
-            const accessIndex = getDisplayAccessIndex(accessCtx);
-            if (accessIndex == null) return null;
-            const dimParts = parseDimsParts(match?.data?.dims || '');
-            const dimCount = Array.isArray(dimParts) ? dimParts.length : 0;
-            return dimCount > 0 ? Math.min(accessIndex, dimCount - 1) : accessIndex;
-        };
-        const withDeclarationDisplayName = match => {
-            if (!match?.data?.hoverDisplayName) return match;
-            return {
-                ...match,
-                data: {
-                    ...match.data,
-                    hoverDisplayName: ''
-                }
-            };
-        };
-        const withHoverDisplayName = (match, hoverDisplayName) => {
-            if (!match?.data || !hoverDisplayName) return match;
-            return {
-                ...match,
-                data: {
-                    ...match.data,
-                    hoverDisplayName
-                }
-            };
-        };
-        const buildFullSymbolHoverInfo = (match, hoveredWord = '') => {
-            if (!match?.data) return '';
-            const markdown = buildHoverMarkdown(
-                [withDeclarationDisplayName(match)],
-                null,
-                null,
-                allDecls,
-                '',
-                fp,
-                null,
-                funcArgs,
-                locals,
-                globals,
-                functions,
-                incDecls,
-                null,
-                {
-                    hoveredWord: hoveredWord || match.data.name || '',
-                    lookup
-                }
-            );
-            return typeof markdown?.value === 'string' ? markdown.value : String(markdown || '');
-        };
-        const joinHoverSections = (...sections) =>
-            sections.filter(Boolean).join('\n\n---\n\n');
-        const buildAccessHover = ({
-            matches: accessMatches,
-            secondaryHoverInfo = '',
-            hoverRange = null,
-            hoveredWord = '',
-            variableAccessSuffix = '',
-            variableAccessActiveIndex = null,
-            suppressVariableEnumSections = true,
-            suppressDescriptions = true,
-            hoverBitmaskPartCtx = bitmaskPartCtx
-        }) => new vscode.Hover(
-            buildHoverMarkdown(
-                accessMatches,
-                null,
-                null,
-                allDecls,
-                secondaryHoverInfo,
-                fp,
-                bitmaskCtx,
-                funcArgs,
-                locals,
-                globals,
-                functions,
-                incDecls,
-                hoverBitmaskPartCtx,
-                {
-                    suppressVariableEnumSections,
-                    suppressDescriptions,
-                    hoveredWord,
-                    variableAccessSuffix,
-                    variableAccessActiveIndex,
-                    lookup
-                }
-            ),
-            hoverRange || tokenRange || undefined
-        );
-        const buildAccessModelForContext = accessCtx => buildIndexedAccessSelectionModel(
-            accessCtx,
-            accessCtx?.accesses?.[accessCtx?.activeAccessIndex]?.start ?? -1,
-            resolver.ctrlCharAtLine(position.line),
-            {
-                resolveSymbolName: expr => resolveArgumentSymbolName(null, expr, '') || ''
-            }
-        );
-        const { resolveAccessHoverPlan: buildAccessHoverPlan } = createHoverAccessPlanFeature({
-            buildAccessModelForContext,
-            getVariableWordMatches,
-            getLocalFirstWordMatches,
-            getDeclMatchKey,
-            getDisplayAccessIndex,
-            getDeclarationAccessIndex,
-            withDeclarationDisplayName,
-            withHoverDisplayName,
-            buildSymbolHoverInfo: (matchList, options = {}) => buildArgHoverInfo(
-                matchList,
-                fp,
-                false,
-                { allDecls, lookup, ...options }
-            ),
-            buildDistinctSymbolHoverInfo: matchList => buildDistinctArgHoverInfo(
-                matchList,
-                false,
-                { allDecls, lookup }
-            ),
-            buildFullSymbolHoverInfo,
-            createHoverRangeFromOffsets,
-            joinHoverSections
-        });
-        const taggedIndexedAccessCtx = findTaggedIndexedAccessContextAtPosition(position);
-        if (taggedIndexedAccessCtx) {
-            const tagBaseMatches = getVariableWordMatches(taggedIndexedAccessCtx.baseName);
-            if (tagBaseMatches.length) {
-                return new vscode.Hover(
-                    buildHoverMarkdown(
-                        tagBaseMatches,
-                        null,
-                        null,
-                        allDecls,
-                        '',
-                        fp,
-                        bitmaskCtx,
-                        funcArgs,
-                        locals,
-                        globals,
-                        functions,
-                        incDecls,
-                        bitmaskPartCtx,
-                        {
-                            suppressDescriptions: true,
-                            hoveredWord: taggedIndexedAccessCtx.baseName,
-                            lookup
-                        }
-                    ),
-                    createHoverRangeFromOffsets(
-                        lineStartOffset + taggedIndexedAccessCtx.tagStart,
-                        lineStartOffset + taggedIndexedAccessCtx.tagCastEnd
-                    ) || tokenRange || undefined
-                );
-            }
-        }
-
-        if (
-            indexedAccessContext &&
-            word &&
-            word === indexedAccessContext.baseName &&
-            position.character >= indexedAccessContext.baseStart &&
-            position.character < indexedAccessContext.baseEnd
-        ) {
-            const baseVariableMatches = getVariableWordMatches(indexedAccessContext.baseName);
-            if (baseVariableMatches.length) {
-                return new vscode.Hover(
-                    buildHoverMarkdown(
-                        baseVariableMatches,
-                        null,
-                        null,
-                        allDecls,
-                        '',
-                        fp,
-                        bitmaskCtx,
-                        funcArgs,
-                        locals,
-                        globals,
-                        functions,
-                        incDecls,
-                        bitmaskPartCtx,
-                        {
-                            hoveredWord: indexedAccessContext.baseName,
-                            lookup
-                        }
-                    ),
-                    tokenRange || createHoverRangeFromOffsets(
-                        lineStartOffset + indexedAccessContext.baseStart,
-                        lineStartOffset + indexedAccessContext.baseEnd
-                    ) || undefined
-                );
-            }
-        }
-
-        if (indexedAccessHoverCtx) {
-            const accessModel = buildIndexedAccessSelectionModel(
-                indexedAccessHoverCtx,
-                position.character,
-                resolver.ctrlCharAtLine(position.line),
-                {
-                    hoveredWord: word || '',
-                    resolveSymbolName: expr => resolveArgumentSymbolName(null, expr, '') || ''
-                }
-            );
-            const accessHoverPlan = buildAccessHoverPlan(indexedAccessHoverCtx, accessModel, {
-                lineStartOffset,
-                hoveredWord: word || ''
-            });
-            if (accessHoverPlan) return buildAccessHover(accessHoverPlan);
-        }
         const rawCallCtx = definitionCtx
             ? null
             : findPreferredKnownCallContextCached(position);
@@ -861,7 +560,7 @@ function createHoverBuilderFeature(deps) {
             ? { callNameCtx: null, parentCallCtx: null }
             : findNestedParentCallNameContextCached(position);
         const callNameCtx = nestedCallNameInfo.callNameCtx ||
-            findFunctionCallNameContextCached(position, activeCallCtx);
+            findFunctionCallNameContextCached(position, null);
         const nestedParentCallCtx = nestedCallNameInfo.parentCallCtx;
         const nestedFunctionArgCtx =
             callNameCtx && nestedParentCallCtx && word === callNameCtx.funcName
@@ -998,6 +697,63 @@ function createHoverBuilderFeature(deps) {
                 ? isMeaningfulCallCursorPosition(document, position, displayCallCtx, callContextOptions)
                 : isMeaningfulCallPosition(document, position, displayCallCtx, callContextOptions))
         );
+        let activeCallSignatureHoverData = undefined;
+        const getActiveCallSignatureHoverData = () => {
+            if (activeCallSignatureHoverData !== undefined) return activeCallSignatureHoverData;
+            activeCallSignatureHoverData = null;
+            const activeSignatureCtx = nestedSignatureCtx || displayCallCtx;
+            if (!shouldShowCallSignatureHover || !activeSignatureCtx?.funcName) return activeCallSignatureHoverData;
+            const match = getPreferredFunctionHoverMatch(
+                activeSignatureCtx.funcName,
+                functions,
+                incDecls,
+                { preferInclude: hasIncludeFunctionTwin(activeSignatureCtx.funcName, incDecls, lookup) },
+                lookup
+            );
+            if (!match) return activeCallSignatureHoverData;
+            activeCallSignatureHoverData = {
+                match,
+                argIndex: activeSignatureCtx.argIndex,
+                callSiteArgs: extractCallSiteArgsCached(activeSignatureCtx.openOffset)
+            };
+            return activeCallSignatureHoverData;
+        };
+
+        const { resolveIndexedAccessHover } = createHoverAccessHoverFeature({
+            vscode,
+            buildHoverMarkdown,
+            buildArgHoverInfo,
+            buildDistinctArgHoverInfo,
+            buildIndexedAccessSelectionModel,
+            createHoverRangeFromOffsets,
+            getActiveCallSignatureHoverData,
+            getDeclMatchKey,
+            getLocalFirstWordMatches,
+            getVariableWordMatches,
+            parseDimsParts,
+            resolveArgumentSymbolName,
+            resolver,
+            position,
+            lineStartOffset,
+            tokenRange,
+            fp,
+            allDecls,
+            bitmaskCtx,
+            bitmaskPartCtx,
+            funcArgs,
+            locals,
+            globals,
+            functions,
+            incDecls,
+            lookup
+        });
+        const indexedAccessHover = resolveIndexedAccessHover({
+            taggedIndexedAccessCtx: findTaggedIndexedAccessContextAtPosition(position),
+            indexedAccessContext,
+            indexedAccessHoverCtx,
+            word
+        });
+        if (indexedAccessHover) return indexedAccessHover;
 
         let targetFunc = null;
         let argIndex = null;

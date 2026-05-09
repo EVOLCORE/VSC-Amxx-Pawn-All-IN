@@ -69,7 +69,7 @@ function createCallDiagnostics(deps) {
             return diagnostics;
         }
         const deprecatedIssue = areWarningDiagnosticsEnabled()
-            ? getDeprecatedSymbolIssue?.(signatureData)
+            ? getDeprecatedSymbolIssue(signatureData)
             : null;
         if (deprecatedIssue) {
             diagnostics.push(createLiveValidationDiagnostic(
@@ -118,9 +118,9 @@ function createCallDiagnostics(deps) {
             includeWarnings: areWarningDiagnosticsEnabled(),
             includeMissingArguments: true,
             callEscapeChar,
-            precomputedLayout: layout
+            precomputedLayout: layout,
+            allowBareRationalLiteralTypeCascades: !!ctx.preprocessedState?.rationalState
         });
-        const plannedLayout = issuePlan.layout || layout;
         for (const issue of issuePlan.issues || []) {
             const rawArgIndex = Number.isInteger(issue.rawArgIndex) ? issue.rawArgIndex : -1;
             const rawArgPiece = rawArgIndex >= 0 && expandedPieces[rawArgIndex]

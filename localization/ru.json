@@ -161,6 +161,7 @@
   "validation.symbolNeverUsed": "символ не используется: \"{name}\"",
   "validation.symbolAssignedValueNeverUsed": "символу присвоено значение, которое не используется: \"{name}\"",
   "validation.dynamicStackUsageMayExceed": "локальная переменная \"{name}\" может превысить #pragma dynamic в функции \"{function}\": требуется около {usage} ячеек, текущий лимит {limit}",
+  "validation.includeNotResolved": "инклуд не найден: {name}. Откройте workspace проекта или настройте include paths.",
   "validation.symbolTruncated": "имя символа длиннее {max} значимых символов; компилятор обрежет его до \"{name}\"",
   "validation.macroRedefinition": "переопределение macro (не совпадает): {name}",
   "validation.constantRedefinition": "переопределение константы (не совпадает): {name}",

@@ -1,7 +1,7 @@
 function createTagOverridePolicySyntaxCore(deps = {}) {
     const {
-        isIdentifierStartChar = char => /[A-Za-z_@]/.test(char || ''),
-        isIdentifierContinueChar = char => /[A-Za-z0-9_@]/.test(char || '')
+        isIdentifierStartChar,
+        isIdentifierContinueChar
     } = deps;
 
     const createWarningIssue = (start, end, tagName) => ({

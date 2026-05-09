@@ -52,17 +52,6 @@ function createSymbolUsageDiagnostics(deps = {}) {
     }
     const normalizePath = value => String(value || '').replace(/\\/g, '/').toLowerCase();
 
-    function getIssue(factory, fallbackKind, fallbackMessageKey, name) {
-        return typeof factory === 'function'
-            ? factory(name)
-            : {
-                kind: fallbackKind,
-                messageKey: fallbackMessageKey,
-                params: { name },
-                severity: 'warning'
-            };
-    }
-
     function findNextNonWhitespaceIndex(source, index) {
         for (let cursor = Math.max(0, index); cursor < source.length; cursor++) {
             if (!isWhitespaceChar(source[cursor])) return cursor;
@@ -783,22 +772,12 @@ function createSymbolUsageDiagnostics(deps = {}) {
             if (!entry.read && !entry.written) {
                 issues.push({
                     entry,
-                    issue: getIssue(
-                        getSymbolNeverUsedIssue,
-                        'symbolNeverUsed',
-                        'validation.symbolNeverUsed',
-                        entry.name
-                    )
+                    issue: getSymbolNeverUsedIssue(entry.name)
                 });
             } else if (!entry.read && entry.written) {
                 issues.push({
                     entry,
-                    issue: getIssue(
-                        getSymbolAssignedValueNeverUsedIssue,
-                        'symbolAssignedValueNeverUsed',
-                        'validation.symbolAssignedValueNeverUsed',
-                        entry.name
-                    )
+                    issue: getSymbolAssignedValueNeverUsedIssue(entry.name)
                 });
             }
         }

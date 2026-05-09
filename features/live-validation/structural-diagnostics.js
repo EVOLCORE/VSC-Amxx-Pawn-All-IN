@@ -1,3 +1,6 @@
+const { createStructuralRangeHelpers } = require('./structural-ranges');
+const { getStructuralScanBounds } = require('./structural-scan-bounds');
+
 function createStructuralDiagnostics(deps) {
     const {
         areWarningDiagnosticsEnabled,
@@ -32,7 +35,6 @@ function createStructuralDiagnostics(deps) {
         isPreprocessorDirectiveOrContinuationLine,
         maskStringLiteralContent,
         mayHaveInlineStatementPrefix,
-        parseSwitchLabelLine,
         rememberSwitchCaseEntry,
         resolveSwitchCaseLabelValues,
         shouldIncludeTargetLine,
@@ -66,50 +68,12 @@ function createStructuralDiagnostics(deps) {
             }
             return lines;
         })();
-        const scanBounds = (() => {
-            if (!targetLines) {
-                return { start: 0, end: strippedLines.length - 1 };
-            }
-            let first = Infinity;
-            let last = -1;
-            for (const line of targetLines) {
-                if (!Number.isInteger(line)) continue;
-                if (line < first) first = line;
-                if (line > last) last = line;
-            }
-            if (!Number.isFinite(first) || last < first) {
-                return { start: 0, end: strippedLines.length - 1 };
-            }
-            const isContiguous = (last - first + 1) === targetLines.size;
-            if (!isContiguous) {
-                return { start: 0, end: strippedLines.length - 1 };
-            }
-            if (first <= 0 && last >= strippedLines.length - 1) {
-                return { start: 0, end: strippedLines.length - 1 };
-            }
-
-            const matchesExpandedFunctionRange = (() => {
-                for (const func of rootCtx.parsedDecls.functions || []) {
-                    const functionStartLine = func.startLine ?? func.lineNumber ?? -1;
-                    if (functionStartLine !== first) continue;
-                    const headerEndLine = func.headerEndLine ?? functionStartLine;
-                    if (last < headerEndLine) continue;
-                    if (last === headerEndLine) return true;
-
-                    for (let probeLine = headerEndLine + 1; probeLine <= last; probeLine++) {
-                        const bodyRange = functionBodyRangeByLine[probeLine];
-                        if (bodyRange?.func === func && bodyRange.endLine === last) {
-                            return true;
-                        }
-                    }
-                }
-                return false;
-            })();
-
-            return matchesExpandedFunctionRange
-                ? { start: Math.max(0, first), end: Math.min(strippedLines.length - 1, last) }
-                : { start: 0, end: strippedLines.length - 1 };
-        })();
+        const scanBounds = getStructuralScanBounds({
+            targetLines,
+            strippedLines,
+            functions: rootCtx.parsedDecls.functions || [],
+            functionBodyRangeByLine
+        });
         const returnStyleByFunction = new Map();
         const terminalStateByFunction = new Map();
         const blockContexts = [];
@@ -220,48 +184,17 @@ function createStructuralDiagnostics(deps) {
             }
             return false;
         };
-        const createKeywordRange = (lineNumber, keyword, fallbackIndex = -1) => {
-            const lineText = rawLines[lineNumber] || '';
-            const keywordIndex = fallbackIndex >= 0 ? fallbackIndex : lineText.indexOf(keyword);
-            const lineStartOffset = getLineStartOffset(lineNumber);
-            return createOffsetRange(
-                document,
-                lineStartOffset + Math.max(0, keywordIndex),
-                lineStartOffset + Math.max(keyword.length, keywordIndex + keyword.length),
-                docLength
-            );
-        };
-        const createSwitchCaseLabelRange = (lineNumber, switchLabel) => {
-            const labelStart = Number.isInteger(switchLabel?.labelStart)
-                ? switchLabel.labelStart
-                : -1;
-            const labelEnd = Number.isInteger(switchLabel?.labelEnd)
-                ? switchLabel.labelEnd
-                : -1;
-            if (labelStart >= 0 && labelEnd > labelStart) {
-                const lineStartOffset = getLineStartOffset(lineNumber);
-                return createOffsetRange(
-                    document,
-                    lineStartOffset + labelStart,
-                    lineStartOffset + labelEnd,
-                    docLength
-                );
-            }
-            return createKeywordRange(lineNumber, 'case', switchLabel?.keywordStart ?? -1);
-        };
-        const createFunctionNameRange = functionDecl => {
-            const lineNumber = functionDecl?.startLine ?? functionDecl?.lineNumber ?? 0;
-            const lineText = rawLines[lineNumber] || '';
-            const name = String(functionDecl?.name || '');
-            const nameIndex = name ? lineText.indexOf(name) : -1;
-            const lineStartOffset = getLineStartOffset(lineNumber);
-            return createOffsetRange(
-                document,
-                lineStartOffset + Math.max(0, nameIndex),
-                lineStartOffset + Math.max(1, nameIndex >= 0 ? nameIndex + name.length : lineText.length),
-                docLength
-            );
-        };
+        const {
+            createFunctionNameRange,
+            createKeywordRange,
+            createSwitchCaseLabelRange
+        } = createStructuralRangeHelpers({
+            document,
+            docLength,
+            rawLines,
+            getLineStartOffset,
+            createOffsetRange
+        });
         const functionBodyDepthByFunction = new Map();
         for (const func of rootCtx.parsedDecls.functions || []) {
             const headerEndLine = func.headerEndLine ?? func.startLine ?? func.lineNumber ?? 0;
@@ -291,12 +224,9 @@ function createStructuralDiagnostics(deps) {
             const decls = analysisCache ? [] : (lineCtx?.allDecls || rootCtx.allDecls);
             const value = evaluatePawnNumericExpr(expr, decls, new Set(), analysisCache);
             if (value == null) return null;
-            return typeof getConstantControlTestWarningIssue === 'function'
-                ? getConstantControlTestWarningIssue(value)
-                : null;
+            return getConstantControlTestWarningIssue(value);
         };
         const getConditionAssignmentIssue = (structuralLine, statement) => {
-            if (typeof findPossiblyUnintendedAssignmentInCondition !== 'function') return null;
             if (statement.firstKeyword !== 'if' && statement.firstKeyword !== 'while') return null;
             return findPossiblyUnintendedAssignmentInCondition(
                 structuralLine,
@@ -607,9 +537,7 @@ function createStructuralDiagnostics(deps) {
                     const rawLine = String(rawLines[lineNumber] || '');
                     const lineStartOffset = getLineStartOffset(lineNumber);
                     const firstVisibleIndex = rawLine.search(/\S|$/);
-                    const issue = typeof getUnreachableCodeIssue === 'function'
-                        ? getUnreachableCodeIssue()
-                        : { messageKey: 'validation.unreachableCode' };
+                    const issue = getUnreachableCodeIssue();
                     result.push(
                         createLiveValidationDiagnostic(
                             createOffsetRange(
@@ -703,7 +631,7 @@ function createStructuralDiagnostics(deps) {
             const activeSwitch = activeBlockSwitch || activeSingleSwitch;
             const hasActiveLoop = hasBlockLoop || hasSingleLineLoop;
             const hasActiveBreakContext = hasActiveLoop || !!activeSwitch;
-            const switchLabel = statement.switchLabel || parseSwitchLabelLine(trimmedLine);
+            const switchLabel = statement.switchLabel;
             const caseMatch = switchLabel?.kind === 'case' ? switchLabel : null;
             const defaultMatch = switchLabel?.kind === 'default';
             const inlineCaseBody = switchLabel?.inlineBody || '';
@@ -782,9 +710,7 @@ function createStructuralDiagnostics(deps) {
 
                 const noEffectConstantIssue = getNoEffectConstantStatementIssue(structuralLine);
                 if (shouldIncludeTargetLine(targetLines, lineNumber) && noEffectConstantIssue) {
-                    const warningIssue = typeof getStatementHasNoEffectIssue === 'function'
-                        ? getStatementHasNoEffectIssue(noEffectConstantIssue)
-                        : null;
+                    const warningIssue = getStatementHasNoEffectIssue(noEffectConstantIssue);
                     diagnostics.push(
                         createLiveValidationDiagnostic(
                             createKeywordRange(lineNumber, noEffectConstantIssue.text, noEffectConstantIssue.start),
@@ -978,7 +904,7 @@ function createStructuralDiagnostics(deps) {
             if (functionBody) {
                 updateFunctionTerminalState(lineNumber, functionBody, trimmedLine, statement);
             }
-            if (functionBody && statement.firstKeyword === 'state' && typeof getStateStatementIssues === 'function') {
+            if (functionBody && statement.firstKeyword === 'state') {
                 const stateIssues = getStateStatementIssues(structuralLine, rootCtx.parsedDecls?.functions || []);
                 for (const issue of stateIssues) {
                     if (!shouldIncludeTargetLine(targetLines, lineNumber)) continue;
@@ -1119,25 +1045,23 @@ function createStructuralDiagnostics(deps) {
         }
 
         if (areWarningDiagnosticsEnabled()) {
-            if (typeof getFunctionShouldReturnValueIssue === 'function') {
-                for (const [func, returnState] of returnStyleByFunction) {
-                    if (!shouldIncludeTargetLine(targetLines, func.startLine ?? func.lineNumber ?? -1)) continue;
-                    const issue = getFunctionShouldReturnValueIssue(
-                        func,
-                        returnState,
-                        hasCompilerLikeFunctionTerminal(func)
-                            ? { hasFunctionLevelTerminal: true }
-                            : (terminalStateByFunction.get(func) || null)
-                    );
-                    if (!issue) continue;
-                    diagnostics.push(
-                        createLiveValidationDiagnostic(
-                            createFunctionNameRange(func),
-                            t(issue.messageKey || 'validation.functionShouldReturnValue', issue.params || { name: issue.name || func.name }),
-                            getWarningSeverity()
-                        )
-                    );
-                }
+            for (const [func, returnState] of returnStyleByFunction) {
+                if (!shouldIncludeTargetLine(targetLines, func.startLine ?? func.lineNumber ?? -1)) continue;
+                const issue = getFunctionShouldReturnValueIssue(
+                    func,
+                    returnState,
+                    hasCompilerLikeFunctionTerminal(func)
+                        ? { hasFunctionLevelTerminal: true }
+                        : (terminalStateByFunction.get(func) || null)
+                );
+                if (!issue) continue;
+                diagnostics.push(
+                    createLiveValidationDiagnostic(
+                        createFunctionNameRange(func),
+                        t(issue.messageKey || 'validation.functionShouldReturnValue', issue.params || { name: issue.name || func.name }),
+                        getWarningSeverity()
+                    )
+                );
             }
             diagnostics.push(...collectUnreachableCodeDiagnostics());
         }

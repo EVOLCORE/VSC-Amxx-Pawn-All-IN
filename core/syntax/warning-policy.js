@@ -202,10 +202,8 @@ function createWarningPolicySyntaxCore() {
     function getConstantComparisonValue(decl, evaluateConstantValue) {
         const source = String(decl?.value || '').trim();
         if (!source) return { known: true, value: 0 };
-        if (typeof evaluateConstantValue === 'function') {
-            const evaluated = evaluateConstantValue(source);
-            if (evaluated != null) return { known: true, value: Number(evaluated) };
-        }
+        const evaluated = evaluateConstantValue(source);
+        if (evaluated != null) return { known: true, value: Number(evaluated) };
         return { known: false, value: normalizeConstantValueForComparison(source) };
     }
 

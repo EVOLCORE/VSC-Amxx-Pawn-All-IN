@@ -1,6 +1,11 @@
 // Shared declaration-span guards used by hover, live validation, and navigation.
 // Keeping these in one place avoids subtle drift where one feature treats a
 // declaration as "original" while another still tries to validate it.
+const {
+    isPawnIdentifierContinueCode,
+    isWhitespaceCharCode
+} = require('./line-utils');
+
 function createDeclarationGuardsCore(deps) {
     const {
         vscode,
@@ -14,19 +19,6 @@ function createDeclarationGuardsCore(deps) {
     const variableDeclarationSpanCache = new WeakMap();
     const variableDeclarationLineCoverageCache = new WeakMap();
     const variableDeclarationNameBucketCache = new WeakMap();
-    const isPawnWordCharCode = code =>
-        (code >= 65 && code <= 90) ||
-        (code >= 97 && code <= 122) ||
-        (code >= 48 && code <= 57) ||
-        code === 95 ||
-        code === 64;
-    const isWhitespaceCharCode = code =>
-        code === 32 ||
-        code === 9 ||
-        code === 10 ||
-        code === 13 ||
-        code === 12 ||
-        code === 11;
 
     function getCachedVariableDeclarationSpan(document, decl, rawLines, lineCtrlChars, preparedLines = null, lineStartOffsets = null) {
         if (!decl || decl.type !== 'variable') return null;
@@ -266,7 +258,7 @@ function createDeclarationGuardsCore(deps) {
                     const beforeCode = foundIndex > 0 ? lineText.charCodeAt(foundIndex - 1) : 0;
                     const afterIndex = foundIndex + name.length;
                     const afterCode = afterIndex < lineText.length ? lineText.charCodeAt(afterIndex) : 0;
-                    if (!isPawnWordCharCode(beforeCode) && !isPawnWordCharCode(afterCode)) {
+                    if (!isPawnIdentifierContinueCode(beforeCode) && !isPawnIdentifierContinueCode(afterCode)) {
                         lineMatchIndex = foundIndex;
                         break;
                     }

@@ -1,4 +1,3 @@
-const { computeFunctionRangeMaps: defaultComputeFunctionRangeMaps } = require('../../core/declarations/scope');
 const { isBodyDeclarationContextChangeLine } = require('../../core/syntax/line-index');
 const { createLineMembership } = require('../../core/utils/line-membership');
 
@@ -40,8 +39,7 @@ function createDocumentScanPlanBuilder(deps = {}) {
         collectInlineNamedCallContexts,
         getFunctionRangeMaps,
         getFunctionHeaderLines,
-        getEnumMemberDeclarationLines,
-        computeFunctionRangeMaps = defaultComputeFunctionRangeMaps
+        getEnumMemberDeclarationLines
     } = deps;
 
     const documentScanPlanCache = new WeakMap();
@@ -123,19 +121,7 @@ function createDocumentScanPlanBuilder(deps = {}) {
         let nextBodyChange = document.lineCount;
         let nextBodyDeclarationChange = document.lineCount;
         let nextExplicitBoundary = document.lineCount;
-        const functionHeaderLines = typeof getFunctionHeaderLines === 'function'
-            ? getFunctionHeaderLines(rootCtx)
-            : (() => {
-                const headerLines = new Set();
-                for (const func of rootCtx.parsedDecls.functions || []) {
-                    const headerStartLine = func.startLine ?? func.lineNumber ?? -1;
-                    const headerEndLine = func.headerEndLine ?? headerStartLine;
-                    for (let line = headerStartLine; line <= headerEndLine; line++) {
-                        if (line >= 0) headerLines.add(line);
-                    }
-                }
-                return headerLines;
-            })();
+        const functionHeaderLines = getFunctionHeaderLines(rootCtx);
         const bodyDeclarationContextChangeFlags =
             rootCtx.bodyDeclarationContextChangeFlags ||
             (() => {
@@ -169,20 +155,12 @@ function createDocumentScanPlanBuilder(deps = {}) {
             nextExplicitContextBoundaryLine[line] = nextExplicitBoundary;
         }
 
-        const functionRanges = typeof getFunctionRangeMaps === 'function'
-            ? getFunctionRangeMaps(rootCtx)
-            : computeFunctionRangeMaps(
-                rootCtx.parsedDecls.functions || [],
-                rootCtx.parsedDecls.depths || [],
-                document.lineCount
-            );
+        const functionRanges = getFunctionRangeMaps(rootCtx);
         const functionBodyRangeByLine = functionRanges.byLine;
         const functionBodyRangeByFunction = functionRanges.byFunction;
         const functionByName = new Map();
         const inlineCallsByLine = rootCtx.semanticSession?.inlineCallsByLine || [];
-        const enumMemberLines = typeof getEnumMemberDeclarationLines === 'function'
-            ? getEnumMemberDeclarationLines(rootCtx)
-            : new Set();
+        const enumMemberLines = getEnumMemberDeclarationLines(rootCtx);
         for (const func of rootCtx.parsedDecls.functions) {
             if (!functionByName.has(func.name)) {
                 functionByName.set(func.name, []);
@@ -249,10 +227,7 @@ function createDocumentScanPlanBuilder(deps = {}) {
                 const cachedInlineCalls = structuralPlan.inlineCallsByLine[lineNumber];
                 if (cachedInlineCalls !== undefined) return cachedInlineCalls;
                 const lineText = String(rootCtx.strippedLines?.[lineNumber] || structuralPlan.rawLines[lineNumber] || '');
-                if (
-                    lineText.indexOf('(') < 0 ||
-                    typeof collectInlineNamedCallContexts !== 'function'
-                ) {
+                if (lineText.indexOf('(') < 0) {
                     structuralPlan.inlineCallsByLine[lineNumber] = EMPTY_INLINE_CALLS;
                     return EMPTY_INLINE_CALLS;
                 }

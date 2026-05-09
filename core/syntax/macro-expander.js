@@ -11,21 +11,9 @@ function createMacroExpansionSyntaxCore(deps = {}) {
     const macroArgInfoCache = new WeakMap();
     const macroDeclLookupCache = new WeakMap();
 
-    const isIdentifierStart = char => (
-        typeof isIdentifierStartChar === 'function'
-            ? isIdentifierStartChar(char || '')
-            : /[A-Za-z_@]/.test(char || '')
-    );
-    const isIdentifierContinue = char => (
-        typeof isIdentifierContinueChar === 'function'
-            ? isIdentifierContinueChar(char || '')
-            : /[A-Za-z0-9_@]/.test(char || '')
-    );
-    const isQuoteEscaped = (source, index, escapeChar) => (
-        typeof isEscapedQuote === 'function'
-            ? isEscapedQuote(source, index, escapeChar)
-            : false
-    );
+    const isIdentifierStart = char => isIdentifierStartChar(char || '');
+    const isIdentifierContinue = char => isIdentifierContinueChar(char || '');
+    const isQuoteEscaped = (source, index, escapeChar) => isEscapedQuote(source, index, escapeChar);
     const isWhitespace = char => /\s/.test(char || '');
     const isIdentifierName = value => /^[A-Za-z_@][A-Za-z0-9_@]*$/.test(String(value || ''));
 
@@ -123,37 +111,7 @@ function createMacroExpansionSyntaxCore(deps = {}) {
     }
 
     function splitMacroArguments(source, escapeChar = '') {
-        if (typeof splitTopLevel === 'function') {
-            return splitTopLevel(String(source || ''), escapeChar, true);
-        }
-
-        const text = String(source || '');
-        if (!text.trim()) return [];
-        const parts = [];
-        let depth = 0;
-        let inString = false;
-        let stringChar = '';
-        let start = 0;
-        for (let index = 0; index < text.length; index++) {
-            const char = text[index];
-            if (inString) {
-                if (char === stringChar && !isQuoteEscaped(text, index, escapeChar)) inString = false;
-                continue;
-            }
-            if (char === '"' || char === "'") {
-                inString = true;
-                stringChar = char;
-                continue;
-            }
-            if (char === '(' || char === '[' || char === '{') depth++;
-            else if (char === ')' || char === ']' || char === '}') depth = Math.max(0, depth - 1);
-            else if (char === ',' && depth === 0) {
-                parts.push(text.slice(start, index).trim());
-                start = index + 1;
-            }
-        }
-        parts.push(text.slice(start).trim());
-        return parts;
+        return splitTopLevel(String(source || ''), escapeChar, true);
     }
 
     function getParameterizedDefineArgInfos(decl) {

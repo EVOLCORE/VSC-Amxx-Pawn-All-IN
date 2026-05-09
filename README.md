@@ -12,9 +12,9 @@ The extension is built around a shared semantic core, so hover, completion, and 
 - Include-aware declarations, symbols, functions, enums, stocks, natives, forwards, macros, and project/global include paths.
 - Fast completion for functions, variables, arguments, enum fields, compiler symbols, and include declarations.
 - Scope-aware completion that understands the current function/block, so local variables and arguments are suggested only where they are actually visible.
-- Completion ordering prefers active micro-scope locals from nested blocks, branches, and `for` declarations, then function arguments, regular function locals, globals, and include declarations.
+- Completion ordering prefers active micro-scope locals from nested blocks, branches, and `for` declarations, then regular function locals, function arguments, globals, and include declarations.
 - Semantic hover for globals, locals, function arguments, functions, includes, enum members, struct-like enum fields, bitmasks, array/indexed access, and call signatures.
-- Hover modes: normal hover, disabled hover, or Ctrl-only hover.
+- Hover modes: normal hover, disabled hover, or an experimental Ctrl-only mode for Windows.
 - Compact/full/signature-only hover content modes.
 - Optional Go to Definition links inside hover content.
 - Persistent hover support for regular symbols and diagnostic/error context.
@@ -114,7 +114,7 @@ Then use the `AMXX Pawn All-In: Compile Current File` command or the editor titl
   `errors-only` or `errors-and-warnings`.
 
 - `amxxPawnAllIn.hoverMode`
-  `disabled`, `normal`, or `ctrl-hack`.
+  `disabled`, `normal`, or `ctrl-hack`. `ctrl-hack` is an experimental Windows-only mode that tries to show the extension hover only while Ctrl is held; on other platforms it falls back to normal mode.
 
 - `amxxPawnAllIn.hoverContentMode`
   `full`, `compact`, or `signature-only`.

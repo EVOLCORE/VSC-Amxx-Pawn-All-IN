@@ -34,21 +34,19 @@ function createExpressionDiagnostics(deps) {
             );
         }
 
-        if (typeof findPossiblyUnintendedBitwiseOperationIssues === 'function') {
-            for (const issue of findPossiblyUnintendedBitwiseOperationIssues(source)) {
-                diagnostics.push(
-                    createLiveValidationDiagnostic(
-                        createOffsetRange(
-                            document,
-                            lineStartOffset + issue.start,
-                            lineStartOffset + issue.end,
-                            docLength
-                        ),
-                        t('validation.possiblyUnintendedBitwiseOperation'),
-                        issue.severity
-                    )
-                );
-            }
+        for (const issue of findPossiblyUnintendedBitwiseOperationIssues(source)) {
+            diagnostics.push(
+                createLiveValidationDiagnostic(
+                    createOffsetRange(
+                        document,
+                        lineStartOffset + issue.start,
+                        lineStartOffset + issue.end,
+                        docLength
+                    ),
+                    t('validation.possiblyUnintendedBitwiseOperation'),
+                    issue.severity
+                )
+            );
         }
 
         return diagnostics;

@@ -1,6 +1,24 @@
 // Shared declaration parsing/runtime helpers. This keeps declaration parsing
 // consistent across include parsing, document context building, hover, and
 // live validation instead of letting each feature drift on its own rules.
+const {
+    mayHaveDocsForLine,
+    attachLazyDocs,
+    parseDeprecatedPragmaMessage,
+    applyDeprecatedPragmaToNextDecl
+} = require('./docs');
+const {
+    countLineBreaks,
+    isExplicitDeclarationStartLine,
+    isPawnIdentifierContinueCode,
+    isPawnIdentifierStartCode,
+    isPotentialDeclarationStartLine,
+    isPotentialEnumDeclarationLine,
+    isWhitespaceCharCode
+} = require('./line-utils');
+const { createDefineDeclarationEventCore } = require('./define-events');
+const { createEnumSyntaxDiagnosticsCore } = require('./enum-syntax');
+
 function createDeclarationParsingCore(deps) {
     const {
         normalizeFsPath,
@@ -46,68 +64,16 @@ function createDeclarationParsingCore(deps) {
         findForScopeEndLine,
         findDepthScopeEndLine
     } = deps;
-
-    function mayHaveDocsForLine(rawLines, lineNumber) {
-        if (!Array.isArray(rawLines) || lineNumber < 0 || lineNumber >= rawLines.length) return false;
-        const ownLine = String(rawLines[lineNumber] || '');
-        if (ownLine.includes('//') || ownLine.includes('/*') || ownLine.includes('*/')) return true;
-
-        let blankGap = 0;
-        for (let probeLine = lineNumber - 1; probeLine >= 0; probeLine--) {
-            const trimmed = String(rawLines[probeLine] || '').trim();
-            if (!trimmed) {
-                blankGap++;
-                if (blankGap > 1) break;
-                continue;
-            }
-            if (trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*')) {
-                return true;
-            }
-            break;
-        }
-        return false;
-    }
-
-    function attachLazyDocs(target, propName, resolveDocs, mayHaveDocs = true) {
-        if (!mayHaveDocs) {
-            return target;
-        }
-        let resolved = false;
-        let value = '';
-        Object.defineProperty(target, propName, {
-            enumerable: true,
-            configurable: true,
-            get() {
-                if (!resolved) {
-                    value = String(typeof resolveDocs === 'function' ? (resolveDocs() || '') : '');
-                    resolved = true;
-                }
-                Object.defineProperty(target, propName, {
-                    enumerable: true,
-                    configurable: true,
-                    writable: true,
-                    value
-                });
-                return value;
-            }
-        });
-        return target;
-    }
-
-    function parseDeprecatedPragmaMessage(lineText) {
-        const match = String(lineText || '').trim().match(/^#pragma\s+deprecated\b([\s\S]*)$/i);
-        if (!match) return null;
-        return match[1].trim();
-    }
-
-    function applyDeprecatedPragmaToNextDecl(decls, message) {
-        if (!Array.isArray(decls) || !decls.length || message == null) return false;
-        const decl = decls.find(item => item && item.type !== 'define') || decls[0];
-        if (!decl) return false;
-        decl.deprecated = true;
-        decl.deprecatedMessage = String(message || '');
-        return true;
-    }
+    const {
+        collectEnumMemberSyntaxIssues,
+        parseEnumMemberPrefix,
+        splitTopLevelWithOffsets
+    } = createEnumSyntaxDiagnosticsCore({
+        FORBIDDEN,
+        getActiveCtrlChar,
+        isEscapedQuote,
+        stripLineComment
+    });
 
     function parseVarPiece(piece, modifiers, filePath, fileName, lineNumber, docs, mayHaveDocs = true) {
         let s = piece.trim().replace(/;$/, '').trim();
@@ -218,156 +184,100 @@ function createDeclarationParsingCore(deps) {
         ).map(v => ({ ...v, isForVar: true }));
     }
 
-    function isPotentialEnumDeclarationLine(line) {
-        const source = String(line || '');
-        let cursor = 0;
-        while (cursor < source.length) {
-            const code = source.charCodeAt(cursor);
-            if (code !== 32 && code !== 9) break;
-            cursor++;
-        }
-        if (source.slice(cursor, cursor + 4) !== 'enum') return false;
-        const nextChar = source[cursor + 4] || '';
-        return !/[A-Za-z0-9_@]/.test(nextChar);
-    }
-
-    function isPotentialDeclarationStartLine(line) {
-        const source = String(line || '');
-        let cursor = 0;
-        while (cursor < source.length) {
-            const code = source.charCodeAt(cursor);
-            if (code !== 32 && code !== 9) break;
-            cursor++;
-        }
-        if (cursor >= source.length) return false;
-
-        const code = source.charCodeAt(cursor);
-        if (
-            code === 35 ||  // #
-            code === 41 ||  // )
-            code === 44 ||  // ,
-            code === 59 ||  // ;
-            code === 93 ||  // ]
-            code === 125    // }
-        ) {
-            return false;
-        }
-        if (code === 47 || code === 42) return false; // / or * comment leftovers
-        return (
-            code === 95 ||  // _
-            code === 64 ||  // @
-            code === 123 || // {tag}:
-            (code >= 65 && code <= 90) ||
-            (code >= 97 && code <= 122)
-        );
-    }
-
-    const explicitDeclarationStartKeywords = new Set([
-        'new',
-        'static',
-        'stock',
-        'public',
-        'private',
-        'const',
-        'native',
-        'forward',
-        'enum'
-    ]);
-
-    function readLeadingWord(line) {
-        const source = String(line || '');
-        let cursor = 0;
-        while (cursor < source.length) {
-            const code = source.charCodeAt(cursor);
-            if (code !== 32 && code !== 9) break;
-            cursor++;
-        }
-        const start = cursor;
-        if (!/[A-Za-z_@]/.test(source[cursor] || '')) return '';
-        cursor++;
-        while (cursor < source.length && /[A-Za-z0-9_@]/.test(source[cursor])) cursor++;
-        return source.slice(start, cursor);
-    }
-
-    function isExplicitDeclarationStartLine(line) {
-        const word = readLeadingWord(line);
-        return !!word && explicitDeclarationStartKeywords.has(word);
-    }
-
-    const isWhitespaceCharCode = code =>
-        code === 32 || code === 9 || code === 10 || code === 11 || code === 12 || code === 13;
-    const isPawnIdentifierStartCode = code =>
-        code === 95 ||
-        code === 64 ||
-        (code >= 65 && code <= 90) ||
-        (code >= 97 && code <= 122);
-    const isPawnIdentifierContinueCode = code =>
-        isPawnIdentifierStartCode(code) ||
-        (code >= 48 && code <= 57);
-
-    function countLineBreaks(source, start = 0, end = source.length) {
-        let count = 0;
-        for (let index = Math.max(0, start); index < end && index < source.length; index++) {
-            if (source[index] === '\n') count++;
-        }
-        return count;
-    }
-
-    function splitTopLevelWithOffsets(source) {
-        if (!String(source || '').trim()) return [];
-        const parts = [];
-        const escapeChar = getActiveCtrlChar();
-        let depth = 0;
-        let inStr = false;
-        let strCh = '';
-        let startOffset = 0;
-        let startLineOffset = 0;
-        let lineOffset = 0;
-        const pushPart = endOffset => {
-            let trimStart = startOffset;
-            let trimStartLineOffset = startLineOffset;
-            while (trimStart < endOffset && isWhitespaceCharCode(source.charCodeAt(trimStart))) {
-                if (source[trimStart] === '\n') trimStartLineOffset++;
-                trimStart++;
-            }
-            let trimEnd = endOffset;
-            while (trimEnd > trimStart && isWhitespaceCharCode(source.charCodeAt(trimEnd - 1))) {
-                trimEnd--;
-            }
-            if (trimStart < trimEnd) {
-                parts.push({
-                    text: source.slice(trimStart, trimEnd),
-                    startOffset: trimStart,
-                    startLineOffset: trimStartLineOffset
-                });
-            }
-            startOffset = endOffset + 1;
-            startLineOffset = lineOffset;
-        };
-        for (let index = 0; index < source.length; index++) {
-            const char = source[index];
-            if (char === '\n') {
-                lineOffset++;
-            }
-            if (inStr) {
-                if (char === strCh && !isEscapedQuote(source, index, escapeChar)) {
-                    inStr = false;
+    function findIdentifierSpanForOccurrenceInLine(source, name, occurrenceIndex = 0) {
+        const lineText = String(source || '');
+        const target = String(name || '');
+        if (!target) return null;
+        let seenCount = 0;
+        for (let index = 0; index < lineText.length;) {
+            const foundIndex = lineText.indexOf(target, index);
+            if (foundIndex < 0) break;
+            const beforeCode = lineText.charCodeAt(foundIndex - 1);
+            const afterCode = lineText.charCodeAt(foundIndex + target.length);
+            if (!isPawnIdentifierContinueCode(beforeCode) && !isPawnIdentifierContinueCode(afterCode)) {
+                if (seenCount === occurrenceIndex) {
+                    return {
+                        start: foundIndex,
+                        end: foundIndex + target.length
+                    };
                 }
+                seenCount++;
+            }
+            index = foundIndex + target.length;
+        }
+        return null;
+    }
+
+    function findSameLineMatchingBracket(source, openIndex) {
+        const lineText = String(source || '');
+        let depth = 0;
+        for (let index = openIndex; index < lineText.length; index++) {
+            const char = lineText[index];
+            if (char === '[') {
+                depth++;
                 continue;
             }
-            if (char === '"' || char === "'") {
-                inStr = true;
-                strCh = char;
-                continue;
-            }
-            if (char === '[' || char === '(' || char === '{') depth++;
-            else if (char === ']' || char === ')' || char === '}') depth--;
-            else if (char === ',' && depth === 0) {
-                pushPart(index);
+            if (char === ']') {
+                depth--;
+                if (depth === 0) return index;
             }
         }
-        pushPart(source.length);
-        return parts;
+        return -1;
+    }
+
+    function readUnexpectedVariableDeclarationTail(source, decl, occurrenceIndex = 0) {
+        const lineText = String(source || '');
+        if (!decl?.name) return null;
+        const nameSpan = findIdentifierSpanForOccurrenceInLine(lineText, decl.name, occurrenceIndex);
+        if (!nameSpan) return null;
+        let cursor = nameSpan.end;
+        while (cursor < lineText.length && isWhitespaceCharCode(lineText.charCodeAt(cursor))) cursor++;
+        while (lineText[cursor] === '[') {
+            const closeIndex = findSameLineMatchingBracket(lineText, cursor);
+            if (closeIndex < 0) return null;
+            cursor = closeIndex + 1;
+            while (cursor < lineText.length && isWhitespaceCharCode(lineText.charCodeAt(cursor))) cursor++;
+        }
+
+        const char = lineText[cursor] || '';
+        if (!char || char === '=' || char === ',' || char === ';') return null;
+        if (char === '/' && (lineText[cursor + 1] === '/' || lineText[cursor + 1] === '*')) return null;
+
+        let end = cursor + 1;
+        while (
+            end < lineText.length &&
+            !isWhitespaceCharCode(lineText.charCodeAt(end)) &&
+            !/[\s=,;[\](){}]/.test(lineText[end] || '') &&
+            !(lineText[end] === '/' && (lineText[end + 1] === '/' || lineText[end + 1] === '*'))
+        ) {
+            end++;
+        }
+        return {
+            start: cursor,
+            end: Math.max(cursor + 1, end),
+            token: lineText.slice(cursor, Math.max(cursor + 1, end))
+        };
+    }
+
+    function collectVariableDeclarationSyntaxIssuesForLine(source, decls = []) {
+        const variableDecls = (decls || []).filter(decl => decl?.type === 'variable');
+        const issues = [];
+        for (let index = 0; index < variableDecls.length; index++) {
+            const decl = variableDecls[index];
+            const sameNameOccurrenceIndex = variableDecls
+                .slice(0, index)
+                .filter(item => item?.name === decl?.name).length;
+            const invalidTail = readUnexpectedVariableDeclarationTail(source, decl, sameNameOccurrenceIndex);
+            if (!invalidTail) continue;
+            issues.push({
+                decl,
+                startIndex: invalidTail.start,
+                length: Math.max(1, invalidTail.end - invalidTail.start),
+                messageKey: 'validation.unexpectedToken',
+                params: { token: invalidTail.token }
+            });
+        }
+        return issues;
     }
 
     function parseEnumBlock(rawLines, startLine, filePath, fileName, lineCtrlChars = [], strippedLines = null, outerDecls = []) {
@@ -472,52 +382,6 @@ function createDeclarationParsingCore(deps) {
         );
         const bodyBlockOffset = strippedOpenIdx >= 0 ? strippedOpenIdx + 1 : openIdx + 1;
         const bodyStartLineOffset = countLineBreaks(strippedBlockText, 0, bodyBlockOffset);
-
-        const parseEnumMemberPrefix = (source, baseOffset = 0) => {
-            const piece = String(source || '');
-            let cursor = 0;
-            while (cursor < piece.length && isWhitespaceCharCode(piece.charCodeAt(cursor))) cursor++;
-            if (cursor >= piece.length) return null;
-
-            let typeTag = '';
-            const tagStart = cursor;
-            const firstCode = piece.charCodeAt(cursor);
-            if (firstCode === 123) {
-                const closeBrace = piece.indexOf('}', cursor + 1);
-                if (closeBrace > cursor) {
-                    let colonProbe = closeBrace + 1;
-                    while (colonProbe < piece.length && isWhitespaceCharCode(piece.charCodeAt(colonProbe))) colonProbe++;
-                    if (piece.charCodeAt(colonProbe) === 58) {
-                        typeTag = piece.slice(cursor, closeBrace + 1);
-                        cursor = colonProbe + 1;
-                    }
-                }
-            } else if (isPawnIdentifierStartCode(firstCode)) {
-                let tagEnd = cursor + 1;
-                while (tagEnd < piece.length && isPawnIdentifierContinueCode(piece.charCodeAt(tagEnd))) tagEnd++;
-                let colonProbe = tagEnd;
-                while (colonProbe < piece.length && isWhitespaceCharCode(piece.charCodeAt(colonProbe))) colonProbe++;
-                if (piece.charCodeAt(colonProbe) === 58) {
-                    typeTag = piece.slice(tagStart, tagEnd);
-                    cursor = colonProbe + 1;
-                }
-            }
-
-            while (cursor < piece.length && isWhitespaceCharCode(piece.charCodeAt(cursor))) cursor++;
-            if (!isPawnIdentifierStartCode(piece.charCodeAt(cursor))) return null;
-            const nameStart = cursor;
-            cursor++;
-            while (cursor < piece.length && isPawnIdentifierContinueCode(piece.charCodeAt(cursor))) cursor++;
-            const name = piece.slice(nameStart, cursor);
-            if (FORBIDDEN.has(name)) return null;
-
-            return {
-                typeTag,
-                name,
-                nameOffsetInPiece: baseOffset + nameStart,
-                rest: piece.slice(cursor).trimStart()
-            };
-        };
 
         for (const rawPart of splitTopLevelWithOffsets(body)) {
             const rawPiece = rawPart.text;
@@ -730,7 +594,7 @@ function createDeclarationParsingCore(deps) {
             if (mode === 'local') return [];
             const argsRaw = extractParenContent(rest) ?? '';
             const closeParenIndex = findMatchingParenInText(rest, 0);
-            const stateSpec = closeParenIndex >= 0 && typeof parseFunctionStateSpecTail === 'function'
+            const stateSpec = closeParenIndex >= 0
                 ? parseFunctionStateSpecTail(rest.slice(closeParenIndex + 1), line.length - rest.length + closeParenIndex + 1)
                 : null;
             let type = 'function';
@@ -772,189 +636,19 @@ function createDeclarationParsingCore(deps) {
         return results;
     }
 
-    function collectDefineDeclarationText(rawLines, startLine, lineCtrlChars = [], scanLines = null) {
-        const collected = collectDeclarationText(rawLines, startLine, lineCtrlChars, scanLines);
-        if (collected.text.indexOf('//') < 0) return collected;
-
-        let hasLineComment = false;
-        for (let currentLine = startLine; currentLine < collected.nextLine; currentLine++) {
-            if (String((scanLines || rawLines)[currentLine] || '').indexOf('//') >= 0) {
-                hasLineComment = true;
-                break;
-            }
-        }
-        if (!hasLineComment) return collected;
-
-        const defineLines = [];
-        for (let currentLine = startLine; currentLine < collected.nextLine; currentLine++) {
-            const source = String((scanLines || rawLines)[currentLine] || '');
-            const escapeChar = lineCtrlChars[currentLine] || getActiveCtrlChar();
-            defineLines[currentLine] = source.indexOf('//') >= 0
-                ? stripLineComment(source, escapeChar)
-                : source;
-        }
-        return collectDeclarationText(rawLines, startLine, lineCtrlChars, defineLines);
-    }
-
-    function collectActiveDefineDecls(rawLines, filePath, fileName, lineCtrlChars = [], cursorLine = undefined, strippedLines = null, directiveCandidateLines = null) {
-        const activeDefines = new Map();
-        const scanLines = strippedLines || rawLines;
-        const candidateLines = Array.isArray(directiveCandidateLines)
-            ? directiveCandidateLines
-            : null;
-        let cursor = 0;
-        let candidateIndex = 0;
-        let pendingDeprecatedMessage = null;
-        while (cursor < scanLines.length) {
-            const i = candidateLines
-                ? candidateLines[candidateIndex++]
-                : cursor;
-            if (!Number.isInteger(i)) break;
-            if (candidateLines && i < cursor) continue;
-            if (cursorLine !== undefined && i > cursorLine) break;
-
-            const trimmedLine = String(scanLines[i] || '').trim();
-            if (!trimmedLine) {
-                cursor = i + 1;
-                continue;
-            }
-            const deprecatedMessage = parseDeprecatedPragmaMessage(trimmedLine);
-            if (deprecatedMessage != null) {
-                pendingDeprecatedMessage = deprecatedMessage;
-                cursor = i + 1;
-                continue;
-            }
-
-            const directive = parsePreprocessorDirectiveLine(trimmedLine);
-            if (directive?.keyword === 'define') {
-                const startLine = i;
-                const { text: joinedText, nextLine } = collectDefineDeclarationText(rawLines, i, lineCtrlChars, scanLines);
-                cursor = nextLine;
-                const parsedDecls = parseDeclLine(
-                    { text: joinedText, startLine },
-                    rawLines,
-                    filePath,
-                    fileName,
-                    'global'
-                );
-                if (pendingDeprecatedMessage != null && applyDeprecatedPragmaToNextDecl(parsedDecls, pendingDeprecatedMessage)) {
-                    pendingDeprecatedMessage = null;
-                }
-                const defineDecl = parsedDecls.find(d => d.type === 'define');
-                if (defineDecl) activeDefines.set(defineDecl.name, defineDecl);
-                continue;
-            }
-
-            if (directive?.keyword === 'undef') {
-                const parsedUndef = parsePreprocessorSingleIdentifierPayload(directive);
-                if (parsedUndef?.name) activeDefines.delete(parsedUndef.name);
-            }
-            cursor = i + 1;
-        }
-
-        return [...activeDefines.values()];
-    }
-
-    function collectDefineDirectiveEvents(rawLines, filePath, fileName, lineCtrlChars = [], strippedLines = null, directiveCandidateLines = null) {
-        const events = [];
-        const scanLines = strippedLines || rawLines;
-        const candidateLines = Array.isArray(directiveCandidateLines)
-            ? directiveCandidateLines
-            : null;
-        let cursor = 0;
-        let candidateIndex = 0;
-        let pendingDeprecatedMessage = null;
-        while (cursor < scanLines.length) {
-            const i = candidateLines
-                ? candidateLines[candidateIndex++]
-                : cursor;
-            if (!Number.isInteger(i)) break;
-            if (candidateLines && i < cursor) continue;
-            const trimmedLine = String(scanLines[i] || '').trim();
-            if (!trimmedLine) {
-                cursor = i + 1;
-                continue;
-            }
-            const deprecatedMessage = parseDeprecatedPragmaMessage(trimmedLine);
-            if (deprecatedMessage != null) {
-                pendingDeprecatedMessage = deprecatedMessage;
-                cursor = i + 1;
-                continue;
-            }
-
-            const directive = parsePreprocessorDirectiveLine(trimmedLine);
-            if (directive?.keyword === 'define') {
-                const startLine = i;
-                const { text: joinedText, nextLine } = collectDefineDeclarationText(rawLines, i, lineCtrlChars, scanLines);
-                cursor = nextLine;
-                const parsedDecls = parseDeclLine(
-                    { text: joinedText, startLine },
-                    rawLines,
-                    filePath,
-                    fileName,
-                    'global'
-                );
-                if (pendingDeprecatedMessage != null && applyDeprecatedPragmaToNextDecl(parsedDecls, pendingDeprecatedMessage)) {
-                    pendingDeprecatedMessage = null;
-                }
-                const defineDecl = parsedDecls.find(d => d.type === 'define');
-                if (defineDecl) {
-                    events.push({
-                        lineNumber: startLine,
-                        type: 'define',
-                        name: defineDecl.name,
-                        defineDecl
-                    });
-                }
-                continue;
-            }
-
-            if (directive?.keyword === 'undef') {
-                const parsedUndef = parsePreprocessorSingleIdentifierPayload(directive);
-                if (!parsedUndef?.name) {
-                    cursor = i + 1;
-                    continue;
-                }
-                events.push({
-                    lineNumber: i,
-                    type: 'undef',
-                    name: parsedUndef.name
-                });
-            }
-            cursor = i + 1;
-        }
-
-        return events;
-    }
-
-    function advanceActiveDefineDecls(activeDefines, defineDirectiveEvents = [], fromLine, toLine, startEventIndex = 0) {
-        let eventIndex = Math.max(0, startEventIndex);
-        let changed = false;
-
-        while (eventIndex < defineDirectiveEvents.length) {
-            const event = defineDirectiveEvents[eventIndex];
-            if (event.lineNumber < fromLine) {
-                eventIndex++;
-                continue;
-            }
-            if (event.lineNumber > toLine) break;
-
-            if (event.type === 'define') {
-                const previous = activeDefines.get(event.name) || null;
-                activeDefines.set(event.name, event.defineDecl);
-                if (previous !== event.defineDecl) changed = true;
-            } else if (event.type === 'undef') {
-                changed = activeDefines.delete(event.name) || changed;
-            }
-
-            eventIndex++;
-        }
-
-        return {
-            changed,
-            nextEventIndex: eventIndex
-        };
-    }
+    const {
+        advanceActiveDefineDecls,
+        collectActiveDefineDecls,
+        collectDefineDeclarationText,
+        collectDefineDirectiveEvents
+    } = createDefineDeclarationEventCore({
+        collectDeclarationText,
+        getActiveCtrlChar,
+        parseDeclLine,
+        parsePreprocessorDirectiveLine,
+        parsePreprocessorSingleIdentifierPayload,
+        stripLineComment
+    });
 
     function areDeclListsEqualByRef(left, right) {
         if (left === right) return true;
@@ -1815,6 +1509,8 @@ function createDeclarationParsingCore(deps) {
         parseFuncArgs,
         parseForInit,
         parseEnumBlock,
+        collectEnumMemberSyntaxIssues,
+        collectVariableDeclarationSyntaxIssuesForLine,
         isPotentialEnumDeclarationLine,
         isPotentialDeclarationStartLine,
         isExplicitDeclarationStartLine,

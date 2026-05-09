@@ -70,9 +70,7 @@ function createRationalPolicySyntaxCore(deps = {}) {
         const closeIndex = findSimpleClosingParen(source, cursor);
         const expressionEnd = closeIndex >= 0 ? closeIndex : source.length;
         const expression = source.slice(cursor + 1, expressionEnd).trim();
-        const evaluated = typeof evaluatePawnNumericExpr === 'function'
-            ? evaluatePawnNumericExpr(expression, defineDecls)
-            : Number(expression);
+        const evaluated = evaluatePawnNumericExpr(expression, defineDecls);
         const digits = Number(evaluated);
 
         parsed.hasPrecision = true;

@@ -5,11 +5,6 @@ const { createHoverHelpersFeature } = require('./helpers');
 const { createHoverBitmaskFeature } = require('./bitmask');
 const { createHoverSignatureFeature } = require('./signature');
 const { createHoverEnumInitializerFeature } = require('./enum-initializer');
-const { createUtilityCore } = require('../../core/utils');
-
-const {
-    normalizeLiveValidationIssueMode: defaultNormalizeLiveValidationIssueMode
-} = createUtilityCore();
 
 function createHoverRuntimeFeature(deps) {
     const {
@@ -19,13 +14,13 @@ function createHoverRuntimeFeature(deps) {
         HOVER_RELEVANT_CONFIG_KEYS,
         getHoverMode,
         getHoverContentMode,
-        getLiveValidationIssueMode = () => 'errors-and-warnings',
-        normalizeLiveValidationIssueMode = defaultNormalizeLiveValidationIssueMode,
+        getLiveValidationIssueMode,
+        normalizeLiveValidationIssueMode,
         areLiveValidationWarningsEnabled,
         isHoverGoToDefinitionLinksEnabled,
-        getIncludeFileExtensions = () => [],
-        getGlobalIncludePaths = () => [],
-        getProjectLocalIncludePaths = () => [],
+        getIncludeFileExtensions,
+        getGlobalIncludePaths,
+        getProjectLocalIncludePaths,
         t,
         buildCommandLink,
         getWordAtPosition,
@@ -91,13 +86,13 @@ function createHoverRuntimeFeature(deps) {
         isMeaningfulCallPosition
     } = deps;
     const getHoverCacheSignature = () => [
-        `mode:${getHoverMode?.() || ''}`,
-        `content:${getHoverContentMode?.() || ''}`,
-        `issues:${normalizeLiveValidationIssueMode(getLiveValidationIssueMode?.())}`,
-        `links:${isHoverGoToDefinitionLinksEnabled?.() ? 1 : 0}`,
-        `includeExt:${(getIncludeFileExtensions?.() || []).join(',')}`,
-        `global:${(getGlobalIncludePaths?.() || []).join('|')}`,
-        `project:${(getProjectLocalIncludePaths?.() || []).join('|')}`
+        `mode:${getHoverMode() || ''}`,
+        `content:${getHoverContentMode() || ''}`,
+        `issues:${normalizeLiveValidationIssueMode(getLiveValidationIssueMode())}`,
+        `links:${isHoverGoToDefinitionLinksEnabled() ? 1 : 0}`,
+        `includeExt:${(getIncludeFileExtensions() || []).join(',')}`,
+        `global:${(getGlobalIncludePaths() || []).join('|')}`,
+        `project:${(getProjectLocalIncludePaths() || []).join('|')}`
     ].join(';');
 
     const {

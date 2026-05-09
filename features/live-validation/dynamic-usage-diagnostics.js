@@ -70,7 +70,7 @@ function createDynamicUsageLiveDiagnostics(deps) {
     function getCachedDynamicUsageIssues(rootCtx) {
         const semanticSession = rootCtx?.semanticSession || null;
         const parsedDecls = rootCtx?.parsedDecls || null;
-        if (!parsedDecls || typeof collectDynamicUsageIssues !== 'function') {
+        if (!parsedDecls) {
             return EMPTY_DIAGNOSTICS;
         }
         let byParsedDecls = semanticSession?.dynamicUsageIssuesByParsedDecls || null;
@@ -78,7 +78,7 @@ function createDynamicUsageLiveDiagnostics(deps) {
             return byParsedDecls.get(parsedDecls) || EMPTY_DIAGNOSTICS;
         }
         const issues = collectDynamicUsageIssues(rootCtx, {
-            functionRangeMaps: getFunctionRangeMaps?.(rootCtx)
+            functionRangeMaps: getFunctionRangeMaps(rootCtx)
         }) || EMPTY_DIAGNOSTICS;
         if (semanticSession) {
             if (!byParsedDecls) {
@@ -91,8 +91,8 @@ function createDynamicUsageLiveDiagnostics(deps) {
     }
 
     function collectDynamicUsageLiveDiagnostics(document, rootCtx, docLength, options = {}) {
-        if (!areWarningDiagnosticsEnabled?.()) return EMPTY_DIAGNOSTICS;
-        if (isIncludeDocument?.(document) && !isStrictIncludeValidationEnabled?.()) {
+        if (!areWarningDiagnosticsEnabled()) return EMPTY_DIAGNOSTICS;
+        if (isIncludeDocument(document) && !isStrictIncludeValidationEnabled()) {
             return EMPTY_DIAGNOSTICS;
         }
         const inactiveLines = options.inactiveStockLines || null;

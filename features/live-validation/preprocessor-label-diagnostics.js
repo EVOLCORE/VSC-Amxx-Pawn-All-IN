@@ -1,4 +1,5 @@
 const { createPreprocessorLabelSyntaxCore } = require('../../core/syntax');
+const { LIVE_UNRESOLVED_INCLUDE_DIAGNOSTIC_CODE } = require('./diagnostic-codes');
 
 function createPreprocessorLabelDiagnostics(deps) {
     const {
@@ -28,6 +29,7 @@ function createPreprocessorLabelDiagnostics(deps) {
         collectPreprocessorDirectiveText,
         parseRationalPragmaPayload,
         collectGotoReferences,
+        collectEnumMemberSyntaxIssues,
         analyzePreprocessorConditionExpression,
         getPreprocessorDirectiveIssues,
         isIncludeDocument,
@@ -63,6 +65,7 @@ function createPreprocessorLabelDiagnostics(deps) {
         collectPreprocessorDirectiveText,
         parseRationalPragmaPayload,
         collectGotoReferences,
+        collectEnumMemberSyntaxIssues,
         analyzePreprocessorConditionExpression,
         getPreprocessorDirectiveIssues,
         maskStringLiteralContent,
@@ -70,7 +73,7 @@ function createPreprocessorLabelDiagnostics(deps) {
     });
 
     function collectPreprocessorAndLabelLiveDiagnostics(document, rootCtx, docLength, targetLineNumbers = null) {
-        if (isIncludeDocument?.(document) && !isStrictIncludeValidationEnabled?.()) {
+        if (isIncludeDocument(document) && !isStrictIncludeValidationEnabled()) {
             return [];
         }
         const lineStartOffsets = rootCtx.lineStartOffsets || null;
@@ -86,14 +89,18 @@ function createPreprocessorLabelDiagnostics(deps) {
         };
 
         return collectPreprocessorAndLabelIssues(rootCtx, targetLineNumbers, {
-            includeWarnings: areWarningDiagnosticsEnabled?.()
-        }).map(issue =>
-            createLiveValidationDiagnostic(
+            includeWarnings: areWarningDiagnosticsEnabled()
+        }).map(issue => {
+            const diagnostic = createLiveValidationDiagnostic(
                 createLineRange(issue.lineNumber, issue.startIndex, issue.length),
                 t(issue.messageKey, issue.params || {}),
-                issue.severity === 'warning' ? getWarningSeverity?.() : undefined
-            )
-        );
+                issue.severity === 'warning' ? getWarningSeverity() : undefined
+            );
+            if (issue.messageKey === 'validation.includeNotResolved') {
+                diagnostic.code = LIVE_UNRESOLVED_INCLUDE_DIAGNOSTIC_CODE;
+            }
+            return diagnostic;
+        });
     }
 
     return {

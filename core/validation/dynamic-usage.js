@@ -21,9 +21,7 @@ function createDynamicUsageDiagnostics(deps = {}) {
             if (!match) continue;
             const expr = String(match[1] || '').trim();
             if (!expr) continue;
-            const value = typeof evaluatePawnNumericExpr === 'function'
-                ? evaluatePawnNumericExpr(expr, decls, new Set(), analysisCache)
-                : Number.parseInt(expr, 10);
+            const value = evaluatePawnNumericExpr(expr, decls, new Set(), analysisCache);
             if (Number.isFinite(value) && value >= 0) {
                 limit = Math.floor(value);
             }
@@ -36,18 +34,14 @@ function createDynamicUsageDiagnostics(deps = {}) {
         if (!decl || decl.type !== 'variable') return null;
         if (decl.isArg) return null;
         if ((decl.modifiers || []).includes('static')) return null;
-        const dimParts = typeof getEffectiveDeclDimParts === 'function'
-            ? getEffectiveDeclDimParts(decl)
-            : [];
+        const dimParts = getEffectiveDeclDimParts(decl);
         if (!dimParts.length) return 1;
 
         const decls = rootCtx?.allDecls || [];
         let cells = 1;
         for (const part of dimParts) {
             const spec = analysisCache?.getDimSpec?.(part) ||
-                (typeof parseDimSpec === 'function'
-                    ? parseDimSpec(part, decls, new Set(), analysisCache)
-                    : null);
+                parseDimSpec(part, decls, new Set(), analysisCache);
             const capacity = spec?.capacity;
             if (!Number.isFinite(capacity) || capacity <= 0) return null;
             cells *= Math.floor(capacity);

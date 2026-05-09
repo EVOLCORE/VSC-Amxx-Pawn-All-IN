@@ -318,8 +318,7 @@ function createStatementClassifier(deps) {
         const expr = text.slice(start, end).trim();
         if (!expr) return null;
         if (/[=,{}[\]]/.test(expr) || /\+\+|--/.test(expr)) return null;
-        if (typeof looksLikePawnExpressionFragment === 'function' &&
-            !looksLikePawnExpressionFragment(expr, { allowAssignment: false })) {
+        if (!looksLikePawnExpressionFragment(expr, { allowAssignment: false })) {
             return null;
         }
 
@@ -437,10 +436,6 @@ function createStatementClassifier(deps) {
         );
     }
 
-    function parseSwitchLabelLine(source) {
-        return parseSwitchLabelAt(String(source || ''), 0);
-    }
-
     function countTopLevelSemicolonStatements(source) {
         const text = String(source || '');
         let count = 0;
@@ -520,9 +515,7 @@ function createStatementClassifier(deps) {
         const isMalformedConstantExpr = source => {
             const text = String(source || '').trim();
             if (!text) return true;
-            return typeof looksLikePawnExpressionFragment === 'function'
-                ? !looksLikePawnExpressionFragment(text, { allowAssignment: false })
-                : /(?:&&|\|\||<<|>>|==|!=|<=|>=|[+\-*/%&|^<>!~?:,])\s*$/.test(text);
+            return !looksLikePawnExpressionFragment(text, { allowAssignment: false });
         };
         const evaluate = source => {
             const text = String(source || '').trim();
@@ -658,7 +651,6 @@ function createStatementClassifier(deps) {
         mayHaveInlineStatementPrefix,
         isLocalDeclarationStatementStart,
         hasControlInlinePrefix,
-        parseSwitchLabelLine,
         countTopLevelSemicolonStatements,
         resolveSwitchCaseLabelValues,
         findDuplicateSwitchCaseEntry,

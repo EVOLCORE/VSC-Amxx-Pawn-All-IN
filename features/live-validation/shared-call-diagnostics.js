@@ -298,14 +298,12 @@ function createSharedCallDiagnostics(deps) {
                 continue;
             }
 
-            const redundantSizeofIssue = typeof getRedundantSizeofDefaultIssue === 'function'
-                ? getRedundantSizeofDefaultIssue(defaultOperator, referencedParam.meta)
-                : null;
-            if (redundantSizeofIssue && areWarningDiagnosticsEnabled?.()) {
+            const redundantSizeofIssue = getRedundantSizeofDefaultIssue(defaultOperator, referencedParam.meta);
+            if (redundantSizeofIssue && areWarningDiagnosticsEnabled()) {
                 pushParamDiagnostic(
                     info,
                     t(redundantSizeofIssue.messageKey || 'validation.redundantSizeof', redundantSizeofIssue.params || { name: defaultOperator.symbolName }),
-                    getWarningSeverity?.()
+                    getWarningSeverity()
                 );
             }
         }

@@ -62,7 +62,8 @@ function createAnalysisRuntime(deps) {
         getFuncArgsParseCacheKey,
         funcArgsParseCache,
         getDocumentTextAndResolver,
-        isKnownFunctionName
+        isKnownFunctionName,
+        collectRationalLiteralIssues
     } = deps;
 
     const validationRuntime = createValidationCore({
@@ -109,7 +110,8 @@ function createAnalysisRuntime(deps) {
         splitTopLevelWithRanges,
         isFunctionLikeDecl,
         getDocumentTextAndResolver,
-        isKnownFunctionName
+        isKnownFunctionName,
+        collectRationalLiteralIssues
     });
 
     const declarationGuardsRuntime = createDeclarationGuardsCore({

@@ -293,7 +293,7 @@
       "patterns": [
         {
           "name": "string.quoted.double.pawn",
-          "begin": "\"",
+          "begin": "(?:!\\^|\\^!|!|\\^)?\"",
           "beginCaptures": {
             "0": {
               "name": "punctuation.definition.string.begin.pawn"
@@ -307,12 +307,16 @@
             },
             "patterns": [
               {
+                "name": "string.escape.quote.pawn",
+                "match": "\\^\""
+              },
+              {
                 "name": "constant.other.placeholder.pawn",
                 "match": "\\^(?:[0-9]|n)|\\\\[ndrywR]"
               },
               {
                 "name": "constant.character.escape.pawn",
-                "match": "\\^(?:\\^|[abefnprtv'\"?]|[0-3]\\d{0,2}|[4-7]\\d?|x[a-fA-F0-9]{1,2}|u[a-fA-F0-9]{1,4}|U[a-fA-F0-9]{1,8})"
+                "match": "\\^(?:\\^|[abefnprtv'?]|[0-3]\\d{0,2}|[4-7]\\d?|x[a-fA-F0-9]{1,2}|u[a-fA-F0-9]{1,4}|U[a-fA-F0-9]{1,8})"
               },
             {
               "name": "constant.character.escape.pawn",

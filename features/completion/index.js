@@ -109,7 +109,7 @@ function createCompletionFeature(deps) {
         const scopeSpan = Math.max(0, scopeEndLine - declLine);
         const forScopeRank = localDecl?.isForVar ? 0 : 1;
         const depthRank = Math.max(0, 999 - Math.min(999, Math.max(0, declDepth)));
-        const baseRank = isMicroScopeLocal(localDecl) ? '001' : '003';
+        const baseRank = isMicroScopeLocal(localDecl) ? '001' : '002';
 
         return [
             baseRank,
@@ -219,7 +219,7 @@ function createCompletionFeature(deps) {
                 }
                 globals.forEach(d => setBestCompletionCandidate(varMap, d, '004'));
                 locals.forEach(d => setBestCompletionCandidate(varMap, { ...d, isLocal: true }, getScopedLocalSortPrefix(d, line)));
-                funcArgs.forEach(d => setBestCompletionCandidate(varMap, d, '002'));
+                funcArgs.forEach(d => setBestCompletionCandidate(varMap, d, '003'));
                 varMap.forEach(({ d, p }) => items.push(makeItem(d, p, fp, replaceRange)));
 
                 functions.forEach(d => items.push(makeItem(d, '010', fp, replaceRange)));

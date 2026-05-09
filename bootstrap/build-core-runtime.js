@@ -177,6 +177,7 @@ function buildCoreActivationRuntime(deps) {
         getFileSnapshot,
         clearFileSnapshotCacheForFile,
         measurePawnStringLiteral,
+        collectRationalLiteralIssues,
         isVariadicParam,
         getLabelDeclarationIssues,
         parseLabelDeclaration,
@@ -251,6 +252,7 @@ function buildCoreActivationRuntime(deps) {
         getIncludeNameFromLine,
         collectDeclarationText,
         stripLineComment,
+        splitTopLevel,
         readNormalizedFileContent,
         getCachedCommentAnalysis,
         setCachedCommentAnalysis,
@@ -328,6 +330,7 @@ function buildCoreActivationRuntime(deps) {
         funcArgsParseCache,
         getDocumentTextAndResolver,
         isKnownFunctionName,
+        collectRationalLiteralIssues,
         isVariadicParam,
         isPawnIdentifierStartChar,
         isPawnIdentifierContinueChar

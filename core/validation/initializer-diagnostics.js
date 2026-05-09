@@ -6,12 +6,81 @@ function createInitializerDiagnostics(deps) {
         stripTagCastsForValidation,
         evaluatePawnNumericExpr,
         parseBraceArrayLiteralExpression,
+        parseBraceArrayLiteralExpressionDetailed,
         findUnresolvedReferenceNames,
         parseDimsParts,
         parseDimSpec,
         measurePawnStringLiteral,
         collectInvalidPawnCodeCharacterRuns
     } = deps;
+
+    function getBraceArrayLiteralDetails(source, escapeChar) {
+        return parseBraceArrayLiteralExpressionDetailed(source, escapeChar);
+    }
+
+    function readLeadingInitializerTokenIssue(source, rangeStart = 0, escapeChar = '') {
+        const text = String(source || '');
+        let cursor = 0;
+        while (cursor < text.length && /\s/.test(text[cursor] || '')) cursor++;
+        if (cursor >= text.length) return { kind: 'partial' };
+
+        let end = cursor + 1;
+        const first = text[cursor] || '';
+        if (/[A-Za-z_@]/.test(first)) {
+            while (end < text.length && /[A-Za-z0-9_@]/.test(text[end] || '')) end++;
+        } else if (/[0-9]/.test(first)) {
+            while (end < text.length && /[0-9_]/.test(text[end] || '')) end++;
+            if (text[end] === '.') {
+                end++;
+                while (end < text.length && /[0-9_]/.test(text[end] || '')) end++;
+            }
+        } else if (first === '.') {
+            while (end < text.length && /[0-9_]/.test(text[end] || '')) end++;
+        } else if (first === '"' || first === "'") {
+            const quote = first;
+            while (end < text.length) {
+                if (text[end] === quote && !isEscapedQuote(text, end, escapeChar)) {
+                    end++;
+                    break;
+                }
+                end++;
+            }
+        } else {
+            while (end < text.length && !/\s/.test(text[end] || '') && !/[,;[\](){}]/.test(text[end] || '')) end++;
+        }
+
+        let trailingCursor = end;
+        let hasTrailingCode = false;
+        while (trailingCursor < text.length) {
+            if (/\s/.test(text[trailingCursor] || '')) {
+                trailingCursor++;
+                continue;
+            }
+            if (text[trailingCursor] === '/' && text[trailingCursor + 1] === '/') {
+                trailingCursor += 2;
+                while (trailingCursor < text.length && text[trailingCursor] !== '\n') trailingCursor++;
+                continue;
+            }
+            if (text[trailingCursor] === '/' && text[trailingCursor + 1] === '*') {
+                trailingCursor += 2;
+                while (trailingCursor < text.length && !(text[trailingCursor] === '*' && text[trailingCursor + 1] === '/')) {
+                    trailingCursor++;
+                }
+                trailingCursor = Math.min(text.length, trailingCursor + 2);
+                continue;
+            }
+            hasTrailingCode = true;
+            break;
+        }
+
+        return {
+            kind: 'unexpectedToken',
+            token: text.slice(cursor, Math.max(cursor + 1, end)),
+            start: rangeStart + cursor,
+            end: rangeStart + Math.max(cursor + 1, end),
+            hasTrailingCode
+        };
+    }
 
     function findBalancedBraceLiteralEnd(source, escapeChar) {
         const text = String(source || '').trim();
@@ -139,14 +208,14 @@ function createInitializerDiagnostics(deps) {
                 return null;
             }
         }
-        const validateLeafArrayValue = (source, dimSpec) => {
+        const validateLeafArrayValue = (source, dimSpec, rangeStart = 0) => {
             const trimmedSource = String(source || '').trim();
             if (!trimmedSource) {
                 return { kind: 'partial' };
             }
 
             if (trimmedSource.startsWith('"')) {
-                const measured = measurePawnStringLiteral?.(trimmedSource, escapeChar);
+                const measured = measurePawnStringLiteral(trimmedSource, escapeChar);
                 if (dimSpec?.capacity != null && measured?.bytesWithTerminator > dimSpec.capacity) {
                     return { kind: 'overflow' };
                 }
@@ -155,17 +224,19 @@ function createInitializerDiagnostics(deps) {
 
             const resolvedStringLiteral = resolveConstantStringLiteralExpression(trimmedSource, allDecls, analysisCache);
             if (resolvedStringLiteral) {
-                const measured = measurePawnStringLiteral?.(resolvedStringLiteral, escapeChar);
+                const measured = measurePawnStringLiteral(resolvedStringLiteral, escapeChar);
                 if (dimSpec?.capacity != null && measured?.bytesWithTerminator > dimSpec.capacity) {
                     return { kind: 'overflow' };
                 }
                 return null;
             }
 
-            const braceParts = parseBraceArrayLiteralExpression(trimmedSource, escapeChar);
-            if (!braceParts) {
-                return { kind: 'partial' };
+            const braceDetails = getBraceArrayLiteralDetails(trimmedSource, escapeChar);
+            if (!braceDetails?.parts) {
+                const tokenIssue = readLeadingInitializerTokenIssue(source, rangeStart, escapeChar);
+                return tokenIssue.hasTrailingCode ? tokenIssue : { kind: 'partial' };
             }
+            const braceParts = braceDetails.parts.map(part => part.text);
             if (dimSpec?.capacity != null && braceParts.length > dimSpec.capacity) {
                 return { kind: 'overflow' };
             }
@@ -189,28 +260,35 @@ function createInitializerDiagnostics(deps) {
                 parseDimSpec(part, allDecls, new Set(), analysisCache)
             );
         };
-        const validateArrayValueAgainstDimSpecs = (source, arrayDimSpecs, dimIndex = 0) => {
+        const validateArrayValueAgainstDimSpecs = (source, arrayDimSpecs, dimIndex = 0, rangeStart = 0) => {
             if (!arrayDimSpecs.length) return null;
             const dimSpec = arrayDimSpecs[dimIndex] || null;
             const trimmedSource = String(source || '').trim();
             if (!trimmedSource) return null;
 
             if (dimIndex >= arrayDimSpecs.length - 1) {
-                return validateLeafArrayValue(trimmedSource, dimSpec);
+                return validateLeafArrayValue(trimmedSource, dimSpec, rangeStart);
             }
 
-            const braceParts = parseBraceArrayLiteralExpression(trimmedSource, escapeChar);
-            if (!braceParts) {
+            const braceDetails = getBraceArrayLiteralDetails(trimmedSource, escapeChar);
+            if (!braceDetails?.parts) {
                 return null;
             }
+            const braceParts = braceDetails.parts.map(part => part.text);
             if (dimSpec?.capacity != null && braceParts.length > dimSpec.capacity) {
                 return { kind: 'overflow' };
             }
             if (dimSpec?.raw && dimSpec.capacity != null && braceParts.length < dimSpec.capacity) {
                 return { kind: 'partial' };
             }
-            for (const part of braceParts) {
-                const nestedIssue = validateArrayValueAgainstDimSpecs(part, arrayDimSpecs, dimIndex + 1);
+            for (let index = 0; index < braceDetails.parts.length; index++) {
+                const part = braceDetails.parts[index];
+                const nestedIssue = validateArrayValueAgainstDimSpecs(
+                    part.text,
+                    arrayDimSpecs,
+                    dimIndex + 1,
+                    part.start >= 0 ? rangeStart + 1 + part.start : rangeStart
+                );
                 if (nestedIssue) return nestedIssue;
             }
             return null;
@@ -242,7 +320,8 @@ function createInitializerDiagnostics(deps) {
                 enumMembers.some(member => !!member?.dims) ||
                 (dimSpec?.capacity != null && dimSpec.capacity === enumMembers.length);
             if (!isStructLikeEnum) return null;
-            const fieldParts = parseBraceArrayLiteralExpression(source, escapeChar);
+            const fieldDetails = getBraceArrayLiteralDetails(source, escapeChar);
+            const fieldParts = fieldDetails?.parts?.map(part => part.text) || null;
             if (!fieldParts) return null;
             if (fieldParts.length > enumMembers.length) return { kind: 'enumFieldCountOverflow' };
             for (let index = 0; index < fieldParts.length; index++) {
@@ -252,9 +331,10 @@ function createInitializerDiagnostics(deps) {
             return null;
         };
 
-        const checkRecursive = (source, dimIndex) => {
+        const checkRecursive = (source, dimIndex, rangeStart = 0) => {
             const dimSpec = dimSpecs[dimIndex] || null;
-            const braceParts = parseBraceArrayLiteralExpression(source, escapeChar);
+            const braceDetails = getBraceArrayLiteralDetails(source, escapeChar);
+            const braceParts = braceDetails?.parts?.map(part => part.text) || null;
             if (!braceParts) {
                 if (dimIndex < dimSpecs.length - 1) {
                     return { kind: 'partial' };
@@ -284,26 +364,28 @@ function createInitializerDiagnostics(deps) {
                 return null;
             }
 
-            for (const part of braceParts) {
-                const nested = String(part || '').trim();
+            for (let index = 0; index < braceDetails.parts.length; index++) {
+                const part = braceDetails.parts[index];
+                const nested = String(part.text || '').trim();
+                const partRangeStart = part.start >= 0 ? rangeStart + 1 + part.start : rangeStart;
                 if (dimIndex + 1 === dimSpecs.length - 1) {
                     const enumStructIssue = validateEnumStructInitializer(nested, dimSpecs[dimIndex + 1] || null);
                     if (enumStructIssue) return enumStructIssue;
-                    const leafIssue = validateLeafArrayValue(nested, dimSpecs[dimIndex + 1] || null);
+                    const leafIssue = validateLeafArrayValue(nested, dimSpecs[dimIndex + 1] || null, partRangeStart);
                     if (leafIssue) return leafIssue;
                     continue;
                 }
                 if (!nested.startsWith('{')) {
-                    return { kind: 'partial' };
+                    return readLeadingInitializerTokenIssue(nested, partRangeStart, escapeChar);
                 }
-                const nestedIssue = checkRecursive(nested, dimIndex + 1);
+                const nestedIssue = checkRecursive(nested, dimIndex + 1, partRangeStart);
                 if (nestedIssue) return nestedIssue;
             }
             return null;
         };
 
         if (dimSpecs.length === 1 && valueText.startsWith('"')) {
-            const measured = measurePawnStringLiteral?.(valueText, escapeChar);
+            const measured = measurePawnStringLiteral(valueText, escapeChar);
             if (dimSpecs[0]?.capacity != null && measured?.bytesWithTerminator > dimSpecs[0].capacity) {
                 return { kind: 'overflow' };
             }
@@ -350,13 +432,89 @@ function createInitializerDiagnostics(deps) {
         return null;
     }
 
+    function findInitializerIssueSourceOffset(source, valueStartOffset, issue, escapeChar = '') {
+        const sourceText = String(source || '');
+        const target = String(issue?.token || '');
+        if (!sourceText || !target || valueStartOffset < 0) return -1;
+
+        let inString = false;
+        let stringChar = '';
+        let lineComment = false;
+        let blockComment = false;
+        let braceDepth = 0;
+        let sawBrace = false;
+        const isIdentifierChar = char => /[A-Za-z0-9_@]/.test(char || '');
+
+        for (let offset = valueStartOffset; offset < sourceText.length; offset++) {
+            const char = sourceText[offset];
+            const next = sourceText[offset + 1] || '';
+            if (blockComment) {
+                if (char === '*' && next === '/') {
+                    blockComment = false;
+                    offset++;
+                }
+                continue;
+            }
+            if (lineComment) {
+                if (char === '\n') lineComment = false;
+                continue;
+            }
+            if (inString) {
+                if (char === stringChar && !isEscapedQuote(sourceText, offset, escapeChar)) {
+                    inString = false;
+                }
+                continue;
+            }
+            if (char === '/' && next === '/') {
+                lineComment = true;
+                offset++;
+                continue;
+            }
+            if (char === '/' && next === '*') {
+                blockComment = true;
+                offset++;
+                continue;
+            }
+            if (char === '"' || char === "'") {
+                inString = true;
+                stringChar = char;
+                continue;
+            }
+            if (char === '{') {
+                braceDepth++;
+                sawBrace = true;
+                continue;
+            }
+            if (char === '}') {
+                if (braceDepth > 0) braceDepth--;
+                if (sawBrace && braceDepth === 0) {
+                    if (sourceText.startsWith(target, offset)) return offset;
+                    break;
+                }
+                continue;
+            }
+            if (!sourceText.startsWith(target, offset)) continue;
+            const before = sourceText[offset - 1] || '';
+            const after = sourceText[offset + target.length] || '';
+            if (isIdentifierChar(target[0]) && (isIdentifierChar(before) || isIdentifierChar(after))) {
+                continue;
+            }
+            if (/^[0-9.]/.test(target) && /[A-Za-z0-9_.]/.test(before + after)) {
+                continue;
+            }
+            return offset;
+        }
+        return -1;
+    }
+
     return {
         isOpenMultilineBraceInitializerLine,
         isOpenMultilineBraceInitializerForCurrentDecl,
         resolveConstantStringLiteralExpression,
         isKnownConstantInitializerExpression,
         explainArrayInitializerIssue,
-        findInvalidArraySizeIssue
+        findInvalidArraySizeIssue,
+        findInitializerIssueSourceOffset
     };
 }
 

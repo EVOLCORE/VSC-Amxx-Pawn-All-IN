@@ -58,7 +58,7 @@ function createUsageDiagnostics(deps) {
     function getCachedUsageIssues(rootCtx) {
         const semanticSession = rootCtx?.semanticSession || null;
         const parsedDecls = rootCtx?.parsedDecls || null;
-        if (!parsedDecls || typeof collectSymbolUsageIssues !== 'function') {
+        if (!parsedDecls) {
             return EMPTY_DIAGNOSTICS;
         }
         let byParsedDecls = semanticSession?.symbolUsageIssuesByParsedDecls || null;
@@ -66,7 +66,7 @@ function createUsageDiagnostics(deps) {
             return byParsedDecls.get(parsedDecls) || EMPTY_DIAGNOSTICS;
         }
         const issues = collectSymbolUsageIssues(rootCtx, {
-            functionRangeMaps: getFunctionRangeMaps?.(rootCtx)
+            functionRangeMaps: getFunctionRangeMaps(rootCtx)
         }) || EMPTY_DIAGNOSTICS;
         if (semanticSession) {
             if (!byParsedDecls) {
@@ -79,8 +79,8 @@ function createUsageDiagnostics(deps) {
     }
 
     function collectUsageLiveDiagnostics(document, rootCtx, docLength) {
-        if (!areWarningDiagnosticsEnabled?.()) return EMPTY_DIAGNOSTICS;
-        if (isIncludeDocument?.(document) && !isStrictIncludeValidationEnabled?.()) {
+        if (!areWarningDiagnosticsEnabled()) return EMPTY_DIAGNOSTICS;
+        if (isIncludeDocument(document) && !isStrictIncludeValidationEnabled()) {
             return EMPTY_DIAGNOSTICS;
         }
         const issues = getCachedUsageIssues(rootCtx);

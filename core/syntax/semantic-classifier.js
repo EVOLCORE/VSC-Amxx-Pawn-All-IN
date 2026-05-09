@@ -54,21 +54,9 @@ function createSemanticSyntaxCore(deps = {}) {
         (char >= '0' && char <= '9') ||
         (char >= 'a' && char <= 'f') ||
         (char >= 'A' && char <= 'F');
-    const isIdentifierStart = char => (
-        typeof isIdentifierStartChar === 'function'
-            ? isIdentifierStartChar(char || '')
-            : /[A-Za-z_@]/.test(char || '')
-    );
-    const isIdentifierContinue = char => (
-        typeof isIdentifierContinueChar === 'function'
-            ? isIdentifierContinueChar(char || '')
-            : /[A-Za-z0-9_@]/.test(char || '')
-    );
-    const isQuoteEscaped = (source, index, escapeChar) => (
-        typeof isEscapedQuote === 'function'
-            ? isEscapedQuote(source, index, escapeChar)
-            : false
-    );
+    const isIdentifierStart = char => isIdentifierStartChar(char || '');
+    const isIdentifierContinue = char => isIdentifierContinueChar(char || '');
+    const isQuoteEscaped = (source, index, escapeChar) => isEscapedQuote(source, index, escapeChar);
 
     function readIdentifierAt(source, index) {
         if (!isIdentifierStart(source[index])) return null;
@@ -248,7 +236,19 @@ function createSemanticSyntaxCore(deps = {}) {
         if (!text.trim()) return [];
         const escapeChar = options.escapeChar || '';
         const keepEmpty = options.keepEmpty === true;
+        const withRanges = options.withRanges === true;
         const parts = [];
+        const pushPart = (startIndex, endIndex) => {
+            let trimmedStart = startIndex;
+            let trimmedEnd = endIndex;
+            while (trimmedStart < trimmedEnd && isWhitespaceChar(text[trimmedStart])) trimmedStart++;
+            while (trimmedEnd > trimmedStart && isWhitespaceChar(text[trimmedEnd - 1])) trimmedEnd--;
+            const part = text.slice(trimmedStart, trimmedEnd);
+            if (!part && !keepEmpty) return;
+            parts.push(withRanges
+                ? { text: part, start: trimmedStart, end: trimmedEnd }
+                : part);
+        };
         let depth = 0;
         let inStr = false;
         let strCh = '';
@@ -273,14 +273,12 @@ function createSemanticSyntaxCore(deps = {}) {
                 continue;
             }
             if (char === ',' && depth === 0) {
-                const part = text.slice(start, index).trim();
-                if (part || keepEmpty) parts.push(part);
+                pushPart(start, index);
                 start = index + 1;
             }
         }
-        const last = text.slice(start).trim();
-        if (last || keepEmpty) parts.push(last);
-        while (parts.length && !String(parts[parts.length - 1] || '').trim()) {
+        pushPart(start, text.length);
+        while (parts.length && !String(withRanges ? parts[parts.length - 1]?.text : parts[parts.length - 1] || '').trim()) {
             parts.pop();
         }
         return parts;
@@ -815,18 +813,48 @@ function createSemanticSyntaxCore(deps = {}) {
         };
     }
 
-    function parseBraceArrayLiteralExpression(source, options = {}) {
-        const text = String(source || '').trim();
+    function parseBraceArrayLiteralExpressionDetailed(source, options = {}) {
+        const original = String(source || '');
+        const leadingWhitespace = original.length - original.trimStart().length;
+        const text = original.trim();
         if (!text || text.indexOf('{') < 0) return null;
         if (!isWholeDelimitedSource(text, '{', '}', options)) return null;
         const inner = text.slice(1, -1);
-        const parts = splitTopLevelDelimitedItems(inner, { ...options, keepEmpty: true });
+        const parts = splitTopLevelDelimitedItems(inner, { ...options, keepEmpty: true, withRanges: true });
         for (const part of parts) {
-            if (!part) return null;
-            const parsed = parsePawnExpression(part, { ...options, allowAssignment: false });
-            if (!parsed.ok) return null;
+            const itemStart = leadingWhitespace + 1 + part.start;
+            if (!part.text) {
+                return {
+                    ok: false,
+                    parts,
+                    issue: {
+                        kind: 'empty-item',
+                        start: itemStart,
+                        end: itemStart + 1
+                    }
+                };
+            }
+            const parsed = parsePawnExpression(part.text, { ...options, allowAssignment: false });
+            if (!parsed.ok) {
+                const issueStart = itemStart + Math.max(0, parsed.index | 0);
+                return {
+                    ok: false,
+                    parts,
+                    issue: {
+                        kind: parsed.kind || 'invalid-expression',
+                        reason: parsed.reason || '',
+                        start: issueStart,
+                        end: Math.max(issueStart + 1, itemStart + part.end - part.start)
+                    }
+                };
+            }
         }
-        return parts;
+        return { ok: true, parts };
+    }
+
+    function parseBraceArrayLiteralExpression(source, options = {}) {
+        const detailed = parseBraceArrayLiteralExpressionDetailed(source, options);
+        return detailed?.ok ? detailed.parts.map(part => part.text) : null;
     }
 
     function flattenRootBinaryExpression(source, options = {}) {
@@ -940,6 +968,7 @@ function createSemanticSyntaxCore(deps = {}) {
         parseIndexedAccessExpression,
         parseWholeCallExpression,
         parseBraceArrayLiteralExpression,
+        parseBraceArrayLiteralExpressionDetailed,
         flattenRootBinaryExpression,
         parseTopLevelTernaryExpression,
         classifyPawnExpressionFragment,

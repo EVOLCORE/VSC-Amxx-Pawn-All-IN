@@ -2,6 +2,15 @@ const { createUtilityCore } = require('../utils');
 const { createSemanticSyntaxCore } = require('../syntax/semantic-classifier');
 const { createMacroExpansionSyntaxCore } = require('../syntax/macro-expander');
 const { createArrayShapeCore } = require('../array-shape');
+const { createArrayShapeDiagnosticsCore } = require('./array-shape-diagnostics');
+const { createNumericDimensionValidationCore } = require('./numeric-dimensions');
+const { createParamMetaCore } = require('./param-meta');
+const { createTypeCompatCore } = require('./type-compat');
+const { createTypeAnalysisCacheFactory } = require('./type-analysis-cache');
+const {
+    evaluatePawnCharacterLiteralValue: evaluatePawnCharacterLiteralValueCore,
+    replaceNumericCharacterLiteralsForValidation: replaceNumericCharacterLiteralsForValidationCore
+} = require('./literal-utils');
 
 const {
     isPawnIdentifierStartChar: defaultIsPawnIdentifierStartChar,
@@ -35,10 +44,6 @@ function createValidationCore(deps) {
     const effectiveDeclDimPartsCache = new WeakMap();
     const functionReturnTypeCache = new WeakMap();
     const functionReturnTypeStableCache = new Map();
-    const parsedNumericExprCache = new Map();
-    const PARSED_NUMERIC_EXPR_CACHE_LIMIT = 4096;
-    const PARSED_NUMERIC_EXPR_CACHE_MAX_CHARS = 512;
-    const PAWN_CHARS_PER_CELL = 4;
     const normalizeCachePath = value => String(value || '').replace(/\\/g, '/').toLowerCase();
     const semanticSyntaxCore = createSemanticSyntaxCore({
         isEscapedQuote,
@@ -53,11 +58,13 @@ function createValidationCore(deps) {
     });
     const parseBraceArrayLiteralExpression = (expr, escapeChar = getActiveCtrlChar()) =>
         semanticSyntaxCore.parseBraceArrayLiteralExpression(expr, { escapeChar });
-    const arrayShapeCore = createArrayShapeCore({
-        measurePawnStringLiteral,
-        parseBraceArrayLiteralExpression,
-        parseDimsParts,
-        parseDimSpec
+    const {
+        parseParamMeta,
+        parseUnionTagOptions
+    } = createParamMetaCore({
+        getActiveCtrlChar,
+        isEscapedQuote,
+        TAG_RE
     });
     const parseIndexedAccessExpression = (expr, escapeChar = getActiveCtrlChar(), options = {}) => {
         const expressionOptions = typeof escapeChar === 'object' && escapeChar !== null
@@ -93,7 +100,9 @@ function createValidationCore(deps) {
         !String(expectedTag || '').trim() &&
         !String(actualDims || '').trim() &&
         String(actualTag || '').toLowerCase() === 'bool';
-    const normalizeEnumName = value => String(value || '').replace(/^_?\s*:\s*/, '').trim();
+    function normalizeEnumName(value) {
+        return String(value || '').replace(/^_?\s*:\s*/, '').trim();
+    }
     const normalizeTagName = value => String(value || '').replace(/^_?\s*:\s*/, '').trim();
     const isAnyTagName = value => normalizeTagName(value).toLowerCase() === 'any';
     const isFixedPawnTagName = value => /^[A-Z]/.test(normalizeTagName(value));
@@ -106,85 +115,27 @@ function createValidationCore(deps) {
         return isPawnIdentifierContinueChar(char);
     }
 
-    function readPawnLiteralCharValue(source, index, escapeChar = '') {
-        const text = String(source || '');
-        if (index >= text.length) return null;
+    const evaluatePawnCharacterLiteralValue = (literal, escapeChar = getActiveCtrlChar()) =>
+        evaluatePawnCharacterLiteralValueCore(literal, escapeChar);
+    const replaceNumericCharacterLiteralsForValidation = (source, escapeChar = getActiveCtrlChar()) =>
+        replaceNumericCharacterLiteralsForValidationCore(source, escapeChar);
 
-        const char = text[index];
-        if (!escapeChar || char !== escapeChar) {
-            const value = text.codePointAt(index);
-            if (value == null) return null;
-            return {
-                value,
-                end: index + String.fromCodePoint(value).length
-            };
-        }
-
-        index++;
-        if (index >= text.length) return null;
-        const escaped = text[index];
-        if (escaped === escapeChar) return { value: escaped.codePointAt(0), end: index + 1 };
-        if (escaped === 'a') return { value: 7, end: index + 1 };
-        if (escaped === 'b') return { value: 8, end: index + 1 };
-        if (escaped === 'e') return { value: 27, end: index + 1 };
-        if (escaped === 'f') return { value: 12, end: index + 1 };
-        if (escaped === 'n') return { value: 10, end: index + 1 };
-        if (escaped === 'r') return { value: 13, end: index + 1 };
-        if (escaped === 't') return { value: 9, end: index + 1 };
-        if (escaped === 'v') return { value: 11, end: index + 1 };
-        if (escaped === '\'' || escaped === '"' || escaped === '%') {
-            return { value: escaped.codePointAt(0), end: index + 1 };
-        }
-        if (escaped === 'x') {
-            index++;
-            const digitStart = index;
-            let value = 0;
-            while (index < text.length && /[0-9a-fA-F]/.test(text[index])) {
-                value = (value << 4) + Number.parseInt(text[index], 16);
-                index++;
-            }
-            if (index === digitStart) return null;
-            if (text[index] === ';') index++;
-            return { value, end: index };
-        }
-        if (/[0-9]/.test(escaped)) {
-            let value = 0;
-            while (index < text.length && /[0-9]/.test(text[index])) {
-                value = value * 10 + Number.parseInt(text[index], 10);
-                index++;
-            }
-            if (text[index] === ';') index++;
-            return { value, end: index };
-        }
-        return null;
-    }
-
-    function evaluatePawnCharacterLiteralValue(literal, escapeChar = getActiveCtrlChar()) {
-        const text = String(literal || '');
-        if (text.length < 3 || text[0] !== '\'' || text[text.length - 1] !== '\'') return null;
-        const parsed = readPawnLiteralCharValue(text, 1, escapeChar);
-        if (!parsed || parsed.end !== text.length - 1) return null;
-        if (parsed.value < 0 || parsed.value > 0xff) return null;
-        return parsed.value;
-    }
-
-    function replaceNumericCharacterLiteralsForValidation(source, escapeChar = getActiveCtrlChar()) {
-        const text = String(source || '');
-        if (text.indexOf('\'') < 0) return text;
-        let output = '';
-        let cursor = 0;
-        for (let index = 0; index < text.length; index++) {
-            if (text[index] !== '\'') continue;
-            const parsed = readPawnLiteralCharValue(text, index + 1, escapeChar);
-            if (!parsed || text[parsed.end] !== '\'') continue;
-            if (parsed.value < 0 || parsed.value > 0xff) continue;
-            output += text.slice(cursor, index) + '0';
-            cursor = parsed.end + 1;
-            index = parsed.end;
-        }
-        return cursor > 0 ? output + text.slice(cursor) : text;
-    }
-
+    const {
+        evaluatePawnNumericExpr,
+        isResolvedDimSpec,
+        parseDimSpec,
+        parseDimsParts
+    } = createNumericDimensionValidationCore({
+        evaluatePawnCharacterLiteralValue,
+        extractEnumSymbolName,
+        findAnyDeclByNameFromSources,
+        FORBIDDEN,
+        getActiveCtrlChar,
+        getEnumDeclResolvedCapacity,
+        macroExpansionCore,
+        replaceNumericCharacterLiteralsForValidation,
+        semanticSyntaxCore
+    });
 
     function isHexLiteralIdentifierTail(source, startIndex) {
         const text = String(source || '');
@@ -242,6 +193,36 @@ function createValidationCore(deps) {
         }
         return findDeclByNameFromList(decls, name, predicate);
     }
+
+    const arrayShapeCore = createArrayShapeCore({
+        measurePawnStringLiteral,
+        parseBraceArrayLiteralExpression,
+        parseDimsParts,
+        parseDimSpec
+    });
+    const {
+        explainArrayShapeDiagnosticIssue,
+        explainArrayShapeIssue,
+        getArrayShapeIssue
+    } = createArrayShapeDiagnosticsCore({
+        findAnyDeclByNameFromSources,
+        getActiveCtrlChar,
+        isResolvedDimSpec,
+        measurePawnStringLiteral,
+        normalizeEnumName,
+        parseDimSpec,
+        parseDimsParts,
+        semanticSyntaxCore,
+        t,
+        unwrapOuterParens
+    });
+    const createHoverTypeAnalysisCache = createTypeAnalysisCacheFactory({
+        BUILTIN_DECLS,
+        findDeclByNameCached,
+        parseDimSpec,
+        parseDimsParts,
+        parseParamMeta
+    });
 
     const arrayScalarIgnoredNames = new Set([
         '_',
@@ -901,77 +882,6 @@ function createValidationCore(deps) {
         return false;
     }
 
-    const hoverTypeAnalysisCacheProto = {
-        findDeclByName(name, predicate = null) {
-            if (this.lookup?.findAnyLocalDeclByName) {
-                return this.lookup.findAnyLocalDeclByName(name, predicate);
-            }
-            const matches = this.declsByName?.get(name);
-            if (!matches?.length) return null;
-            if (!predicate) return matches[0];
-            for (const decl of matches) {
-                if (predicate(decl)) return decl;
-            }
-            return null;
-        },
-        findAnyDeclByName(name, predicate = null) {
-            if (this.lookup?.findAnyDeclByName) {
-                return this.lookup.findAnyDeclByName(name, predicate);
-            }
-            const localDecl = this.findDeclByName(name, predicate);
-            if (localDecl) return localDecl;
-            return findDeclByNameCached(BUILTIN_DECLS, name, predicate);
-        },
-        getParamMeta(paramText) {
-            const key = String(paramText || '');
-            if (!this.paramMetaByText.has(key)) {
-                this.paramMetaByText.set(key, parseParamMeta(key));
-            }
-            return this.paramMetaByText.get(key);
-        },
-        getDimParts(dimText) {
-            const key = String(dimText || '');
-            if (!this.dimPartsByText.has(key)) {
-                this.dimPartsByText.set(key, parseDimsParts(key));
-            }
-            return this.dimPartsByText.get(key);
-        },
-        getDimSpec(dimText) {
-            const key = String(dimText || '');
-            if (!this.dimSpecByText.has(key)) {
-                this.dimSpecByText.set(key, parseDimSpec(key, this.sourceDecls, new Set(), this));
-            }
-            return this.dimSpecByText.get(key);
-        }
-    };
-
-    function createHoverTypeAnalysisCache(allDecls = [], lookup = null) {
-        const sourceDecls = Array.isArray(allDecls) ? allDecls : [];
-        const cache = Object.create(hoverTypeAnalysisCacheProto);
-        cache.sourceDecls = sourceDecls;
-        cache.lookup = lookup || null;
-        cache.declsByName = lookup?.findAnyLocalDeclByName ? null : (() => {
-            const buckets = new Map();
-            for (const decl of sourceDecls) {
-                if (!decl?.name) continue;
-                if (!buckets.has(decl.name)) buckets.set(decl.name, []);
-                buckets.get(decl.name).push(decl);
-            }
-            return buckets;
-        })();
-        cache.argTypeByExpr = new Map();
-        cache.inferInProgressByExpr = new Set();
-        cache.unresolvedRefsByExpr = new Map();
-        cache.paramMetaByText = new Map();
-        cache.dimPartsByText = new Map();
-        cache.dimSpecByText = new Map();
-        cache.callReturnTypeByExpr = new Map();
-        cache.numericExprByText = new Map();
-        cache.indexedDimCompatByKey = new Map();
-        cache.typeCompatByKey = new Map();
-        return cache;
-    }
-
     function inferArgType(expr, allDecls, analysisCache = null) {
         const cacheKey = String(expr || '').trim();
         if (analysisCache?.argTypeByExpr.has(cacheKey)) {
@@ -1506,106 +1416,6 @@ function createValidationCore(deps) {
         return steps;
     }
 
-    function findTopLevelDefaultAssignmentIndex(source) {
-        let parenDepth = 0;
-        let braceDepth = 0;
-        let bracketDepth = 0;
-        let inString = false;
-        let stringChar = '';
-
-        for (let index = 0; index < source.length; index++) {
-            const char = source[index];
-            const prev = source[index - 1] || '';
-            const next = source[index + 1] || '';
-
-            if (inString) {
-                if (char === stringChar && !isEscapedQuote?.(source, index)) {
-                    inString = false;
-                }
-                continue;
-            }
-            if (char === '"' || char === "'") {
-                inString = true;
-                stringChar = char;
-                continue;
-            }
-            if (char === '(') {
-                parenDepth++;
-                continue;
-            }
-            if (char === ')') {
-                parenDepth = Math.max(0, parenDepth - 1);
-                continue;
-            }
-            if (char === '[') {
-                bracketDepth++;
-                continue;
-            }
-            if (char === ']') {
-                bracketDepth = Math.max(0, bracketDepth - 1);
-                continue;
-            }
-            if (char === '{') {
-                braceDepth++;
-                continue;
-            }
-            if (char === '}') {
-                braceDepth = Math.max(0, braceDepth - 1);
-                continue;
-            }
-            if (parenDepth || braceDepth || bracketDepth) continue;
-            if (char === '=' && prev !== '=' && prev !== '!' && next !== '=') {
-                return index;
-            }
-        }
-
-        return -1;
-    }
-
-    function parseParamMeta(paramStr) {
-        const raw = String(paramStr || '').trim();
-        const defaultIndex = findTopLevelDefaultAssignmentIndex(raw);
-        const hasDefault = defaultIndex >= 0;
-        const p = hasDefault ? raw.slice(0, defaultIndex).trim() : raw;
-        let expectedTag = '';
-        const dimMatches = p.match(/\[[^\]]*\]/g) || [];
-        const expectedDims = dimMatches.join('');
-        const expectedDimParts = dimMatches.map(dim => dim.slice(1, -1).trim());
-        let name = '';
-        let source = p;
-        const isConst = /^const\b/.test(source);
-        if (isConst) source = source.replace(/^const\b\s*/, '');
-        const isByRef = /^&\s*/.test(source);
-        if (isByRef) source = source.replace(/^&\s*/, '');
-        source = source.trim();
-        const tagM = source.match(TAG_RE);
-        if (tagM) {
-            expectedTag = tagM[1];
-            source = source.slice(tagM[0].length);
-        }
-        const nameMatch = source.match(/^([A-Za-z_@]\w*)/);
-        if (nameMatch) name = nameMatch[1];
-        return {
-            raw,
-            name,
-            expectedTag,
-            expectedDims,
-            expectedDimParts,
-            hasDefault,
-            isConst,
-            isByRef
-        };
-    }
-
-    function parseUnionTagOptions(tagSpec) {
-        const raw = String(tagSpec || '').trim();
-        if (!raw.startsWith('{') || !raw.endsWith('}')) return [];
-        return raw.slice(1, -1)
-            .split(',')
-            .map(part => part.trim())
-            .filter(Boolean);
-    }
-
     const OPERATOR_OVERLOAD_TOKENS = new Set([
         '+', '-', '*', '/', '%', '>', '<', '!', '~', '=',
         '++', '--', '==', '!=', '<=', '>='
@@ -1787,264 +1597,8 @@ function createValidationCore(deps) {
         };
     }
 
-    function parseDimsParts(dimsStr) {
-        return String(dimsStr || '')
-            .match(/\[[^\]]*\]/g)?.map(dim => dim.slice(1, -1).trim()) || [];
-    }
-
-    function findMatchingParenIndex(str, openIndex, escapeChar = getActiveCtrlChar()) {
-        if (str[openIndex] !== '(') return -1;
-        let depth = 0;
-        let inStr = false;
-        let strCh = '';
-        for (let i = openIndex; i < str.length; i++) {
-            const c = str[i];
-            if (inStr) {
-                if (c === strCh && !isEscapedQuote(str, i, escapeChar)) inStr = false;
-                continue;
-            }
-            if (c === '"' || c === "'") {
-                inStr = true;
-                strCh = c;
-                continue;
-            }
-            if (c === '(') depth++;
-            else if (c === ')') {
-                depth--;
-                if (depth === 0) return i;
-            }
-        }
-        return -1;
-    }
-
     function parseWholeCallExpression(expr, escapeChar = getActiveCtrlChar()) {
         return semanticSyntaxCore.parseWholeCallExpression(expr, { escapeChar });
-    }
-
-    function evaluateParsedPawnNumericExpr(source) {
-        const input = String(source || '');
-        if (input.length <= PARSED_NUMERIC_EXPR_CACHE_MAX_CHARS && parsedNumericExprCache.has(input)) {
-            const cached = parsedNumericExprCache.get(input);
-            parsedNumericExprCache.delete(input);
-            parsedNumericExprCache.set(input, cached);
-            return cached;
-        }
-        const cacheParsedNumericExprResult = result => {
-            if (input.length <= PARSED_NUMERIC_EXPR_CACHE_MAX_CHARS) {
-                parsedNumericExprCache.set(input, result);
-                while (parsedNumericExprCache.size > PARSED_NUMERIC_EXPR_CACHE_LIMIT) {
-                    parsedNumericExprCache.delete(parsedNumericExprCache.keys().next().value);
-                }
-            }
-            return result;
-        };
-        const parsed = semanticSyntaxCore.parsePawnExpression(input, {
-            escapeChar: getActiveCtrlChar(),
-            buildAst: true,
-            allowAssignment: false
-        });
-        if (!parsed.ok) return cacheParsedNumericExprResult(null);
-
-        const evaluateAst = ast => {
-            if (!ast) return null;
-            if (ast.kind === 'group' || ast.kind === 'tag-cast') return evaluateAst(ast.expr);
-            if (ast.kind === 'number') {
-                const raw = String(ast.value || '');
-                const value = /^0[xX]/.test(raw)
-                    ? Number.parseInt(raw, 16)
-                    : Number(raw);
-                return Number.isFinite(value) ? value : null;
-            }
-            if (ast.kind === 'char') {
-                return evaluatePawnCharacterLiteralValue(ast.value, getActiveCtrlChar());
-            }
-            if (ast.kind === 'identifier') {
-                if (ast.name === 'true') return 1;
-                if (ast.name === 'false') return 0;
-                if (ast.name === 'cellmin') return -2147483648;
-                if (ast.name === 'cellmax') return 2147483647;
-                return null;
-            }
-            if (ast.kind === 'unary') {
-                const value = evaluateAst(ast.expr);
-                if (value == null) return null;
-                if (ast.operator === '+') return +value;
-                if (ast.operator === '-') return -value;
-                if (ast.operator === '~') return ~value;
-                if (ast.operator === '!') return value ? 0 : 1;
-                if (ast.operator === 'char') return Math.max(0, Math.ceil(value / PAWN_CHARS_PER_CELL));
-                return null;
-            }
-            if (ast.kind === 'postfix') {
-                const value = evaluateAst(ast.expr);
-                if (value == null) return null;
-                if (ast.operator === 'char') return Math.max(0, Math.ceil(value / PAWN_CHARS_PER_CELL));
-                return null;
-            }
-            if (ast.kind === 'binary') {
-                const left = evaluateAst(ast.left);
-                const right = evaluateAst(ast.right);
-                if (left == null || right == null) return null;
-                if (ast.operator === '+') return left + right;
-                if (ast.operator === '-') return left - right;
-                if (ast.operator === '*') return left * right;
-                if (ast.operator === '/') return left / right;
-                if (ast.operator === '%') return left % right;
-                if (ast.operator === '<<') return left << right;
-                if (ast.operator === '>>') return left >> right;
-                if (ast.operator === '<') return left < right ? 1 : 0;
-                if (ast.operator === '<=') return left <= right ? 1 : 0;
-                if (ast.operator === '>') return left > right ? 1 : 0;
-                if (ast.operator === '>=') return left >= right ? 1 : 0;
-                if (ast.operator === '==') return left === right ? 1 : 0;
-                if (ast.operator === '!=') return left !== right ? 1 : 0;
-                if (ast.operator === '&') return left & right;
-                if (ast.operator === '^') return left ^ right;
-                if (ast.operator === '|') return left | right;
-                if (ast.operator === '&&') return left && right ? 1 : 0;
-                if (ast.operator === '||') return left || right ? 1 : 0;
-                return null;
-            }
-            if (ast.kind === 'ternary') {
-                const condition = evaluateAst(ast.condition);
-                if (condition == null) return null;
-                return evaluateAst(condition ? ast.whenTrue : ast.whenFalse);
-            }
-            return null;
-        };
-
-        const result = evaluateAst(parsed.ast);
-        return cacheParsedNumericExprResult(Number.isFinite(result) ? result : null);
-    }
-
-    function evaluatePawnNumericExpr(expr, decls = [], seen = new Set(), analysisCache = null) {
-        const cacheKey = String(expr || '').trim();
-        const canUseCache = !!(analysisCache?.numericExprByText && seen?.size === 0);
-        if (canUseCache && analysisCache.numericExprByText.has(cacheKey)) {
-            return analysisCache.numericExprByText.get(cacheKey);
-        }
-        const cacheNumericExprResult = result => {
-            if (canUseCache) {
-                analysisCache.numericExprByText.set(cacheKey, result);
-            }
-            return result;
-        };
-
-        let source = semanticSyntaxCore.stripRootTagCasts(expr, { escapeChar: getActiveCtrlChar() });
-        if (!source) return cacheNumericExprResult(null);
-        const expanded = macroExpansionCore.expandMacros(source, decls, {
-            escapeChar: getActiveCtrlChar(),
-            disabledNames: seen,
-            getDefine: name => findAnyDeclByNameFromSources(
-                decls,
-                name,
-                item => item.type === 'define',
-                analysisCache
-            ),
-            maxOutputLength: 8192
-        });
-        if (!expanded.complete) return cacheNumericExprResult(null);
-        source = expanded.text;
-
-        if (/[A-Za-z_@]/.test(source)) {
-            source = source.replace(/\bsizeof\s*\(\s*([A-Za-z_@]\w*)\s*\)/g, (_, name) => {
-                const decl = findAnyDeclByNameFromSources(decls, name, null, analysisCache);
-                if (!decl) return 'NaN';
-                if (decl.type === 'enum' && /^-?\d+$/.test(String(decl.value || ''))) {
-                    return String(decl.value);
-                }
-                if (decl.dims) {
-                    const firstDim = parseDimsParts(decl.dims)[0];
-                    const dimSpec = parseDimSpec(firstDim, decls, seen, analysisCache);
-                    return dimSpec.capacity != null ? String(dimSpec.capacity) : 'NaN';
-                }
-                return 'NaN';
-            });
-
-            source = source.replace(/\b([A-Za-z_@][A-Za-z0-9_@]*)\b/g, (full, name) => {
-                if (FORBIDDEN.has(name)) return full;
-                if (seen.has(name)) return 'NaN';
-
-                const decl = findAnyDeclByNameFromSources(decls, name, null, analysisCache);
-                if (!decl) return full;
-
-                if (decl.type === 'enum' && /^-?\d+$/.test(String(decl.value || ''))) {
-                    return String(decl.value);
-                }
-                if (decl.type === 'enum-item' && /^-?\d+$/.test(String(decl.value || ''))) {
-                    return String(decl.value);
-                }
-                if (decl.type === 'define') {
-                    const defineValue = String(decl.value || '').trim();
-                    if (decl.args) return full;
-                    if (/^-?\d+$/.test(defineValue)) return defineValue;
-                    seen.add(name);
-                    const nested = evaluatePawnNumericExpr(defineValue, decls, seen, analysisCache);
-                    seen.delete(name);
-                    return nested == null ? 'NaN' : String(nested);
-                }
-
-                return full;
-            });
-        }
-
-        const validationSource = source.indexOf('\'') >= 0
-            ? replaceNumericCharacterLiteralsForValidation(source, getActiveCtrlChar())
-            : source;
-        const sanitized = source.replace(/\s+/g, '');
-        const validationForTokenGuard = validationSource.replace(/\b(?:char|cellmin|cellmax)\b/g, '');
-        const validationSanitized = validationForTokenGuard.replace(/\s+/g, '');
-        if (!sanitized) return cacheNumericExprResult(null);
-        if (/[A-WYZa-wyz_@]/.test(validationSanitized.replace(/0[xX][0-9a-fA-F]+/g, '0'))) return cacheNumericExprResult(null);
-
-        const withoutHex = validationSanitized.replace(/0[xX][0-9a-fA-F]+/g, '0');
-        const withoutCompoundOps = withoutHex.replace(/<<|>>|<=|>=|==|!=|&&|\|\|/g, '');
-        if (/[^0-9+\-*/%()|&~^<>!?:]/.test(withoutCompoundOps)) return cacheNumericExprResult(null);
-
-        return cacheNumericExprResult(evaluateParsedPawnNumericExpr(source));
-    }
-
-    function parseDimSpec(dimPart, decls = [], seen = new Set(), analysisCache = null) {
-        const raw = String(dimPart || '').trim();
-        const isChar = /\bchar\b/.test(raw);
-        const expr = raw.replace(/\bchar\b/g, '').trim();
-        const enumCandidate = extractEnumSymbolName(dimPart);
-        const enumDecl = enumCandidate
-            ? (() => {
-                const candidate = findAnyDeclByNameFromSources(decls, enumCandidate, null, analysisCache);
-                return candidate?.type === 'enum' ? candidate : null;
-            })()
-            : null;
-        const enumName = enumDecl
-            ? enumCandidate
-            : '';
-        let capacity = expr ? evaluatePawnNumericExpr(expr, decls, seen, analysisCache) : null;
-        if (enumDecl && /^[A-Za-z_@]\w*$/.test(expr || '')) {
-            const enumRootCapacity = getEnumDeclResolvedCapacity(enumDecl, decls, seen, analysisCache) ??
-                evaluatePawnNumericExpr(
-                    String(enumDecl.value ?? '').trim(),
-                    decls,
-                    seen,
-                    analysisCache
-                );
-            if (enumRootCapacity != null) {
-                capacity = enumRootCapacity;
-            } else {
-                const numericMemberValues = (enumDecl.enumMembers || [])
-                    .map(item => Number.parseInt(String(item?.value ?? ''), 10))
-                    .filter(value => Number.isFinite(value));
-                if (numericMemberValues.length) {
-                    capacity = Math.max(...numericMemberValues) + 1;
-                }
-            }
-        }
-        return { raw, expr, isChar, capacity, enumName };
-    }
-
-    function isResolvedDimSpec(dimSpec) {
-        if (!dimSpec) return false;
-        if (!dimSpec.raw) return true;
-        return dimSpec.capacity != null;
     }
 
     function findUnresolvedReferenceNames(expr, decls = [], analysisCache = null, escapeChar = getActiveCtrlChar()) {
@@ -2130,475 +1684,30 @@ function createValidationCore(deps) {
         return result;
     }
 
-    function stripTagsForArrayShape(source) {
-        let value = unwrapOuterParens(source);
-        while (true) {
-            const stripped = semanticSyntaxCore.stripRootTagCasts(value, { escapeChar: getActiveCtrlChar() });
-            if (!stripped || stripped === value) break;
-            value = unwrapOuterParens(stripped);
-        }
-        return String(value || '').trim();
-    }
-
-    function resolveStringArrayValueExpression(source, decls, analysisCache, seen = new Set()) {
-        const expr = stripTagsForArrayShape(source);
-        if (!expr) return '';
-        if (expr.startsWith('"')) return expr;
-        const name = expr.match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
-        if (!name || seen.has(name)) return '';
-        const decl = findAnyDeclByNameFromSources(decls, name, null, analysisCache);
-        if (!decl) return '';
-        if (decl.type === 'define' && !decl.args) {
-            seen.add(name);
-            const resolved = resolveStringArrayValueExpression(decl.value, decls, analysisCache, seen);
-            seen.delete(name);
-            return resolved;
-        }
-        if (decl.type === 'variable') {
-            const value = String(decl.value || '').trim();
-            if (!value) return '';
-            seen.add(name);
-            const resolved = resolveStringArrayValueExpression(value, decls, analysisCache, seen);
-            seen.delete(name);
-            return resolved;
-        }
-        return '';
-    }
-
-    function isStringArrayValueExpression(source, decls, analysisCache) {
-        return !!resolveStringArrayValueExpression(source, decls, analysisCache);
-    }
-
-    function getDimSpecForComparison(dimPart, decls, analysisCache) {
-        return analysisCache?.getDimSpec?.(dimPart) ||
-            parseDimSpec(dimPart, decls, new Set(), analysisCache);
-    }
-
-    function getArrayShapeIssue(expectedDims, actualDims, actualExpr = '', decls = [], analysisCache = null, options = {}) {
-        const expectedParts = parseDimsParts(expectedDims || '');
-        const actualParts = parseDimsParts(actualDims || '');
-        if (!expectedParts.length) {
-            return actualParts.length
-                ? { kind: 'unexpectedArray', status: 'error' }
-                : null;
-        }
-        const actualSource = String(actualExpr || '').trim();
-        const escapeChar = typeof options === 'string'
-            ? options
-            : (options?.escapeChar ?? getActiveCtrlChar());
-        const expectedSingleSpec = expectedParts.length === 1
-            ? getDimSpecForComparison(expectedParts[0], decls, analysisCache)
-            : null;
-        const actualStringLiteral = expectedParts.length === 1
-            ? resolveStringArrayValueExpression(actualSource, decls, analysisCache)
-            : '';
-        if (actualStringLiteral) {
-            if (!actualParts.length || actualParts.length === 1) {
-                const measured = measurePawnStringLiteral?.(actualStringLiteral, escapeChar);
-                if (
-                    expectedSingleSpec?.capacity != null &&
-                    measured?.bytesWithTerminator != null &&
-                    measured.bytesWithTerminator > expectedSingleSpec.capacity
-                ) {
-                    return {
-                        kind: 'size',
-                        status: 'error',
-                        expectedRaw: expectedSingleSpec.raw,
-                        actualRaw: String(measured.bytesWithTerminator)
-                    };
-                }
-                return null;
-            }
-        }
-        if (!actualParts.length) {
-            if (options?.allowScalarAssignmentToArrayField) return null;
-            return { kind: 'missingArray', status: 'error' };
-        }
-        if (expectedParts.length !== actualParts.length) {
-            return { kind: 'dimensionCount', status: 'error' };
-        }
-        for (let index = 0; index < expectedParts.length; index++) {
-            if (!expectedParts[index]) continue;
-            const expectedSpec = getDimSpecForComparison(expectedParts[index], decls, analysisCache);
-            const actualSpec = getDimSpecForComparison(actualParts[index], decls, analysisCache);
-            const expectedEnum = normalizeEnumName(expectedSpec?.enumName || '');
-            const actualEnum = normalizeEnumName(actualSpec?.enumName || '');
-            if (expectedEnum && actualEnum && expectedEnum !== actualEnum) {
-                return {
-                    kind: 'indexTag',
-                    status: 'warn',
-                    name: actualSpec?.enumName || actualSpec?.raw || expectedSpec?.enumName || expectedSpec?.raw || ''
-                };
-            }
-            if (expectedSpec?.raw && !actualSpec?.raw) {
-                return {
-                    kind: 'expectedOnly',
-                    status: 'warn',
-                    expectedRaw: expectedSpec.raw,
-                    actualRaw: actualSpec?.raw || ''
-                };
-            }
-            if (!isResolvedDimSpec(expectedSpec) || !isResolvedDimSpec(actualSpec)) {
-                return {
-                    kind: 'unknownDimensionSymbol',
-                    status: 'error',
-                    expectedRaw: expectedSpec?.raw || '',
-                    actualRaw: actualSpec?.raw || ''
-                };
-            }
-            if (
-                expectedSpec?.raw &&
-                actualSpec?.raw &&
-                expectedSpec.capacity != null &&
-                actualSpec.capacity != null
-            ) {
-                if (expectedSpec.capacity === actualSpec.capacity) {
-                    continue;
-                }
-                if (
-                    options?.arrayContext === 'assignment' &&
-                    expectedParts.length === 1 &&
-                    actualParts.length === 1 &&
-                    !expectedEnum &&
-                    !actualEnum &&
-                    actualSpec.capacity <= expectedSpec.capacity
-                ) {
-                    continue;
-                }
-                if (
-                    expectedParts.length === 1 &&
-                    actualParts.length === 1 &&
-                    actualSpec.capacity <= expectedSpec.capacity &&
-                    isStringArrayValueExpression(actualSource, decls, analysisCache)
-                ) {
-                    continue;
-                }
-                return {
-                    kind: 'size',
-                    status: 'error',
-                    expectedRaw: expectedSpec.raw,
-                    actualRaw: actualSpec.raw
-                };
-            }
-            if (expectedSpec?.raw && actualSpec?.raw && expectedSpec.raw !== actualSpec.raw) {
-                return {
-                    kind: 'rawMismatch',
-                    status: 'warn',
-                    expectedRaw: expectedSpec.raw,
-                    actualRaw: actualSpec.raw
-                };
-            }
-        }
-        return null;
-    }
-
-    function explainArrayShapeIssue(issue, expectedDims, actualDims) {
-        if (!issue) return { status: 'ok', reason: '' };
-        switch (issue.kind) {
-            case 'missingArray':
-                return { status: 'error', reason: t('validation.missingDimensions', { dims: expectedDims }) };
-            case 'unexpectedArray':
-                return { status: 'warn', reason: t('validation.unexpectedDimensions', { dims: actualDims }) };
-            case 'dimensionCount':
-                return {
-                    status: 'error',
-                    reason: t('validation.dimensionCountMismatch', { expected: expectedDims, actual: actualDims })
-                };
-            case 'expectedOnly':
-                return {
-                    status: 'warn',
-                    reason: t('validation.dimensionMismatchExpectedOnly', { expected: issue.expectedRaw || '' })
-                };
-            case 'unknownDimensionSymbol':
-                return {
-                    status: 'error',
-                    reason: t('validation.unknownDimensionSymbolExpectedGot', {
-                        expected: issue.expectedRaw || '',
-                        actual: issue.actualRaw || ''
-                    })
-                };
-            case 'size':
-                return {
-                    status: 'error',
-                    reason: t('validation.dimensionSizeMismatch', {
-                        expected: issue.expectedRaw || expectedDims,
-                        actual: issue.actualRaw || actualDims
-                    })
-                };
-            case 'indexTag':
-                return { status: 'warn', reason: t('validation.indexTagMismatch', { name: issue.name || '' }) };
-            case 'rawMismatch':
-                return {
-                    status: 'warn',
-                    reason: t('validation.dimensionMismatchExpectedGot', {
-                        expected: issue.expectedRaw || '',
-                        actual: issue.actualRaw || ''
-                    })
-                };
-            default:
-                return { status: issue.status || 'error', reason: '' };
-        }
-    }
-
-    function explainArrayShapeDiagnosticIssue(issue) {
-        if (!issue) return { status: 'ok', reason: '' };
-        switch (issue.kind) {
-            case 'missingArray':
-                return { status: issue.status || 'error', reason: t('validation.mustBeAssignedToArray') };
-            case 'unexpectedArray':
-                return {
-                    status: issue.status || 'error',
-                    reason: t('validation.arrayMustBeIndexed', { name: issue.name || '' })
-                };
-            case 'dimensionCount':
-                return { status: issue.status || 'error', reason: t('validation.arrayDimensionsMustMatch') };
-            case 'size':
-                return { status: issue.status || 'error', reason: t('validation.arraySizesMustMatch') };
-            case 'indexTag':
-                return {
-                    status: issue.status || 'warn',
-                    reason: t('validation.indexTagMismatch', { name: issue.name || '' })
-                };
-            case 'expectedOnly':
-            case 'rawMismatch':
-            case 'unknownDimensionSymbol':
-                return { status: issue.status || 'warn', reason: t('validation.arraySizesMustMatch') };
-            default:
-                return { status: issue.status || 'error', reason: '' };
-        }
-    }
-
-    function explainTypeCompat(paramStr, actualTag, actualDims, actualExpr = '', decls = [], options = {}) {
-        const { paramMeta = null, analysisCache = null, allowArrayToScalar = false } = options;
-        const compatCacheKey = analysisCache
-            ? [
-                String(paramStr || ''),
-                String(actualTag || ''),
-                String(actualDims || ''),
-                String(actualExpr || ''),
-                allowArrayToScalar ? 'array-ok' : ''
-            ].join('\u0000')
-            : '';
-        if (compatCacheKey && analysisCache.typeCompatByKey.has(compatCacheKey)) {
-            return analysisCache.typeCompatByKey.get(compatCacheKey);
-        }
-        const {
-            expectedTag,
-            expectedDims,
-            hasDefault
-        } = paramMeta || analysisCache?.getParamMeta(paramStr) || parseParamMeta(paramStr);
-        const actual = String(actualExpr || '').trim();
-        const actualRootTagCast = getRootTagCastExpressionForValidation(actual, getActiveCtrlChar());
-        const explicitUntypedActual = actualRootTagCast?.tag === '_';
-        const isUntaggedBraceArrayActual = !!(
-            actual &&
-            !actualRootTagCast &&
-            actual[0] === '{' &&
-            parseBraceArrayLiteralExpression(actual)
-        );
-        const result = (() => {
-
-            if (!actual || actual === '_') {
-                return hasDefault
-                    ? { status: 'ok', reason: '' }
-                    : { status: 'error', reason: t('validation.argumentHasNoDefaultValue') };
-            }
-
-            const unresolvedRefs = findUnresolvedReferenceNames(actual, decls, analysisCache);
-            if (unresolvedRefs.length) {
-                return {
-                    status: 'error',
-                    reason: t('validation.unknownSymbol', { symbols: unresolvedRefs.join(', ') })
-                };
-            }
-
-            let effectiveActualTag = actualTag;
-            let effectiveActualDims = actualDims;
-            let effectiveActualElementTag = '';
-            if (expectedDims && !effectiveActualDims) {
-                const actualIndexedSource = stripTagCastsForValidation(actual) || actual;
-                const indexedExpr = parseIndexedAccessExpression(actualIndexedSource);
-                if (indexedExpr) {
-                    const baseDecl = findLocalDeclByNameFromSources(
-                        decls,
-                        indexedExpr.baseName,
-                        item => item.type === 'variable',
-                        analysisCache
-                    );
-                    if (baseDecl) {
-                        const accessChain = resolveIndexedAccessValidationChain(
-                            baseDecl,
-                            indexedExpr.accesses.map(access => access.slice(1, -1).trim()),
-                            decls,
-                            analysisCache
-                        );
-                        const lastStep = accessChain[accessChain.length - 1] || null;
-                        if (
-                            lastStep &&
-                            !lastStep.nextDimParts?.length &&
-                            Array.isArray(lastStep.selectedSourceDimParts) &&
-                            lastStep.selectedSourceDimParts.length === 1
-                        ) {
-                            effectiveActualDims = '[]';
-                        }
-                    }
-                } else {
-                    const inferredCallReturnType = inferArrayLikeCallReturnType(actual, decls, analysisCache);
-                    if (inferredCallReturnType?.dims) {
-                        effectiveActualTag = inferredCallReturnType.tag || effectiveActualTag;
-                        effectiveActualDims = inferredCallReturnType.dims;
-                    }
-                }
-            } else if (expectedDims && !effectiveActualTag && actual && !isUntaggedBraceArrayActual) {
-                const inferredActualType = inferArgType(actual, decls, analysisCache);
-                effectiveActualElementTag = inferredActualType?.elementTag || '';
-            }
-
-            if (!expectedDims) {
-                if (effectiveActualDims && effectiveActualDims !== '[]' && !allowArrayToScalar) {
-                    return { status: 'warn', reason: t('validation.unexpectedDimensions', { dims: effectiveActualDims }) };
-                }
-                if (isImplicitBoolToScalarCompat(expectedTag, effectiveActualTag, effectiveActualDims)) {
-                    return { status: 'ok', reason: '' };
-                }
-                if (explicitUntypedActual) {
-                    return { status: 'ok', reason: '' };
-                }
-                return explainPawnTagCompat(expectedTag, effectiveActualTag, decls, analysisCache);
-            }
-
-            if (!effectiveActualDims) return { status: 'error', reason: t('validation.expectedArrayStructArgument') };
-
-            const shapeIssue = getArrayShapeIssue(
-                expectedDims,
-                effectiveActualDims,
-                actual,
-                decls,
-                analysisCache,
-                { escapeChar: getActiveCtrlChar() }
-            );
-            if (shapeIssue) {
-                return explainArrayShapeIssue(shapeIssue, expectedDims, effectiveActualDims);
-            }
-
-            if (explicitUntypedActual) {
-                return { status: 'ok', reason: '' };
-            }
-
-            return explainPawnTagCompat(
-                expectedTag,
-                expectedTag && !effectiveActualTag ? effectiveActualElementTag : effectiveActualTag,
-                decls,
-                analysisCache
-            );
-        })();
-        if (compatCacheKey) {
-            analysisCache.typeCompatByKey.set(compatCacheKey, result);
-        }
-        return result;
-    }
-
-    function checkTypeCompat(paramStr, actualTag, actualDims, actualExpr = '', decls = [], options = {}) {
-        return explainTypeCompat(paramStr, actualTag, actualDims, actualExpr, decls, options).status;
-    }
-
-    function explainParamDeclCompat(expectedParamStr, actualParamStr, decls = [], options = {}) {
-        const { analysisCache = null } = options;
-        const expectedMeta = analysisCache?.getParamMeta(expectedParamStr) || parseParamMeta(expectedParamStr);
-        const actualMeta = analysisCache?.getParamMeta(actualParamStr) || parseParamMeta(actualParamStr);
-
-        if (!actualMeta?.raw) return { status: 'error', reason: t('validation.missingLocalParameterDeclaration') };
-        const unresolvedExpectedDims = findUnresolvedReferenceNames(expectedMeta.expectedDims || '', decls, analysisCache);
-        if (unresolvedExpectedDims.length) {
-            return {
-                status: 'error',
-                reason: t('validation.unknownDimensionSymbolIncludeDeclaration', { symbols: unresolvedExpectedDims.join(', ') })
-            };
-        }
-        const unresolvedActualDims = findUnresolvedReferenceNames(actualMeta.expectedDims || '', decls, analysisCache);
-        if (unresolvedActualDims.length) {
-            return {
-                status: 'error',
-                reason: t('validation.unknownDimensionSymbolLocalDeclaration', { symbols: unresolvedActualDims.join(', ') })
-            };
-        }
-        if (!!expectedMeta.isByRef !== !!actualMeta.isByRef) {
-            return { status: 'error', reason: t('validation.byRefMismatch') };
-        }
-        if (!!expectedMeta.isConst !== !!actualMeta.isConst) {
-            return { status: 'error', reason: t('validation.constQualifierMismatch') };
-        }
-
-        const expectedTag = expectedMeta.expectedTag || '';
-        const actualTag = actualMeta.expectedTag || '';
-        const expectedDims = expectedMeta.expectedDims || '';
-        const actualDims = actualMeta.expectedDims || '';
-
-        const isAnyTag = String(expectedTag || '').toLowerCase() === 'any';
-        const isActualAnyTag = String(actualTag || '').toLowerCase() === 'any';
-
-        if (!expectedTag || expectedTag === '_' || isAnyTag) {
-            if (expectedDims) {
-                if (!actualDims) return { status: 'error', reason: t('validation.expectedArrayStructParameter') };
-            } else {
-                if (actualDims) return { status: 'error', reason: t('validation.expectedScalarParameterGotArrayStruct') };
-                if (isImplicitBoolToScalarCompat(expectedTag, actualTag, actualDims)) {
-                    return { status: 'ok', reason: '' };
-                }
-                if (actualTag && !isActualAnyTag && !isAnyTag) {
-                    return { status: 'error', reason: t('validation.unexpectedTag', { tag: actualTag }) };
-                }
-            }
-        } else {
-            const expectedUnionTags = parseUnionTagOptions(expectedTag);
-            if (expectedUnionTags.length) {
-                const allowedTags = expectedUnionTags.map(tag => tag.toLowerCase());
-                if (!actualTag) {
-                    return allowedTags.includes('_')
-                        ? { status: 'ok', reason: '' }
-                        : { status: 'warn', reason: t('validation.expectedTag', { tag: expectedTag }) };
-                }
-                if (!allowedTags.includes(String(actualTag).toLowerCase())) {
-                    if (isActualAnyTag) {
-                        return { status: 'ok', reason: '' };
-                    }
-                    return { status: 'error', reason: t('validation.tagMismatch', { expected: expectedTag, actual: actualTag }) };
-                }
-            } else {
-                if (!actualTag) return { status: 'error', reason: t('validation.missingTag', { tag: expectedTag }) };
-                if (isActualAnyTag) return { status: 'ok', reason: '' };
-                if (expectedTag.toLowerCase() !== actualTag.toLowerCase()) {
-                    return { status: 'error', reason: t('validation.tagMismatch', { expected: expectedTag, actual: actualTag }) };
-                }
-            }
-        }
-
-        if (!expectedDims) {
-            return actualDims
-                ? { status: 'error', reason: t('validation.unexpectedDimensions', { dims: actualDims }) }
-                : { status: 'ok', reason: '' };
-        }
-
-        if (!actualDims) return { status: 'error', reason: t('validation.missingDimensions', { dims: expectedDims }) };
-
-        const shapeIssue = getArrayShapeIssue(
-            expectedDims,
-            actualDims,
-            '',
-            decls,
-            analysisCache,
-            { escapeChar: getActiveCtrlChar() }
-        );
-        if (shapeIssue) {
-            return explainArrayShapeIssue(shapeIssue, expectedDims, actualDims);
-        }
-
-        return { status: 'ok', reason: '' };
-    }
-
-    function checkParamDeclCompat(expectedParamStr, actualParamStr, decls = [], options = {}) {
-        return explainParamDeclCompat(expectedParamStr, actualParamStr, decls, options).status;
-    }
+    const {
+        checkParamDeclCompat,
+        checkTypeCompat,
+        explainParamDeclCompat,
+        explainTypeCompat
+    } = createTypeCompatCore({
+        explainArrayShapeIssue,
+        explainPawnTagCompat,
+        findLocalDeclByNameFromSources,
+        findUnresolvedReferenceNames,
+        getActiveCtrlChar,
+        getArrayShapeIssue,
+        getRootTagCastExpressionForValidation,
+        inferArgType,
+        inferArrayLikeCallReturnType,
+        isImplicitBoolToScalarCompat,
+        parseBraceArrayLiteralExpression,
+        parseIndexedAccessExpression,
+        parseParamMeta,
+        parseUnionTagOptions,
+        resolveIndexedAccessValidationChain,
+        stripTagCastsForValidation,
+        t
+    });
 
     return {
         createHoverTypeAnalysisCache,

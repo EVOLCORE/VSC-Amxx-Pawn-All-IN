@@ -73,7 +73,23 @@ function createIndexedAccessDiagnostics(deps) {
             }
 
             const variableDecl = ctx.lookup.findVariable(expr.baseName);
-            if (!variableDecl?.dims) continue;
+            if (!variableDecl) continue;
+            if (!variableDecl.dims) {
+                for (const access of expr.accesses) {
+                    diagnostics.push(
+                        createLiveValidationDiagnostic(
+                            createOffsetRange(
+                                document,
+                                lineStartOffset + access.start,
+                                lineStartOffset + access.end,
+                                docLength
+                            ),
+                            t('validation.extraIndexAccess')
+                        )
+                    );
+                }
+                continue;
+            }
             if (shouldSkipIncludeContextDependentAccess(variableDecl)) continue;
 
             if (

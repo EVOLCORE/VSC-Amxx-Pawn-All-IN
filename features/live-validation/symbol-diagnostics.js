@@ -89,9 +89,7 @@ function createSymbolDiagnostics(deps) {
         const canTrustStrippedScan = strippedScanText.length === rawLineText.length;
         const identifierScanText = canTrustStrippedScan ? strippedScanText : rawLineText;
         const bareIdentifierMatch = trimmedLine.match(/^([A-Za-z_@][A-Za-z0-9_@]*)$/);
-        const stateStatement = typeof parseStateStatement === 'function'
-            ? parseStateStatement(strippedLineText || lineText)
-            : null;
+        const stateStatement = parseStateStatement(strippedLineText || lineText);
         const isStateStatementSyntaxName = (start, end) => !!(
             stateStatement &&
             (
@@ -101,10 +99,8 @@ function createSymbolDiagnostics(deps) {
             )
         );
         const pushSymbolTruncationWarning = (name, start, end) => {
-            if (!areWarningDiagnosticsEnabled?.()) return false;
-            const issue = typeof getSymbolTruncationIssue === 'function'
-                ? getSymbolTruncationIssue(name)
-                : null;
+            if (!areWarningDiagnosticsEnabled()) return false;
+            const issue = getSymbolTruncationIssue(name);
             if (!issue) return false;
             const key = `truncated:${start}:${end}:${name}`;
             if (seen.has(key)) return true;
@@ -113,7 +109,7 @@ function createSymbolDiagnostics(deps) {
                 createLiveValidationDiagnostic(
                     createOffsetRange(document, lineStartOffset + start, lineStartOffset + end, docLength),
                     t(issue.messageKey, issue.params || {}),
-                    getWarningSeverity?.()
+                    getWarningSeverity()
                 )
             );
             return true;
@@ -296,7 +292,7 @@ function createSymbolDiagnostics(deps) {
         const escapeChar = ctx?.resolver?.ctrlCharAtLine?.(lineNumber) || '';
         const looksLikeExpressionFragment = source => {
             const trimmed = String(source || '').trim();
-            return !!looksLikePawnExpressionFragment?.(trimmed, {
+            return !!looksLikePawnExpressionFragment(trimmed, {
                 escapeChar,
                 allowLeadingBinaryOperator: true
             });
@@ -310,7 +306,7 @@ function createSymbolDiagnostics(deps) {
         };
 
         if (isFunctionHeaderLine(ctx, lineNumber)) return diagnostics;
-        if (typeof parseLabelDeclaration === 'function' && parseLabelDeclaration(strippedLineText || lineText)) {
+        if (parseLabelDeclaration(strippedLineText || lineText)) {
             return diagnostics;
         }
 

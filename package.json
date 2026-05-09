@@ -1,7 +1,7 @@
 {
   "name": "amxx-pawn-all-in",
   "displayName": "%displayName%",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "publisher": "Faktor",
   "engines": {
     "vscode": "^1.60.0"

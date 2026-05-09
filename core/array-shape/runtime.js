@@ -16,17 +16,13 @@ function createArrayShapeCore(deps = {}) {
     }
 
     function getDimParts(dimsText) {
-        if (typeof parseDimsParts === 'function') {
-            return parseDimsParts(dimsText);
-        }
-        return String(dimsText || '')
-            .match(/\[[^\]]*\]/g)?.map(dim => dim.slice(1, -1).trim()) || [];
+        return parseDimsParts(dimsText);
     }
 
     function parseBraceInitializer(value, options = {}) {
         const opts = normalizeOptions(options);
         const source = String(value || '').trim();
-        if (!source || typeof parseBraceArrayLiteralExpression !== 'function') return null;
+        if (!source) return null;
         const parts = parseBraceArrayLiteralExpression(source, opts.escapeChar);
         return Array.isArray(parts) ? parts : null;
     }
@@ -36,7 +32,7 @@ function createArrayShapeCore(deps = {}) {
         const source = String(value || '').trim();
         if (!source) return 0;
 
-        const measured = measurePawnStringLiteral?.(source, opts.escapeChar);
+        const measured = measurePawnStringLiteral(source, opts.escapeChar);
         if (measured?.bytesWithTerminator != null) {
             return measured.bytesWithTerminator;
         }
@@ -116,10 +112,8 @@ function createArrayShapeCore(deps = {}) {
         const constValue = getDeclSize(constDecl);
         if (constValue != null) return constValue;
 
-        if (typeof parseDimSpec === 'function') {
-            const dimSpec = parseDimSpec(source, allDecls, new Set(), opts.analysisCache || null);
-            if (dimSpec?.capacity != null) return dimSpec.capacity;
-        }
+        const dimSpec = parseDimSpec(source, allDecls, new Set(), opts.analysisCache || null);
+        if (dimSpec?.capacity != null) return dimSpec.capacity;
 
         return null;
     }
@@ -152,7 +146,7 @@ function createArrayShapeCore(deps = {}) {
 
         const topLevelSource = String(value || '').trim();
         if (resolved.length === 1 && resolved[0] === '' && topLevelSource.startsWith('"')) {
-            const measure = measurePawnStringLiteral?.(topLevelSource, opts.escapeChar);
+            const measure = measurePawnStringLiteral(topLevelSource, opts.escapeChar);
             if (measure?.bytesWithTerminator != null) {
                 resolved[0] = String(measure.bytesWithTerminator);
             }
@@ -174,7 +168,7 @@ function createArrayShapeCore(deps = {}) {
 
             const source = String(expr || '').trim();
             if (source.startsWith('"')) {
-                const measure = measurePawnStringLiteral?.(source, opts.escapeChar);
+                const measure = measurePawnStringLiteral(source, opts.escapeChar);
                 if (measure?.bytesWithTerminator != null) {
                     setInferredCapacity(dimIndex, measure.bytesWithTerminator);
                 }

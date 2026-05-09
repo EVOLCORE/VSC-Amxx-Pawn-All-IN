@@ -7,6 +7,8 @@ const {
     getSemanticSignatureCache,
     getSemanticAnalysisCache
 } = require('../../core/document-context/semantic-session');
+const { LIVE_UNRESOLVED_INCLUDE_DIAGNOSTIC_CODE } = require('./diagnostic-codes');
+const { createScannerLineState } = require('./scanner-state');
 
 const {
     normalizeLiveValidationIssueMode: defaultNormalizeLiveValidationIssueMode,
@@ -57,9 +59,7 @@ function createLiveValidationScanner(deps) {
     function collectLiveValidationDiagnostics(document, options = {}) {
         const requestedSpecificLines = Array.isArray(options.lines) && options.lines.length;
         const isFullScanRequest = !requestedSpecificLines;
-        const shouldPreparseUsageLocals =
-            typeof collectUsageLiveDiagnostics === 'function' &&
-            areLiveValidationWarningsEnabled(getLiveValidationIssueMode());
+        const shouldPreparseUsageLocals = areLiveValidationWarningsEnabled(getLiveValidationIssueMode());
         const shouldPreparseRootLocals = shouldPreparseUsageLocals || isFullScanRequest;
         const contextSession = createPawnDocumentContextSession(document, {
             includeDecls: true,
@@ -90,7 +90,6 @@ function createLiveValidationScanner(deps) {
         const docLength = rootCtx.text.length;
         const diagnostics = [];
         const seen = new Set();
-        const lineSnapshotCache = [];
         const rootLineContextFlags = new Uint8Array(document.lineCount);
         const nonRootLineContextCache = new Map();
         const lineAnalysisCache = [];
@@ -123,67 +122,30 @@ function createLiveValidationScanner(deps) {
             lineCtrlChars: documentScanPlan.lineCtrlChars,
             lineStartOffsets: rootCtx.lineStartOffsets || null
         };
-        let lineStartOffsets = rootCtx.semanticSession?.lineStartOffsets || null;
-        const getLineStartOffsets = () => {
-            if (lineStartOffsets) return lineStartOffsets;
-            lineStartOffsets = rootCtx.lineStartOffsets;
-            if (!lineStartOffsets) {
-                const starts = [0];
-                const text = String(rootCtx.text || '');
-                for (let index = 0; index < text.length; index++) {
-                    if (text.charCodeAt(index) === 10) {
-                        starts.push(index + 1);
-                    }
-                }
-                lineStartOffsets = starts;
-            }
-            if (rootCtx.semanticSession) {
-                rootCtx.semanticSession.lineStartOffsets = lineStartOffsets;
-            }
-            return lineStartOffsets;
-        };
-        const getValidationLineStartOffset = lineNumber => getLineStartOffsets()[lineNumber] ?? 0;
-        const getValidationLineSnapshot = lineNumber => {
-            const cachedSnapshot = lineSnapshotCache[lineNumber];
-            if (cachedSnapshot !== undefined) return cachedSnapshot;
-            const text = documentScanPlan.rawLines[lineNumber] ?? document.lineAt(lineNumber).text;
-            const startOffset = getValidationLineStartOffset(lineNumber);
-            const snapshot = { text, startOffset };
-            lineSnapshotCache[lineNumber] = snapshot;
-            return snapshot;
-        };
-        const getIndexedExpressionsForLine = (lineNumber, strippedLineText) => {
-            const cachedIndexedExpressions = documentScanPlan.indexedExpressionsByLine[lineNumber];
-            if (cachedIndexedExpressions !== undefined) return cachedIndexedExpressions;
-            const escapeChar = rootCtx.resolver.ctrlCharAtLine(lineNumber);
-            const indexedExpressions = collectIndexedAccessExpressionsFromLine(strippedLineText, escapeChar);
-            documentScanPlan.indexedExpressionsByLine[lineNumber] = indexedExpressions;
-            return indexedExpressions;
-        };
-        const getInlineCallsForLine = (lineNumber, strippedLineText, lineStartOffset) => {
-            const cachedInlineCalls = documentScanPlan.inlineCallsByLine[lineNumber];
-            if (cachedInlineCalls !== undefined) return cachedInlineCalls;
-            const escapeChar = rootCtx.resolver.ctrlCharAtLine(lineNumber);
-            const inlineCalls = collectInlineNamedCallContexts(strippedLineText, lineStartOffset, escapeChar, {
-                includeClosedCalls: true
-            });
-            documentScanPlan.inlineCallsByLine[lineNumber] = inlineCalls;
-            return inlineCalls;
-        };
+        const {
+            getLineStartOffsets,
+            getValidationLineSnapshot,
+            getIndexedExpressionsForLine,
+            getInlineCallsForLine
+        } = createScannerLineState({
+            document,
+            rootCtx,
+            documentScanPlan,
+            collectIndexedAccessExpressionsFromLine,
+            collectInlineNamedCallContexts
+        });
         const getLineStringStartQuote = lineNumber => {
             if (!documentScanPlan.lineStringStartQuoteCodes) {
-                documentScanPlan.lineStringStartQuoteCodes = getLineStringStartQuoteCodes
-                    ? getLineStringStartQuoteCodes(rootCtx)
-                    : new Uint16Array(document.lineCount);
+                documentScanPlan.lineStringStartQuoteCodes = getLineStringStartQuoteCodes(rootCtx);
             }
             const quoteCode = documentScanPlan.lineStringStartQuoteCodes[lineNumber] || 0;
             return quoteCode ? String.fromCharCode(quoteCode) : '';
         };
         const getPackedStringDefaultForLine = lineNumber => {
             if (!documentScanPlan.packedStringDefaultLineFlags) {
-                documentScanPlan.packedStringDefaultLineFlags = collectPackedStringDefaultLineFlags
-                    ? collectPackedStringDefaultLineFlags(rootCtx.strippedLines || documentScanPlan.rawLines)
-                    : new Uint8Array(document.lineCount);
+                documentScanPlan.packedStringDefaultLineFlags = collectPackedStringDefaultLineFlags(
+                    rootCtx.strippedLines || documentScanPlan.rawLines
+                );
             }
             return !!documentScanPlan.packedStringDefaultLineFlags[lineNumber];
         };
@@ -301,7 +263,7 @@ function createLiveValidationScanner(deps) {
             : (documentScanPlan.generalDiagnosticCandidateLines || orderedLineNumbers);
         const isEnumMemberLine = lineNumber => documentScanPlan.enumMemberLines.has(lineNumber);
         const hasContextEnumMemberDeclarationOnLine = (lineCtx, lineNumber) => {
-            return !!isEnumMemberDeclarationLine?.(lineCtx, lineNumber);
+            return !!isEnumMemberDeclarationLine(lineCtx, lineNumber);
         };
         const findFunctionBodyRangeForLine = lineNumber => {
             return documentScanPlan.functionBodyRangeByLine[lineNumber] || null;
@@ -624,32 +586,38 @@ function createLiveValidationScanner(deps) {
             if (isInactivePreprocessorLine(diagnostic?.range?.start?.line)) continue;
             pushDiagnostic(diagnostic);
         }
+        let hasUnresolvedRequiredIncludes = (rootCtx.preprocessedState?.unresolvedIncludeEntries || [])
+            .some(entry => entry?.required !== false);
+        const preprocessorTargetLineNumbers = hasUnresolvedRequiredIncludes ? null : lineNumbers;
         for (const diagnostic of collectPreprocessorAndLabelLiveDiagnostics(
             document,
             rootCtx,
             docLength,
-            lineNumbers
+            preprocessorTargetLineNumbers
         )) {
             if (isInactivePreprocessorLine(diagnostic.range.start.line)) continue;
             if (isDelimiterTaintedLine(diagnostic.range.start.line)) continue;
+            if (diagnostic.code === LIVE_UNRESOLVED_INCLUDE_DIAGNOSTIC_CODE) {
+                hasUnresolvedRequiredIncludes = true;
+            }
             pushDiagnostic(diagnostic);
         }
-        if (typeof collectUsageLiveDiagnostics === 'function') {
-            const usageDiagnostics = collectUsageLiveDiagnostics(document, rootCtx, docLength);
-            if (scanStats) {
-                scanStats.usageDiagnostics = usageDiagnostics.length;
-            }
-            for (const diagnostic of usageDiagnostics) {
-                if (isInactivePreprocessorLine(diagnostic.range.start.line)) continue;
-                if (isDelimiterTaintedLine(diagnostic.range.start.line)) continue;
-                const before = diagnostics.length;
-                pushDiagnostic(diagnostic);
-                if (scanStats && diagnostics.length > before) {
-                    scanStats.usageDiagnosticsKept++;
-                }
+        const usageDiagnostics = hasUnresolvedRequiredIncludes
+            ? EMPTY_DIAGNOSTICS
+            : collectUsageLiveDiagnostics(document, rootCtx, docLength);
+        if (scanStats) {
+            scanStats.usageDiagnostics = usageDiagnostics.length;
+        }
+        for (const diagnostic of usageDiagnostics) {
+            if (isInactivePreprocessorLine(diagnostic.range.start.line)) continue;
+            if (isDelimiterTaintedLine(diagnostic.range.start.line)) continue;
+            const before = diagnostics.length;
+            pushDiagnostic(diagnostic);
+            if (scanStats && diagnostics.length > before) {
+                scanStats.usageDiagnosticsKept++;
             }
         }
-        if (typeof collectDynamicUsageLiveDiagnostics === 'function') {
+        if (!hasUnresolvedRequiredIncludes) {
             for (const diagnostic of collectDynamicUsageLiveDiagnostics(document, rootCtx, docLength, {
                 inactiveStockLines: documentScanPlan.inactiveStockLines || null
             })) {
@@ -658,23 +626,21 @@ function createLiveValidationScanner(deps) {
                 pushDiagnostic(diagnostic);
             }
         }
-        if (typeof collectMultilinePawnStringLiteralDiagnostics === 'function') {
-            for (const diagnostic of collectMultilinePawnStringLiteralDiagnostics(document, rootCtx, docLength, {
-                lineCtrlChars: documentScanPlan.lineCtrlChars,
-                packedStringDefaultLineFlags: (() => {
-                    if (!documentScanPlan.packedStringDefaultLineFlags) {
-                        documentScanPlan.packedStringDefaultLineFlags = collectPackedStringDefaultLineFlags
-                            ? collectPackedStringDefaultLineFlags(rootCtx.strippedLines || documentScanPlan.rawLines)
-                            : new Uint8Array(document.lineCount);
-                    }
-                    return documentScanPlan.packedStringDefaultLineFlags;
-                })(),
-                targetLineNumbers: lineNumbers
-            })) {
-                if (isInactivePreprocessorLine(diagnostic.range.start.line)) continue;
-                if (isDelimiterTaintedLine(diagnostic.range.start.line)) continue;
-                pushDiagnostic(diagnostic);
-            }
+        for (const diagnostic of collectMultilinePawnStringLiteralDiagnostics(document, rootCtx, docLength, {
+            lineCtrlChars: documentScanPlan.lineCtrlChars,
+            packedStringDefaultLineFlags: (() => {
+                if (!documentScanPlan.packedStringDefaultLineFlags) {
+                    documentScanPlan.packedStringDefaultLineFlags = collectPackedStringDefaultLineFlags(
+                        rootCtx.strippedLines || documentScanPlan.rawLines
+                    );
+                }
+                return documentScanPlan.packedStringDefaultLineFlags;
+            })(),
+            targetLineNumbers: lineNumbers
+        })) {
+            if (isInactivePreprocessorLine(diagnostic.range.start.line)) continue;
+            if (isDelimiterTaintedLine(diagnostic.range.start.line)) continue;
+            pushDiagnostic(diagnostic);
         }
 
         const diagnosticLinePlan = lineNumbers
@@ -730,6 +696,7 @@ function createLiveValidationScanner(deps) {
                 }
                 lineHasInvalidCodeCharacters = invalidCodeCharacterDiagnostics.length > 0;
             }
+            if (hasUnresolvedRequiredIncludes) continue;
             if (isDelimiterTaintedLine(lineNumber)) continue;
             if (isBackslashContinuationLine(lineNumber)) continue;
             if (isEnumMemberLine(lineNumber)) continue;
@@ -754,7 +721,7 @@ function createLiveValidationScanner(deps) {
             }
         }
 
-        if (!isFullScan) {
+        if (!hasUnresolvedRequiredIncludes && !isFullScan) {
             const touchedFunctions = new Set();
             for (const lineNumber of focusLineNumbers) {
                 if (isDelimiterTaintedLine(lineNumber)) continue;
@@ -791,7 +758,7 @@ function createLiveValidationScanner(deps) {
                     }
                 }
             }
-        } else {
+        } else if (!hasUnresolvedRequiredIncludes) {
             for (const func of headerCandidateFunctions) {
                 if (documentScanPlan.inactiveStockLines?.has(func.startLine)) continue;
                 if (isDelimiterTaintedLine(func.startLine)) continue;
@@ -825,9 +792,11 @@ function createLiveValidationScanner(deps) {
             }
             return result;
         };
-        for (const diagnostic of collectStructuralDiagnosticsForScan()) {
-            if (isDelimiterTaintedLine(diagnostic.range.start.line)) continue;
-            pushDiagnostic(diagnostic);
+        if (!hasUnresolvedRequiredIncludes) {
+            for (const diagnostic of collectStructuralDiagnosticsForScan()) {
+                if (isDelimiterTaintedLine(diagnostic.range.start.line)) continue;
+                pushDiagnostic(diagnostic);
+            }
         }
 
         return diagnostics;
