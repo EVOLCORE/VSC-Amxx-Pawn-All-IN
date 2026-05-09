@@ -131,6 +131,7 @@ function createValidationCore(deps) {
         findAnyDeclByNameFromSources,
         FORBIDDEN,
         getActiveCtrlChar,
+        getEffectiveDeclDimParts,
         getEnumDeclResolvedCapacity,
         macroExpansionCore,
         replaceNumericCharacterLiteralsForValidation,

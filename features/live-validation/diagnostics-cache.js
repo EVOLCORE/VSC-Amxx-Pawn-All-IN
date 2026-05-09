@@ -5,8 +5,10 @@ const {
 } = require('../../core/utils/signature');
 const { createUtilityCore } = require('../../core/utils');
 const { makeLiveValidationDiagnosticKey } = require('./diagnostic-key');
+const {
+    LIVE_VALIDATION_DIAGNOSTIC_ENGINE_SIGNATURE
+} = require('./diagnostic-engine-signature');
 
-const LIVE_VALIDATION_DIAGNOSTIC_ENGINE_SIGNATURE = 'diag-engine:2026-05-09-initializer-token-ranges';
 const EDITED_VALIDATION_RESULT_CACHE_LIMIT = 128;
 const DOCUMENT_DIAGNOSTICS_CACHE_LIMIT = 64;
 const {

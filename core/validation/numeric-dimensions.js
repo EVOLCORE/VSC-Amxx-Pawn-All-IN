@@ -1,3 +1,5 @@
+const { createDimensionSyntaxCore } = require('../syntax/dimensions');
+
 function createNumericDimensionValidationCore(deps) {
     const {
         evaluatePawnCharacterLiteralValue,
@@ -5,6 +7,7 @@ function createNumericDimensionValidationCore(deps) {
         findAnyDeclByNameFromSources,
         FORBIDDEN,
         getActiveCtrlChar,
+        getEffectiveDeclDimParts,
         getEnumDeclResolvedCapacity,
         macroExpansionCore,
         replaceNumericCharacterLiteralsForValidation,
@@ -15,10 +18,10 @@ function createNumericDimensionValidationCore(deps) {
     const PARSED_NUMERIC_EXPR_CACHE_LIMIT = 4096;
     const PARSED_NUMERIC_EXPR_CACHE_MAX_CHARS = 512;
     const PAWN_CHARS_PER_CELL = 4;
+    const dimensionSyntaxCore = createDimensionSyntaxCore();
 
     function parseDimsParts(dimsStr) {
-        return String(dimsStr || '')
-            .match(/\[[^\]]*\]/g)?.map(dim => dim.slice(1, -1).trim()) || [];
+        return dimensionSyntaxCore.parseDimsParts(dimsStr);
     }
 
     function evaluateParsedPawnNumericExpr(source) {
@@ -147,15 +150,19 @@ function createNumericDimensionValidationCore(deps) {
         source = expanded.text;
 
         if (/[A-Za-z_@]/.test(source)) {
-            source = source.replace(/\bsizeof\s*\(\s*([A-Za-z_@]\w*)\s*\)/g, (_, name) => {
+            source = source.replace(/\bsizeof\s*\(\s*([A-Za-z_@]\w*)((?:\s*\[\s*\])*)\s*\)/g, (_, name, emptyAccesses) => {
                 const decl = findAnyDeclByNameFromSources(decls, name, null, analysisCache);
                 if (!decl) return 'NaN';
                 if (decl.type === 'enum' && /^-?\d+$/.test(String(decl.value || ''))) {
                     return String(decl.value);
                 }
                 if (decl.dims) {
-                    const firstDim = parseDimsParts(decl.dims)[0];
-                    const dimSpec = parseDimSpec(firstDim, decls, seen, analysisCache);
+                    const effectiveDimParts = typeof getEffectiveDeclDimParts === 'function'
+                        ? getEffectiveDeclDimParts(decl)
+                        : parseDimsParts(decl.dims);
+                    const level = (String(emptyAccesses || '').match(/\[/g) || []).length;
+                    const dimPart = effectiveDimParts[level];
+                    const dimSpec = parseDimSpec(dimPart, decls, seen, analysisCache);
                     return dimSpec.capacity != null ? String(dimSpec.capacity) : 'NaN';
                 }
                 return 'NaN';

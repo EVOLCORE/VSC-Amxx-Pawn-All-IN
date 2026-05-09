@@ -18,6 +18,10 @@ function createInitializerDiagnostics(deps) {
         return parseBraceArrayLiteralExpressionDetailed(source, escapeChar);
     }
 
+    function getBraceArrayLiteralWarning(details) {
+        return details?.warning || null;
+    }
+
     function readLeadingInitializerTokenIssue(source, rangeStart = 0, escapeChar = '') {
         const text = String(source || '');
         let cursor = 0;
@@ -236,6 +240,8 @@ function createInitializerDiagnostics(deps) {
                 const tokenIssue = readLeadingInitializerTokenIssue(source, rangeStart, escapeChar);
                 return tokenIssue.hasTrailingCode ? tokenIssue : { kind: 'partial' };
             }
+            const braceWarning = getBraceArrayLiteralWarning(braceDetails);
+            if (braceWarning) return braceWarning;
             const braceParts = braceDetails.parts.map(part => part.text);
             if (dimSpec?.capacity != null && braceParts.length > dimSpec.capacity) {
                 return { kind: 'overflow' };
@@ -274,6 +280,8 @@ function createInitializerDiagnostics(deps) {
             if (!braceDetails?.parts) {
                 return null;
             }
+            const braceWarning = getBraceArrayLiteralWarning(braceDetails);
+            if (braceWarning) return braceWarning;
             const braceParts = braceDetails.parts.map(part => part.text);
             if (dimSpec?.capacity != null && braceParts.length > dimSpec.capacity) {
                 return { kind: 'overflow' };
@@ -323,6 +331,8 @@ function createInitializerDiagnostics(deps) {
             const fieldDetails = getBraceArrayLiteralDetails(source, escapeChar);
             const fieldParts = fieldDetails?.parts?.map(part => part.text) || null;
             if (!fieldParts) return null;
+            const braceWarning = getBraceArrayLiteralWarning(fieldDetails);
+            if (braceWarning) return braceWarning;
             if (fieldParts.length > enumMembers.length) return { kind: 'enumFieldCountOverflow' };
             for (let index = 0; index < fieldParts.length; index++) {
                 const fieldIssue = validateEnumStructFieldInitializer(fieldParts[index], enumMembers[index]);
@@ -341,6 +351,8 @@ function createInitializerDiagnostics(deps) {
                 }
                 return null;
             }
+            const braceWarning = getBraceArrayLiteralWarning(braceDetails);
+            if (braceWarning) return braceWarning;
 
             if (dimSpec?.capacity != null && braceParts.length > dimSpec.capacity) {
                 return { kind: 'overflow' };

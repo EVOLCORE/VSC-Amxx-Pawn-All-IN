@@ -128,6 +128,7 @@
   "validation.tagOverrideMustBeParenthesized": "expression with tag override must appear between parentheses",
   "validation.cannotTakeTagAsDefaultForIndexedArrayParameter": "cannot take a tag as a default value for an indexed array parameter (symbol \"{name}\")",
   "validation.initializationDataExceedsDeclaredSize": "initialization data exceeds declared size",
+  "validation.unexpectedStringLiteralInInitializer": "unexpected string literal in array initializer; missing comma before it",
   "validation.moreInitializersThanEnumFields": "more initializers than enum fields",
   "validation.enumFieldInitializerTooLong": "length of initializer exceeds size of the enum field",
   "validation.multidimArrayMustBeFullyInitialized": "multi-dimensional arrays must be fully initialized",

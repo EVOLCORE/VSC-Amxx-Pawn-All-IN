@@ -1,4 +1,5 @@
 const { createSemanticSyntaxCore } = require('./semantic-classifier');
+const { createDimensionSyntaxCore } = require('./dimensions');
 
 // Shared syntax/text helpers used across validation, declarations, hover, and
 // call analysis. These are language-mechanics helpers, not feature logic.
@@ -16,6 +17,7 @@ function createSyntaxCore(deps) {
         isIdentifierStartChar: isPawnIdentifierStartChar,
         isIdentifierContinueChar: isPawnIdentifierContinueChar
     });
+    const dimensionSyntaxCore = createDimensionSyntaxCore({ isEscapedQuote });
 
     function stripLineComment(line, escapeChar = getActiveCtrlChar()) {
         const source = String(line || '');
@@ -224,10 +226,7 @@ function createSyntaxCore(deps) {
     }
 
     function parseDims(s) {
-        const DIM_RE = /^\s*(\[[^\]]*\])/;
-        let dims = '', m;
-        while ((m = s.match(DIM_RE))) { dims += m[1]; s = s.slice(m[0].length); }
-        return { dims, rest: s.trimStart() };
+        return dimensionSyntaxCore.parseLeadingDims(s);
     }
 
     function parseValueAndRemainder(s, escapeChar = getActiveCtrlChar()) {

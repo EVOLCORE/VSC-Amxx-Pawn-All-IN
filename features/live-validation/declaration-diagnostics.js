@@ -169,8 +169,17 @@ function createDeclarationDiagnostics(deps) {
                 docLength
             );
         };
-        const findDeclarationValueStartOffset = valueText => {
+        const findDeclarationValueStartOffset = (valueText, decl = null) => {
             const sourceText = String(ctx?.text || '');
+            const declLineNumber = Number.isInteger(decl?.lineNumber) ? decl.lineNumber : lineNumber;
+            const declLineText = (ctx?.rawLines || [])[declLineNumber] || (declLineNumber === lineNumber ? lineText : '');
+            const declLineStartOffset = (ctx?.lineStartOffsets || [])[declLineNumber] ?? null;
+            const declAssignmentIndex = declLineText.indexOf('=');
+            if (declAssignmentIndex >= 0 && sourceText && declLineStartOffset != null) {
+                let offset = declLineStartOffset + declAssignmentIndex + 1;
+                while (offset < sourceText.length && /\s/.test(sourceText[offset] || '')) offset++;
+                return offset;
+            }
             const assignmentIndex = lineText.indexOf('=');
             if (assignmentIndex >= 0 && sourceText) {
                 let offset = lineStartOffset + assignmentIndex + 1;
@@ -180,8 +189,47 @@ function createDeclarationDiagnostics(deps) {
             const valueIndex = String(valueText || '') ? lineText.indexOf(valueText) : -1;
             return valueIndex >= 0 ? lineStartOffset + valueIndex : -1;
         };
-        const createDeclarationValueRange = (valueText, issue = null) => {
-            const valueStartOffset = findDeclarationValueStartOffset(valueText);
+        const findStringLiteralRangeByOrdinal = (sourceText, valueStartOffset, ordinal) => {
+            if (!Number.isInteger(ordinal) || ordinal < 0 || valueStartOffset < 0) return null;
+            let seen = 0;
+            for (let offset = valueStartOffset; offset < sourceText.length; offset++) {
+                const char = sourceText[offset];
+                if (char !== '"' && char !== "'") continue;
+                const quote = char;
+                let end = offset + 1;
+                while (end < sourceText.length) {
+                    if (sourceText[end] === quote && !isEscapedQuote(sourceText, end, escapeChar)) {
+                        end++;
+                        break;
+                    }
+                    end++;
+                }
+                if (seen === ordinal) {
+                    return { start: offset, end: Math.max(offset + 1, end) };
+                }
+                seen++;
+                offset = Math.max(offset, end - 1);
+            }
+            return null;
+        };
+        const createDeclarationValueRange = (valueText, issue = null, decl = null) => {
+            const valueStartOffset = findDeclarationValueStartOffset(valueText, decl);
+            if (issue?.kind === 'adjacentStringLiteral') {
+                const sourceText = String(ctx?.text || '');
+                const literalRange = findStringLiteralRangeByOrdinal(
+                    sourceText,
+                    valueStartOffset,
+                    issue.stringLiteralOrdinal
+                );
+                if (literalRange) {
+                    return createOffsetRange(
+                        document,
+                        literalRange.start,
+                        literalRange.end,
+                        docLength
+                    );
+                }
+            }
             if (issue?.kind === 'unexpectedToken') {
                 const tokenOffset = findInitializerIssueSourceOffset(ctx?.text || '', valueStartOffset, issue, escapeChar);
                 if (tokenOffset >= 0) {
@@ -773,26 +821,28 @@ function createDeclarationDiagnostics(deps) {
                 continue;
             }
             const valueText = String(decl.value || '').trim();
-            const isEnumInitializerWarning =
+            const isInitializerWarning =
                 initializerIssue.kind === 'enumFieldCountOverflow' ||
                 initializerIssue.kind === 'enumFieldInitializerOverflow';
-            if (isEnumInitializerWarning && !areWarningDiagnosticsEnabled()) continue;
+            if (isInitializerWarning && !areWarningDiagnosticsEnabled()) continue;
             const message = initializerIssue.kind === 'overflow'
                 ? t('validation.initializationDataExceedsDeclaredSize')
                 : (initializerIssue.kind === 'enumFieldCountOverflow'
                     ? t('validation.moreInitializersThanEnumFields')
                     : (initializerIssue.kind === 'enumFieldInitializerOverflow'
                         ? t('validation.enumFieldInitializerTooLong')
-                        : (initializerIssue.kind === 'unexpectedToken'
-                            ? t('validation.unexpectedToken', { token: initializerIssue.token || '' })
-                            : (initializerIssue.kind === 'constantRequired'
-                                ? t('validation.mustBeConstantExpression')
-                                : t('validation.multidimArrayMustBeFullyInitialized')))));
+                        : (initializerIssue.kind === 'adjacentStringLiteral'
+                            ? t('validation.unexpectedStringLiteralInInitializer')
+                            : (initializerIssue.kind === 'unexpectedToken'
+                                ? t('validation.unexpectedToken', { token: initializerIssue.token || '' })
+                                : (initializerIssue.kind === 'constantRequired'
+                                    ? t('validation.mustBeConstantExpression')
+                                    : t('validation.multidimArrayMustBeFullyInitialized'))))));
             diagnostics.push(
                 createLiveValidationDiagnostic(
-                    createDeclarationValueRange(valueText, initializerIssue),
+                    createDeclarationValueRange(valueText, initializerIssue, decl),
                     message,
-                    isEnumInitializerWarning ? getWarningSeverity() : undefined
+                    isInitializerWarning ? getWarningSeverity() : undefined
                 )
             );
         }

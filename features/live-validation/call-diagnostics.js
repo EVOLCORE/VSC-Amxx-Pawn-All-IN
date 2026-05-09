@@ -5,6 +5,7 @@ function createCallDiagnostics(deps) {
         collectCallArgumentIssues,
         createLiveValidationDiagnostic,
         createOffsetRange,
+        explainTypeCompat,
         expandObjectLikeDefineTupleArgPieces,
         findMatchingParenOffset,
         getCallArgumentIssueRange,
@@ -18,6 +19,7 @@ function createCallDiagnostics(deps) {
         isFunctionLikeDecl,
         isFunctionLikeDefineDecl,
         isIdentifierContinueChar,
+        isIdentifierStartChar,
         isIncludeDocument,
         isStrictIncludeValidationEnabled,
         splitTopLevelWithRanges,
@@ -47,12 +49,69 @@ function createCallDiagnostics(deps) {
             return createOffsetRange(document, startOffset, endOffset, docLength);
         };
 
-        const createCallNameRange = () => {
+        const findCallNameOffsets = () => {
             let cursor = Math.max(0, callCtx.openOffset - 1);
             while (cursor >= 0 && /\s/.test(ctx.text[cursor])) cursor--;
             const endOffset = cursor + 1;
             while (cursor >= 0 && isIdentifierContinueChar(ctx.text[cursor])) cursor--;
-            return createOffsetRange(document, cursor + 1, endOffset, docLength);
+            return { startOffset: cursor + 1, endOffset };
+        };
+
+        const createCallNameRange = () => {
+            const { startOffset, endOffset } = findCallNameOffsets();
+            return createOffsetRange(document, startOffset, endOffset, docLength);
+        };
+
+        const findCallResultTagOverride = () => {
+            if (typeof isIdentifierStartChar !== 'function') return null;
+            const nameOffsets = findCallNameOffsets();
+            if (ctx.text.slice(nameOffsets.startOffset, nameOffsets.endOffset) !== callCtx.funcName) return null;
+            let colonOffset = nameOffsets.startOffset - 1;
+            while (colonOffset >= 0 && (ctx.text[colonOffset] === ' ' || ctx.text[colonOffset] === '\t')) {
+                colonOffset--;
+            }
+            if (ctx.text[colonOffset] !== ':') return null;
+            if (ctx.text[colonOffset - 1] === ':' || ctx.text[colonOffset + 1] === ':') return null;
+
+            let cursor = colonOffset - 1;
+            while (cursor >= 0 && (ctx.text[cursor] === ' ' || ctx.text[cursor] === '\t')) cursor--;
+            const tagEndOffset = cursor + 1;
+            while (cursor >= 0 && isIdentifierContinueChar(ctx.text[cursor])) cursor--;
+            const tagStartOffset = cursor + 1;
+            if (tagStartOffset >= tagEndOffset) return null;
+            if (!isIdentifierStartChar(ctx.text[tagStartOffset] || '')) return null;
+
+            return {
+                tag: ctx.text.slice(tagStartOffset, tagEndOffset),
+                startOffset: tagStartOffset,
+                endOffset: colonOffset + 1
+            };
+        };
+
+        const collectCallResultTagOverrideDiagnostic = signatureData => {
+            if (!areWarningDiagnosticsEnabled()) return null;
+            if (typeof explainTypeCompat !== 'function') return null;
+            const tagOverride = findCallResultTagOverride();
+            if (!tagOverride) return null;
+            const expectedTag = signatureData.typeTag || '';
+            const expectedDims = signatureData.dims || '';
+            const expectedParam = `${expectedTag ? `${expectedTag}:` : ''}__return${expectedDims}`;
+            const syntheticTaggedValue = `${tagOverride.tag}:0`;
+            const analysisDecls = analysisCache ? [] : ctx.allDecls;
+            const compat = explainTypeCompat(
+                expectedParam,
+                tagOverride.tag,
+                expectedDims,
+                syntheticTaggedValue,
+                analysisDecls,
+                { analysisCache }
+            );
+            if (!compat?.reason || compat.status === 'ok') return null;
+            return createLiveValidationDiagnostic(
+                createOffsetRange(document, tagOverride.startOffset, tagOverride.endOffset, docLength),
+                compat.reason,
+                getTypeCompatSeverity(compat.status)
+            );
         };
 
         const signatureData = getResolvedCallSignatureData(callCtx.funcName, ctx, analysisCache);
@@ -78,6 +137,8 @@ function createCallDiagnostics(deps) {
                 getWarningSeverity()
             ));
         }
+        const resultTagDiagnostic = collectCallResultTagOverrideDiagnostic(signatureData);
+        if (resultTagDiagnostic) diagnostics.push(resultTagDiagnostic);
         if (isFunctionLikeDefineDecl(signatureData)) return diagnostics;
 
         const closeOffset = Number.isInteger(callCtx.closeOffset)

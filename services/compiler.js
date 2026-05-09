@@ -47,7 +47,7 @@ const compilerSettings = {
     compileStartToastMode: 'never',
     compileResultToastMode: 'issues',
     compilerOutputRevealMode: 'issues',
-    liveValidationMode: 'off'
+    liveValidationMode: 'edited'
 };
 
 function normalizeCompilerFsPath(filePath) {
@@ -90,11 +90,11 @@ function refreshCompilerSettings() {
     compilerSettings.compileStartToastMode = resolveCompileStartToastMode(config);
     compilerSettings.compileResultToastMode = resolveCompileResultToastMode(config);
     compilerSettings.compilerOutputRevealMode = resolveCompilerOutputRevealMode(config);
-    const rawLiveValidationMode = String(config.get('liveValidationMode', 'off') || 'off').trim().toLowerCase();
+    const rawLiveValidationMode = String(config.get('liveValidationMode', 'edited') || 'edited').trim().toLowerCase();
     compilerSettings.liveValidationMode =
         rawLiveValidationMode === 'edited' || rawLiveValidationMode === 'full'
             ? rawLiveValidationMode
-            : 'off';
+            : 'edited';
 }
 
 function resolveCompilerOutputDirectoryBase(config) {

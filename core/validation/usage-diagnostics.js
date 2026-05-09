@@ -768,7 +768,6 @@ function createSymbolUsageDiagnostics(deps = {}) {
         const issues = [];
         for (const entry of entries) {
             if (entry.stock || entry.native || entry.public) continue;
-            if (entry.global && !entry.read && !entry.written) continue;
             if (!entry.read && !entry.written) {
                 issues.push({
                     entry,

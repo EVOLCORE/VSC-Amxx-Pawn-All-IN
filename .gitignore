@@ -1,5 +1,7 @@
 /amxmodx/*
 /testfiles/*
 /scripts/*
+!/scripts/check-feature-wiring-contracts.js
+!/scripts/check-live-validation-feature-wiring.js
 
 /ARCHITECTURE.md

@@ -67,6 +67,14 @@ function createLiveValidationScheduler(deps) {
         setLiveValidationDiagnostics,
         updateLiveValidationDiagnostics
     } = diagnosticsCache;
+    const logScheduler = message => {
+        try {
+            liveValidationOutputChannel?.appendLine?.(`[scheduler] ${message}`);
+        } catch {
+            // Scheduler logging must never affect diagnostics.
+        }
+    };
+    const getDiagnosticCount = diagnostics => Array.isArray(diagnostics) ? diagnostics.length : 0;
 
     function isLiveValidationDocument(document) {
         if (!isPawnDocument(document)) return false;
@@ -147,15 +155,25 @@ function createLiveValidationScheduler(deps) {
     }
 
     function scheduleLiveValidation(liveValidationCollection, document, options = {}) {
-        if (!isLiveValidationDocument(document)) return;
+        if (!isLiveValidationDocument(document)) {
+            logScheduler(
+                `skip reason=${String(options.reason || 'unspecified')} cause=not-live-document ` +
+                `file=${document?.fileName || ''} lang=${document?.languageId || ''}`
+            );
+            return;
+        }
         const normalized = normalizeFsPath(document.fileName);
-        if (!normalized) return;
+        if (!normalized) {
+            logScheduler(`skip reason=${String(options.reason || 'unspecified')} cause=empty-path`);
+            return;
+        }
         const mode = getLiveValidationMode();
         const allowWhenModeOff = !!options.allowWhenModeOff;
         if (mode === 'off' && !allowWhenModeOff) {
             clearScheduledLiveValidation(document.fileName);
             liveValidationCollection.delete(document.uri);
             deletePublishedDiagnostics(normalized);
+            logScheduler(`skip reason=${String(options.reason || 'unspecified')} cause=mode-off file=${document.fileName}`);
             return;
         }
 
@@ -165,6 +183,10 @@ function createLiveValidationScheduler(deps) {
         const reason = String(options.reason || 'unspecified');
         const existing = liveValidationTimers.get(normalized);
         const allowPublishedReuse = shouldAllowPublishedDiagnosticsReuse(reason);
+        logScheduler(
+            `schedule reason=${reason} mode=${mode} full=${full ? 1 : 0} delay=${delayMs} ` +
+            `file=${document.fileName}`
+        );
         if (full) {
             const settingsSignature = getValidationCacheSettingsSignature();
             const cachedResult = getCachedFullResultEntry(document, {
@@ -175,7 +197,10 @@ function createLiveValidationScheduler(deps) {
             if (cachedResult.fresh && cachedResult.diagnostics) {
                 const currentFingerprint = cachedResult.cacheEntry?.documentFingerprint ||
                     getCachedDocumentFingerprint(document);
-                if (!isDocumentSnapshotCurrent(document, document.version, currentFingerprint)) return;
+                if (!isDocumentSnapshotCurrent(document, document.version, currentFingerprint)) {
+                    logScheduler(`drop-stale reason=${reason} source=full-cache file=${document.fileName}`);
+                    return;
+                }
                 if (existing?.full && existing.version === document.version && existing.timer) {
                     clearTimeout(existing.timer);
                     liveValidationTimers.delete(normalized);
@@ -186,6 +211,10 @@ function createLiveValidationScheduler(deps) {
                     reason,
                     source: 'full-cache'
                 });
+                logScheduler(
+                    `publish-cache reason=${reason} source=full-cache ` +
+                    `count=${getDiagnosticCount(cachedResult.diagnostics)} file=${document.fileName}`
+                );
                 return;
             }
         }
@@ -194,7 +223,17 @@ function createLiveValidationScheduler(deps) {
         if (existing?.timer) clearTimeout(existing.timer);
         const timer = setTimeout(() => {
             liveValidationTimers.delete(normalized);
-            if (!isLiveValidationDocument(document)) return;
+            logScheduler(
+                `run reason=${reason} mode=${mode} full=${full ? 1 : 0} ` +
+                `file=${document.fileName} version=${document.version}`
+            );
+            if (!isLiveValidationDocument(document)) {
+                logScheduler(
+                    `run-skip reason=${reason} cause=not-live-document ` +
+                    `file=${document?.fileName || ''} lang=${document?.languageId || ''}`
+                );
+                return;
+            }
             const runVersion = document.version;
             const runFingerprint = getCachedDocumentFingerprint(document);
             const settingsSignature = getValidationCacheSettingsSignature();
@@ -207,18 +246,30 @@ function createLiveValidationScheduler(deps) {
                         settingsSignature
                     });
                     if (cachedResult.fresh && cachedResult.diagnostics) {
-                        if (!isDocumentSnapshotCurrent(document, runVersion, runFingerprint)) return;
+                        const cacheSource = cachedResult.cacheSource || 'full-cache';
+                        if (!isDocumentSnapshotCurrent(document, runVersion, runFingerprint)) {
+                            logScheduler(`drop-stale reason=${reason} source=${cacheSource} file=${document.fileName}`);
+                            return;
+                        }
                         setLiveValidationDiagnostics(liveValidationCollection, document, cachedResult.diagnostics, {
                             cacheEntry: cachedResult.cacheEntry,
                             settingsSignature,
                             reason,
-                            source: cachedResult.cacheSource || 'full-cache'
+                            source: cacheSource
                         });
+                        logScheduler(
+                            `publish-cache reason=${reason} source=${cacheSource} ` +
+                            `count=${getDiagnosticCount(cachedResult.diagnostics)} file=${document.fileName}`
+                        );
                         return;
                     }
                     const scanStats = {};
+                    logScheduler(`scan-start reason=${reason} source=full-scan file=${document.fileName}`);
                     const diagnostics = collectLiveValidationDiagnostics(document, { scanStats });
-                    if (!isDocumentSnapshotCurrent(document, runVersion, runFingerprint)) return;
+                    if (!isDocumentSnapshotCurrent(document, runVersion, runFingerprint)) {
+                        logScheduler(`drop-stale reason=${reason} source=full-scan file=${document.fileName}`);
+                        return;
+                    }
                     const cacheEntry = buildFullResultCacheEntry(document, diagnostics);
                     setFullResultCacheEntry(document, cachedResult.fullCacheKey, cacheEntry);
                     setLiveValidationDiagnostics(liveValidationCollection, document, diagnostics, {
@@ -227,6 +278,10 @@ function createLiveValidationScheduler(deps) {
                         source: 'full-scan',
                         scanStats
                     });
+                    logScheduler(
+                        `scan-done reason=${reason} source=full-scan ` +
+                        `count=${getDiagnosticCount(diagnostics)} file=${document.fileName}`
+                    );
                     if (document?.isDirty !== true && typeof writePersistentLiveDiagnosticsCache === 'function') {
                         writePersistentLiveDiagnosticsCache(document, cacheEntry, {
                             settingsSignature
@@ -243,7 +298,10 @@ function createLiveValidationScheduler(deps) {
                     settingsSignature
                 });
                 if (cachedEditedResult.fresh) {
-                    if (!isDocumentSnapshotCurrent(document, runVersion, runFingerprint)) return;
+                    if (!isDocumentSnapshotCurrent(document, runVersion, runFingerprint)) {
+                        logScheduler(`drop-stale reason=${reason} source=edited-cache file=${document.fileName}`);
+                        return;
+                    }
                     updateLiveValidationDiagnostics(
                         liveValidationCollection,
                         document,
@@ -256,23 +314,42 @@ function createLiveValidationScheduler(deps) {
                             replaceDiagnosticCodes: EDITED_GLOBAL_REPLACEMENT_DIAGNOSTIC_CODES
                         }
                     );
+                    logScheduler(
+                        `publish-cache reason=${reason} source=edited-cache ` +
+                        `lines=${targetLines.length} focus=${focusLines.length} ` +
+                        `count=${getDiagnosticCount(cachedEditedResult.diagnostics)} file=${document.fileName}`
+                    );
                     return;
                 }
+                logScheduler(
+                    `scan-start reason=${reason} source=edited-scan ` +
+                    `lines=${targetLines.length} focus=${focusLines.length} file=${document.fileName}`
+                );
                 const diagnostics = collectLiveValidationDiagnostics(document, {
                     lines: targetLines,
                     focusLines
                 });
-                if (!isDocumentSnapshotCurrent(document, runVersion, runFingerprint)) return;
+                if (!isDocumentSnapshotCurrent(document, runVersion, runFingerprint)) {
+                    logScheduler(`drop-stale reason=${reason} source=edited-scan file=${document.fileName}`);
+                    return;
+                }
                 updateLiveValidationDiagnostics(liveValidationCollection, document, targetLines, diagnostics, {
                     settingsSignature,
                     reason,
                     source: 'edited-scan',
                     replaceDiagnosticCodes: EDITED_GLOBAL_REPLACEMENT_DIAGNOSTIC_CODES
                 });
+                logScheduler(
+                    `scan-done reason=${reason} source=edited-scan ` +
+                    `lines=${targetLines.length} focus=${focusLines.length} ` +
+                    `count=${getDiagnosticCount(diagnostics)} file=${document.fileName}`
+                );
                 setEditedResultCacheEntry(document, targetLines, focusLines, diagnostics, {
                     settingsSignature
                 });
             } catch (error) {
+                const errorText = error?.stack || error?.message || String(error);
+                logScheduler(`error reason=${reason} file=${document?.fileName || ''} ${errorText}`);
                 console.error('scheduleLiveValidation:', error);
             }
         }, delayMs);

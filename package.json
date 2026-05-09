@@ -1,7 +1,7 @@
 {
   "name": "amxx-pawn-all-in",
   "displayName": "%displayName%",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "publisher": "Faktor",
   "engines": {
     "vscode": "^1.60.0"
@@ -13,8 +13,7 @@
     "onCommand:amxxPawnAllIn.compileCurrentFile"
   ],
   "scripts": {
-    "package": "vsce package",
-    "vscode:prepublish": "npm run package"
+    "package": "vsce package"
   },
   "devDependencies": {
     "@vscode/vsce": "^3.0.0"
@@ -182,7 +181,7 @@
         "amxxPawnAllIn.liveValidationMode": {
           "type": "string",
           "enum": ["off", "edited", "full"],
-          "default": "off",
+          "default": "edited",
           "order": 88,
           "markdownDescription": "%config.liveValidationMode.markdownDescription%",
           "enumDescriptions": [
@@ -257,6 +256,12 @@
             "%config.externalIncludeWatchMode.enum.workspace-and-global%",
             "%config.externalIncludeWatchMode.enum.tracked-resolved-includes%"
           ]
+        },
+        "amxxPawnAllIn.debugOutput": {
+          "type": "boolean",
+          "default": false,
+          "order": 89.6,
+          "markdownDescription": "%config.debugOutput.markdownDescription%"
         },
         "amxxPawnAllIn.completionEnabled": {
           "type": "boolean",

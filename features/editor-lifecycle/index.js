@@ -81,6 +81,19 @@ function createEditorLifecycleFeature(deps) {
             // Watcher logging must never affect lifecycle handling.
         }
     };
+    const logLifecycle = message => {
+        try {
+            liveValidationOutputChannel?.appendLine?.(`[lifecycle] ${message}`);
+        } catch {
+            // Lifecycle logging must never affect editor handling.
+        }
+    };
+    const getDocumentScheme = document => String(document?.uri?.scheme || '').toLowerCase();
+    const isFileBackedLifecycleDocument = document => {
+        if (!document) return false;
+        const scheme = getDocumentScheme(document);
+        return !scheme || scheme === 'file' || scheme === 'untitled';
+    };
     const describeWatcherStamp = stamp => {
         if (!stamp) return 'none';
         return `${stamp.kind || ''}:${stamp.mtimeMs ?? ''}:${stamp.size ?? ''}`;
@@ -91,8 +104,7 @@ function createEditorLifecycleFeature(deps) {
     };
     const isLiveLifecyclePawnDocument = document => {
         if (!isPawnDocument(document)) return false;
-        const scheme = String(document?.uri?.scheme || '').toLowerCase();
-        if (scheme && scheme !== 'file' && scheme !== 'untitled') return false;
+        if (!isFileBackedLifecycleDocument(document)) return false;
         return !/\.git$/i.test(String(document?.fileName || ''));
     };
     const hasIncludeDirectiveCandidate = lineText => {
@@ -312,6 +324,16 @@ function createEditorLifecycleFeature(deps) {
             handleOpenedPawnDocument(doc, delayMs, liveValidationCollection);
         }
     };
+    const ensureAndHandleVisibleOrActivePawnDocument = (doc, delayMs = 220) => {
+        if (!doc) return;
+        Promise.resolve(ensureConfiguredPawnLanguage(doc))
+            .then(pawnDoc => {
+                if (!pawnDoc || !isLiveLifecyclePawnDocument(pawnDoc)) return;
+                if (!isDocumentActive(pawnDoc) && !isDocumentVisible(pawnDoc)) return;
+                handleVisibleOrActivePawnDocument(pawnDoc, delayMs);
+            })
+            .catch(() => {});
+    };
 
     const hasFreshFullCachedResultForVersion = doc => {
         const fullCacheKey = getLiveValidationFullCacheKey(doc.fileName, doc.version);
@@ -421,8 +443,15 @@ function createEditorLifecycleFeature(deps) {
     const activatePawnLanguageAfterTextChange = (document, filePath = '') => {
         Promise.resolve(ensureConfiguredPawnLanguage(document))
             .then(pawnDoc => {
-                if (!pawnDoc || !isLiveLifecyclePawnDocument(pawnDoc)) return;
+                if (!pawnDoc || !isLiveLifecyclePawnDocument(pawnDoc)) {
+                    logLifecycle(
+                        `language-ensure skip file=${filePath || document?.fileName || ''} ` +
+                        `lang=${pawnDoc?.languageId || document?.languageId || ''}`
+                    );
+                    return;
+                }
                 const pawnPath = pawnDoc.fileName || filePath;
+                logLifecycle(`language-ensure ok file=${pawnPath} lang=${pawnDoc.languageId || ''}`);
                 markDependencyGraphChanged(pawnPath);
                 ensureIncludeGraphWatchers();
                 handleVisibleOrActivePawnDocument(pawnDoc, 120);
@@ -613,6 +642,7 @@ function createEditorLifecycleFeature(deps) {
     };
 
     async function handleDidOpenTextDocument(doc) {
+        if (!isFileBackedLifecycleDocument(doc)) return;
         const pawnDoc = await ensureConfiguredPawnLanguage(doc) || doc;
         const pawnPath = pawnDoc?.fileName || doc?.fileName || '';
         if (isLiveLifecyclePawnDocument(pawnDoc)) {
@@ -624,51 +654,74 @@ function createEditorLifecycleFeature(deps) {
     }
 
     function handleDidChangeTextDocument(event) {
-        const filePath = event.document?.fileName || '';
+        const document = event?.document || null;
+        if (!isFileBackedLifecycleDocument(document)) return;
+        const filePath = document.fileName || '';
         if (!filePath) return;
         if (!Array.isArray(event.contentChanges) || event.contentChanges.length === 0) {
             return;
         }
+        const liveDocument = isLiveLifecyclePawnDocument(document);
+        const potentialPawnFile = isPotentialIncludeGraphFile(filePath);
+        if (liveDocument || potentialPawnFile) {
+            logLifecycle(
+                `text-change file=${filePath} lang=${document.languageId || ''} ` +
+                `mode=${getLiveValidationMode()} live=${liveDocument ? 1 : 0} ` +
+                `potential=${potentialPawnFile ? 1 : 0} changes=${event.contentChanges.length}`
+            );
+        }
         markDependencyGraphChanged(filePath);
-        if (isPotentialIncludeGraphFile(filePath)) {
+        if (potentialPawnFile) {
             scheduleOpenPawnDocumentsForDependencyChange(filePath, { excludeFilePath: filePath });
             scheduleIncludeGraphWatcherRefresh();
         }
-        if (!isLiveLifecyclePawnDocument(event.document)) {
+        if (!liveDocument) {
             invalidateDocumentCaches(filePath);
-            if (shouldProbePawnLanguageAfterTextChange(event.document, event.contentChanges)) {
-                activatePawnLanguageAfterTextChange(event.document, filePath);
+            if (
+                potentialPawnFile ||
+                shouldProbePawnLanguageAfterTextChange(document, event.contentChanges)
+            ) {
+                logLifecycle(`text-change ensure-language file=${filePath} lang=${document.languageId || ''}`);
+                activatePawnLanguageAfterTextChange(document, filePath);
             }
             return;
         }
 
-        const editImpact = summarizeDocumentEditImpact(event.document, event.contentChanges);
-        recordDocumentEditImpact(filePath, event.document.version, editImpact);
+        const editImpact = summarizeDocumentEditImpact(document, event.contentChanges);
+        recordDocumentEditImpact(filePath, document.version, editImpact);
         invalidateDocumentCaches(filePath, { editImpact });
-        scheduleWarmDocumentContext(event.document, 180);
+        scheduleWarmDocumentContext(document, 180);
         const mode = getLiveValidationMode();
         if (mode === 'full') {
-            scheduleLiveValidation(liveValidationCollection, event.document, { full: true, delayMs: 260, reason: 'textChangedFull' });
+            logLifecycle(`text-change schedule full file=${filePath}`);
+            scheduleLiveValidation(liveValidationCollection, document, { full: true, delayMs: 260, reason: 'textChangedFull' });
         } else if (mode === 'edited') {
-            const editedPlan = resolveEditedValidationPlan(event.document, event.contentChanges, editImpact);
+            const editedPlan = resolveEditedValidationPlan(document, event.contentChanges, editImpact);
+            logLifecycle(
+                `text-change schedule edited file=${filePath} full=${editedPlan.full ? 1 : 0} ` +
+                `lines=${Array.isArray(editedPlan.lines) ? editedPlan.lines.length : 0} reason=${editedPlan.reason || ''}`
+            );
             if (editedPlan.full) {
-                scheduleLiveValidation(liveValidationCollection, event.document, {
+                scheduleLiveValidation(liveValidationCollection, document, {
                     full: true,
                     delayMs: 220,
                     reason: editedPlan.reason
                 });
             } else {
-                scheduleLiveValidation(liveValidationCollection, event.document, {
+                scheduleLiveValidation(liveValidationCollection, document, {
                     lines: editedPlan.lines,
                     delayMs: 220,
                     reason: editedPlan.reason,
                     editImpact
                 });
             }
+        } else {
+            logLifecycle(`text-change skip mode=${mode} file=${filePath}`);
         }
     }
 
     function handleDidSaveTextDocument(doc) {
+        if (!isFileBackedLifecycleDocument(doc)) return;
         if (!doc.fileName) return;
         if (isPotentialIncludeGraphFile(doc.fileName)) {
             markDependencyGraphChanged(doc.fileName);
@@ -699,6 +752,7 @@ function createEditorLifecycleFeature(deps) {
     }
 
     function handleDidCloseTextDocument(doc) {
+        if (!isFileBackedLifecycleDocument(doc)) return;
         if (isPotentialIncludeGraphFile(doc?.fileName || '') && doc?.isDirty === true) {
             markDependencyGraphChanged(doc?.fileName || '');
             scheduleOpenPawnDocumentsForDependencyChange(doc?.fileName || '', { excludeFilePath: doc?.fileName || '' });
@@ -712,6 +766,11 @@ function createEditorLifecycleFeature(deps) {
     }
 
     async function handleDidChangeActiveTextEditor(editor) {
+        if (!isFileBackedLifecycleDocument(editor?.document || null)) {
+            ensureIncludeGraphWatchers();
+            scheduleVisibleDocumentWarmups();
+            return;
+        }
         const pawnDoc = await ensureConfiguredPawnLanguage(editor?.document || null);
         const targetEditor = pawnDoc && vscode.window.activeTextEditor?.document === pawnDoc
             ? vscode.window.activeTextEditor
@@ -724,7 +783,7 @@ function createEditorLifecycleFeature(deps) {
     function handleDidChangeVisibleTextEditors(editors) {
         for (const editor of editors || []) {
             const document = editor?.document || null;
-            if (!document) continue;
+            if (!isFileBackedLifecycleDocument(document)) continue;
             Promise.resolve(ensureConfiguredPawnLanguage(document))
                 .then(pawnDoc => {
                     if (!pawnDoc || !isLiveLifecyclePawnDocument(pawnDoc) || isDocumentActive(pawnDoc)) return;
@@ -753,6 +812,7 @@ function createEditorLifecycleFeature(deps) {
             event.affectsConfiguration(CONFIG_KEYS.detectPawnLanguageByIncludes)
         ) {
             for (const doc of vscode.workspace.textDocuments) {
+                if (!isFileBackedLifecycleDocument(doc)) continue;
                 ensureConfiguredPawnLanguage(doc);
             }
         }
@@ -808,6 +868,9 @@ function createEditorLifecycleFeature(deps) {
     }
 
     function register() {
+        logLifecycle(
+            `register mode=${getLiveValidationMode()} scanOnOpen=${shouldRunLiveValidationScanOnOpen() ? 1 : 0}`
+        );
         const subscriptions = [
             vscode.workspace.onDidOpenTextDocument(handleDidOpenTextDocument),
             vscode.workspace.onDidChangeTextDocument(handleDidChangeTextDocument),
@@ -833,18 +896,28 @@ function createEditorLifecycleFeature(deps) {
     }
 
     function initialize() {
+        const activeDoc = vscode.window.activeTextEditor?.document || null;
+        logLifecycle(
+            `initialize mode=${getLiveValidationMode()} scanOnOpen=${shouldRunLiveValidationScanOnOpen() ? 1 : 0} ` +
+            `active=${activeDoc?.fileName || ''} lang=${activeDoc?.languageId || ''} ` +
+            `docs=${(vscode.workspace.textDocuments || []).length} visible=${(vscode.window.visibleTextEditors || []).length}`
+        );
+        const startupDocumentKeys = new Set();
+        const queueStartupDocument = doc => {
+            if (!isFileBackedLifecycleDocument(doc)) return;
+            const key = normalizeLifecyclePath(doc?.fileName || '');
+            if (!key || startupDocumentKeys.has(key)) return;
+            startupDocumentKeys.add(key);
+            ensureAndHandleVisibleOrActivePawnDocument(doc, 120);
+        };
         for (const doc of vscode.workspace.textDocuments) {
-            Promise.resolve(ensureConfiguredPawnLanguage(doc))
-                .then(pawnDoc => {
-                    if (!pawnDoc || !isLiveLifecyclePawnDocument(pawnDoc)) return;
-                    if (!isDocumentActive(pawnDoc) && !isDocumentVisible(pawnDoc)) return;
-                    handleVisibleOrActivePawnDocument(pawnDoc, 120);
-                })
-                .catch(() => {});
+            queueStartupDocument(doc);
+        }
+        for (const editor of vscode.window.visibleTextEditors || []) {
+            queueStartupDocument(editor?.document || null);
         }
         setTimeout(() => {
             try {
-                const activeDoc = vscode.window.activeTextEditor?.document || null;
                 ensureIncludeGraphWatchers();
                 warmWorkspaceIncludeSources(activeDoc?.fileName || '');
             } catch {
@@ -854,17 +927,7 @@ function createEditorLifecycleFeature(deps) {
         clearPersistentIncludeDeclCacheIfDisabled();
         resetCachesAndWarmActiveDocument();
         scheduleVisibleDocumentWarmups();
-        if (shouldRunLiveValidationScanOnOpen()) {
-            const activeDoc = vscode.window.activeTextEditor?.document || null;
-            if (isLiveLifecyclePawnDocument(activeDoc)) {
-                scheduleLiveValidation(liveValidationCollection, activeDoc, {
-                    full: true,
-                    allowWhenModeOff: true,
-                    delayMs: 120,
-                    reason: 'startup'
-                });
-            }
-        }
+        queueStartupDocument(vscode.window.activeTextEditor?.document || null);
         themeRecommendationFeature.prompt(vscode.window.activeTextEditor || null);
     }
 

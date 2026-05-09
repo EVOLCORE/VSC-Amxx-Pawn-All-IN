@@ -128,6 +128,7 @@
   "validation.tagOverrideMustBeParenthesized": "выражение с tag override должно быть заключено в скобки",
   "validation.cannotTakeTagAsDefaultForIndexedArrayParameter": "нельзя брать tag как значение по умолчанию для индексированного параметра-массива (символ \"{name}\")",
   "validation.initializationDataExceedsDeclaredSize": "данные инициализации превышают объявленный размер",
+  "validation.unexpectedStringLiteralInInitializer": "неожиданный строковый литерал в инициализаторе массива; перед ним пропущена запятая",
   "validation.moreInitializersThanEnumFields": "инициализаторов больше, чем полей enum",
   "validation.enumFieldInitializerTooLong": "длина инициализатора превышает размер поля enum",
   "validation.multidimArrayMustBeFullyInitialized": "многомерные массивы должны быть полностью инициализированы",

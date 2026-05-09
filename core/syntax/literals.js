@@ -8,23 +8,40 @@ function createLiteralSyntaxCore(deps) {
     function decodePawnStringLiteral(expr, escapeChar = getActiveCtrlChar()) {
         const source = String(expr || '').trim();
         if (!source.startsWith('"') && !source.startsWith("'")) return null;
-        const quote = source[0];
         let decoded = '';
+        let cursor = 0;
 
-        for (let i = 1; i < source.length; i++) {
-            const c = source[i];
-            if (c === quote && !isEscapedQuote(source, i, escapeChar)) return decoded;
-            if (c === escapeChar && i + 1 < source.length) {
-                const next = source[++i];
-                if (next === 'n') decoded += '\n';
-                else if (next === 't') decoded += '\t';
-                else decoded += next;
-                continue;
+        while (cursor < source.length) {
+            while (cursor < source.length && /\s/.test(source[cursor])) cursor++;
+            if (cursor >= source.length) return decoded;
+
+            const quote = source[cursor];
+            if (quote !== '"' && quote !== "'") return null;
+            let part = '';
+            let closed = false;
+
+            for (let i = cursor + 1; i < source.length; i++) {
+                const c = source[i];
+                if (c === quote && !isEscapedQuote(source, i, escapeChar)) {
+                    decoded += part;
+                    cursor = i + 1;
+                    closed = true;
+                    break;
+                }
+                if (c === escapeChar && i + 1 < source.length) {
+                    const next = source[++i];
+                    if (next === 'n') part += '\n';
+                    else if (next === 't') part += '\t';
+                    else part += next;
+                    continue;
+                }
+                part += c;
             }
-            decoded += c;
+
+            if (!closed) return null;
         }
 
-        return null;
+        return decoded;
     }
 
     function measurePawnStringLiteral(expr, escapeChar = getActiveCtrlChar()) {

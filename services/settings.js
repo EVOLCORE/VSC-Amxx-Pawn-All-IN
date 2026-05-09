@@ -23,6 +23,7 @@ function createSettingsService(vscode) {
         callbackSignatureMode: `${CONFIG_NAMESPACE}.callbackSignatureMode`,
         includeValidationMode: `${CONFIG_NAMESPACE}.includeValidationMode`,
         externalIncludeWatchMode: `${CONFIG_NAMESPACE}.externalIncludeWatchMode`,
+        debugOutput: `${CONFIG_NAMESPACE}.debugOutput`,
         completionEnabled: `${CONFIG_NAMESPACE}.completionEnabled`,
         hoverMode: `${CONFIG_NAMESPACE}.hoverMode`,
         hoverContentMode: `${CONFIG_NAMESPACE}.hoverContentMode`,
@@ -48,6 +49,7 @@ function createSettingsService(vscode) {
         CONFIG_KEYS.callbackSignatureMode,
         CONFIG_KEYS.includeValidationMode,
         CONFIG_KEYS.externalIncludeWatchMode,
+        CONFIG_KEYS.debugOutput,
         CONFIG_KEYS.completionEnabled,
         CONFIG_KEYS.hoverMode,
         CONFIG_KEYS.hoverContentMode,
@@ -107,12 +109,13 @@ function createSettingsService(vscode) {
         documentContextCacheFileLimit: 0,
         includeDocumentWarmupFileLimit: 6,
         persistentIncludeDeclarationCacheMaxBytes: 24 * 1024 * 1024,
-        liveValidationMode: 'off',
+        liveValidationMode: 'edited',
         liveValidationIssueMode: 'errors-and-warnings',
         liveValidationScanOnOpen: true,
         unusedStockValidationMode: 'reachable-only',
         callbackSignatureMode: 'strict',
         includeValidationMode: 'balanced',
+        debugOutput: false,
         completionEnabled: true,
         hoverMode: 'normal',
         hoverContentMode: 'full',
@@ -159,11 +162,11 @@ function createSettingsService(vscode) {
         settings.persistentIncludeDeclarationCacheMaxBytes =
             Math.max(0, Math.min(256, persistentIncludeDeclarationCacheMaxMB)) * 1024 * 1024;
 
-        const rawLiveValidationMode = String(config.get('liveValidationMode', 'off') || 'off').trim().toLowerCase();
+        const rawLiveValidationMode = String(config.get('liveValidationMode', 'edited') || 'edited').trim().toLowerCase();
         settings.liveValidationMode =
             rawLiveValidationMode === 'edited' || rawLiveValidationMode === 'full'
                 ? rawLiveValidationMode
-                : 'off';
+                : 'edited';
         settings.liveValidationIssueMode = normalizeLiveValidationIssueMode(
             config.get('liveValidationIssueMode', 'errors-and-warnings')
         );
@@ -188,6 +191,7 @@ function createSettingsService(vscode) {
             rawExternalIncludeWatchMode === 'workspace-only' || rawExternalIncludeWatchMode === 'workspace-and-global'
                 ? rawExternalIncludeWatchMode
                 : 'tracked-resolved-includes';
+        settings.debugOutput = !!config.get('debugOutput', false);
         settings.completionEnabled = !!config.get('completionEnabled', true);
 
         const rawHoverMode = String(config.get('hoverMode', 'normal') || 'normal').trim().toLowerCase();
@@ -260,6 +264,7 @@ function createSettingsService(vscode) {
         getCallbackSignatureMode: () => settings.callbackSignatureMode,
         getIncludeValidationMode: () => settings.includeValidationMode,
         getExternalIncludeWatchMode: () => settings.externalIncludeWatchMode,
+        isDebugOutputEnabled: () => settings.debugOutput,
         isCompletionEnabled: () => settings.completionEnabled,
         getHoverMode: () => settings.hoverMode,
         getHoverContentMode: () => settings.hoverContentMode,

@@ -7,7 +7,13 @@ const {
     getSemanticSignatureCache,
     getSemanticAnalysisCache
 } = require('../../core/document-context/semantic-session');
-const { LIVE_UNRESOLVED_INCLUDE_DIAGNOSTIC_CODE } = require('./diagnostic-codes');
+const {
+    LIVE_INVALID_CODE_CHARACTER_DIAGNOSTIC_CODE,
+    LIVE_UNRESOLVED_INCLUDE_DIAGNOSTIC_CODE
+} = require('./diagnostic-codes');
+const {
+    LIVE_VALIDATION_DIAGNOSTIC_ENGINE_SIGNATURE
+} = require('./diagnostic-engine-signature');
 const { createScannerLineState } = require('./scanner-state');
 
 const {
@@ -90,6 +96,7 @@ function createLiveValidationScanner(deps) {
         const docLength = rootCtx.text.length;
         const diagnostics = [];
         const seen = new Set();
+        const invalidCodeCharacterRangesByLine = new Map();
         const rootLineContextFlags = new Uint8Array(document.lineCount);
         const nonRootLineContextCache = new Map();
         const lineAnalysisCache = [];
@@ -149,9 +156,66 @@ function createLiveValidationScanner(deps) {
             }
             return !!documentScanPlan.packedStringDefaultLineFlags[lineNumber];
         };
+        const rangesOverlap = (leftStart, leftEnd, rightStart, rightEnd) =>
+            leftStart < rightEnd && rightStart < leftEnd;
+        const isInvalidCodeCharacterDiagnostic = diagnostic =>
+            diagnostic?.code === LIVE_INVALID_CODE_CHARACTER_DIAGNOSTIC_CODE;
+        const diagnosticOverlapsInvalidCodeCharacter = diagnostic => {
+            if (!diagnostic?.range?.start || !diagnostic?.range?.end) return false;
+            if (isInvalidCodeCharacterDiagnostic(diagnostic)) return false;
+            const startLine = diagnostic.range.start.line;
+            const endLine = diagnostic.range.end.line;
+            if (startLine !== endLine) return false;
+            const invalidRanges = invalidCodeCharacterRangesByLine.get(startLine);
+            if (!invalidRanges?.length) return false;
+            return invalidRanges.some(range =>
+                rangesOverlap(
+                    diagnostic.range.start.character,
+                    diagnostic.range.end.character,
+                    range.start,
+                    range.end
+                )
+            );
+        };
+        const rememberInvalidCodeCharacterRange = diagnostic => {
+            const range = diagnostic?.range;
+            if (!range?.start || !range?.end || range.start.line !== range.end.line) return;
+            const lineRanges = invalidCodeCharacterRangesByLine.get(range.start.line) || [];
+            lineRanges.push({
+                start: range.start.character,
+                end: Math.max(range.start.character + 1, range.end.character)
+            });
+            invalidCodeCharacterRangesByLine.set(range.start.line, lineRanges);
+        };
+        const removeDiagnosticsOverlappingInvalidCodeCharacter = invalidDiagnostic => {
+            const range = invalidDiagnostic?.range;
+            if (!range?.start || !range?.end || range.start.line !== range.end.line) return;
+            for (let index = diagnostics.length - 1; index >= 0; index--) {
+                const diagnostic = diagnostics[index];
+                if (isInvalidCodeCharacterDiagnostic(diagnostic)) continue;
+                if (diagnostic?.range?.start?.line !== range.start.line) continue;
+                if (diagnostic?.range?.end?.line !== range.end.line) continue;
+                if (!rangesOverlap(
+                    diagnostic.range.start.character,
+                    diagnostic.range.end.character,
+                    range.start.character,
+                    range.end.character
+                )) {
+                    continue;
+                }
+                seen.delete(makeLiveValidationDiagnosticKey(diagnostic));
+                diagnostics.splice(index, 1);
+            }
+        };
         const pushDiagnostic = diagnostic => {
             if (!diagnostic) return;
             if (!shouldKeepDiagnostic(diagnostic)) return;
+            if (isInvalidCodeCharacterDiagnostic(diagnostic)) {
+                rememberInvalidCodeCharacterRange(diagnostic);
+                removeDiagnosticsOverlappingInvalidCodeCharacter(diagnostic);
+            } else if (diagnosticOverlapsInvalidCodeCharacter(diagnostic)) {
+                return;
+            }
             const key = makeLiveValidationDiagnosticKey(diagnostic);
             if (seen.has(key)) return;
             seen.add(key);
@@ -220,6 +284,7 @@ function createLiveValidationScanner(deps) {
             scanStats.structuralDiagnosticCacheHits = 0;
         }
         const validationCacheSignature = [
+            LIVE_VALIDATION_DIAGNOSTIC_ENGINE_SIGNATURE,
             `stock:${settingsService?.getUnusedStockValidationMode?.() || 'reachable-only'}`,
             `issues:${getLiveValidationIssueMode()}`,
             `include:${settingsService?.getIncludeValidationMode?.() || 'balanced'}`,
@@ -261,6 +326,65 @@ function createLiveValidationScanner(deps) {
         const generalLineNumbers = lineNumbers
             ? orderedLineNumbers.filter(line => documentScanPlan.generalDiagnosticCandidateFlags?.[line])
             : (documentScanPlan.generalDiagnosticCandidateLines || orderedLineNumbers);
+        const invalidCodeCharacterLineStates = new Map();
+        const collectInvalidCodeCharacterDiagnosticsForLineNumber = lineNumber => {
+            if (invalidCodeCharacterLineStates.has(lineNumber)) {
+                return invalidCodeCharacterLineStates.get(lineNumber);
+            }
+            const state = {
+                diagnostics: EMPTY_DIAGNOSTICS,
+                firstCharacter: -1
+            };
+            if (
+                invalidCodeCharacterCandidateLineFlags[lineNumber] &&
+                !isInactivePreprocessorLine(lineNumber)
+            ) {
+                const { text: lineText, startOffset: lineStartOffset } = getValidationLineSnapshot(lineNumber);
+                const strippedLineText = rootCtx.strippedLines?.[lineNumber] ?? lineText;
+                const escapeChar = rootCtx.resolver?.ctrlCharAtLine?.(lineNumber) ||
+                    documentScanPlan.lineCtrlChars?.[lineNumber] ||
+                    '';
+                const invalidCodeCharacterDiagnostics = collectInvalidPawnCodeCharacterDiagnosticsForLine(
+                    document,
+                    lineNumber,
+                    lineText,
+                    strippedLineText,
+                    lineStartOffset,
+                    docLength,
+                    escapeChar,
+                    {
+                        initialQuote: getLineStringStartQuote(lineNumber),
+                        defaultPackedString: getPackedStringDefaultForLine(lineNumber)
+                    }
+                );
+                if (invalidCodeCharacterDiagnostics.length) {
+                    state.diagnostics = invalidCodeCharacterDiagnostics;
+                    for (const diagnostic of invalidCodeCharacterDiagnostics) {
+                        const startCharacter = diagnostic?.range?.start?.line === lineNumber
+                            ? diagnostic.range.start.character
+                            : -1;
+                        if (
+                            Number.isInteger(startCharacter) &&
+                            startCharacter >= 0 &&
+                            (state.firstCharacter < 0 || startCharacter < state.firstCharacter)
+                        ) {
+                            state.firstCharacter = startCharacter;
+                        }
+                    }
+                }
+            }
+            invalidCodeCharacterLineStates.set(lineNumber, state);
+            return state;
+        };
+        const invalidCodeCharacterLineNumbers = lineNumbers
+            ? orderedLineNumbers.filter(line => invalidCodeCharacterCandidateLineFlags[line])
+            : (lineIndex.invalidCodeCharacterCandidateLines || EMPTY_DIAGNOSTICS);
+        for (const lineNumber of invalidCodeCharacterLineNumbers) {
+            const state = collectInvalidCodeCharacterDiagnosticsForLineNumber(lineNumber);
+            for (const diagnostic of state.diagnostics) {
+                pushDiagnostic(diagnostic);
+            }
+        }
         const isEnumMemberLine = lineNumber => documentScanPlan.enumMemberLines.has(lineNumber);
         const hasContextEnumMemberDeclarationOnLine = (lineCtx, lineNumber) => {
             return !!isEnumMemberDeclarationLine(lineCtx, lineNumber);
@@ -658,44 +782,9 @@ function createLiveValidationScanner(deps) {
 
         for (const lineNumber of combinedDiagnosticLineNumbers) {
             if (isInactivePreprocessorLine(lineNumber)) continue;
-            let lineHasInvalidCodeCharacters = false;
-            let firstInvalidCodeCharacter = -1;
-            if (
-                invalidCodeCharacterCandidateLineFlags[lineNumber]
-            ) {
-                const { text: lineText, startOffset: lineStartOffset } = getValidationLineSnapshot(lineNumber);
-                const strippedLineText = rootCtx.strippedLines?.[lineNumber] ?? lineText;
-                const escapeChar = rootCtx.resolver?.ctrlCharAtLine?.(lineNumber) ||
-                    documentScanPlan.lineCtrlChars?.[lineNumber] ||
-                    '';
-                const invalidCodeCharacterDiagnostics = collectInvalidPawnCodeCharacterDiagnosticsForLine(
-                    document,
-                    lineNumber,
-                    lineText,
-                    strippedLineText,
-                    lineStartOffset,
-                    docLength,
-                    escapeChar,
-                    {
-                        initialQuote: getLineStringStartQuote(lineNumber),
-                        defaultPackedString: getPackedStringDefaultForLine(lineNumber)
-                    }
-                );
-                for (const diagnostic of invalidCodeCharacterDiagnostics) {
-                    pushDiagnostic(diagnostic);
-                    const startCharacter = diagnostic?.range?.start?.line === lineNumber
-                        ? diagnostic.range.start.character
-                        : -1;
-                    if (
-                        Number.isInteger(startCharacter) &&
-                        startCharacter >= 0 &&
-                        (firstInvalidCodeCharacter < 0 || startCharacter < firstInvalidCodeCharacter)
-                    ) {
-                        firstInvalidCodeCharacter = startCharacter;
-                    }
-                }
-                lineHasInvalidCodeCharacters = invalidCodeCharacterDiagnostics.length > 0;
-            }
+            const invalidCodeCharacterState = collectInvalidCodeCharacterDiagnosticsForLineNumber(lineNumber);
+            const lineHasInvalidCodeCharacters = invalidCodeCharacterState.diagnostics.length > 0;
+            const firstInvalidCodeCharacter = invalidCodeCharacterState.firstCharacter;
             if (hasUnresolvedRequiredIncludes) continue;
             if (isDelimiterTaintedLine(lineNumber)) continue;
             if (isBackslashContinuationLine(lineNumber)) continue;

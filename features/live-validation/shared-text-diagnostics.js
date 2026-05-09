@@ -1,4 +1,5 @@
 const { makeLiveValidationDiagnosticKey } = require('./diagnostic-key');
+const { LIVE_INVALID_CODE_CHARACTER_DIAGNOSTIC_CODE } = require('./diagnostic-codes');
 const { createTextSyntaxDiagnosticsCore } = require('../../core/syntax');
 
 function createSharedTextDiagnostics(deps) {
@@ -51,17 +52,17 @@ function createSharedTextDiagnostics(deps) {
         for (const run of runs) {
             const diagnosticEnd = Math.max(run.start + 1, run.end);
             const diagnosticText = source.slice(run.start, diagnosticEnd) || run.text;
-            diagnostics.push(
-                createLiveValidationDiagnostic(
-                    createOffsetRange(
-                        document,
-                        lineStartOffset + run.start,
-                        lineStartOffset + diagnosticEnd,
-                        docLength
-                    ),
-                    t('validation.invalidCodeCharacter', { chars: diagnosticText })
-                )
+            const diagnostic = createLiveValidationDiagnostic(
+                createOffsetRange(
+                    document,
+                    lineStartOffset + run.start,
+                    lineStartOffset + diagnosticEnd,
+                    docLength
+                ),
+                t('validation.invalidCodeCharacter', { chars: diagnosticText })
             );
+            diagnostic.code = LIVE_INVALID_CODE_CHARACTER_DIAGNOSTIC_CODE;
+            diagnostics.push(diagnostic);
         }
         for (const issue of literalIssues) {
             diagnostics.push(

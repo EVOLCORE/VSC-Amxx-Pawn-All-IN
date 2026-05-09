@@ -2,6 +2,7 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const { registerCompilerIntegration } = require('../services/compiler');
+const { createDebugOutputChannel } = require('../services/debug-output');
 const { createRuntimeLocalization } = require('../services/localization');
 const { createSettingsService } = require('../services/settings');
 const { buildLazyActivationRuntime } = require('./build-lazy-runtime');
@@ -13,11 +14,13 @@ function activate(context) {
 
     registerCompilerIntegration(context);
 
+    const settingsService = createSettingsService(vscode);
+    settingsService.refresh();
     const liveValidationCollection = vscode.languages.createDiagnosticCollection('amxxPawnAllInLiveValidation');
     const liveValidationOutputChannel = vscode.window.createOutputChannel('AMXX Pawn All-In Live Validation');
+    const liveValidationDebugOutputChannel = createDebugOutputChannel(liveValidationOutputChannel, settingsService);
     context.subscriptions.push(liveValidationCollection, liveValidationOutputChannel);
 
-    const settingsService = createSettingsService(vscode);
     const {
         editorLifecycleFeature,
         persistentHoverFeature,
@@ -32,7 +35,7 @@ function activate(context) {
         t,
         settingsService,
         liveValidationCollection,
-        liveValidationOutputChannel,
+        liveValidationOutputChannel: liveValidationDebugOutputChannel,
         state
     });
 

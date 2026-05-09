@@ -284,6 +284,42 @@ function createSemanticSyntaxCore(deps = {}) {
         return parts;
     }
 
+    function countStringLiteralStartsBefore(source, endOffset, options = {}) {
+        const text = String(source || '');
+        const escapeChar = options.escapeChar || '';
+        let count = 0;
+        for (let index = 0; index < Math.min(endOffset, text.length); index++) {
+            const char = text[index];
+            if (char !== '"' && char !== "'") continue;
+            count++;
+            for (let end = index + 1; end < text.length; end++) {
+                if (text[end] === char && !isQuoteEscaped(text, end, escapeChar)) {
+                    index = end;
+                    break;
+                }
+            }
+        }
+        return count;
+    }
+
+    function findAdjacentStringLiteralIssue(source, options = {}) {
+        const text = String(source || '');
+        if (text.indexOf('"') < 0 && text.indexOf("'") < 0) return null;
+        const tokens = tokenizePawnExpression(text, options).filter(token => token.type !== 'eof');
+        for (let index = 0; index + 1 < tokens.length; index++) {
+            const current = tokens[index];
+            const next = tokens[index + 1];
+            if (current.type !== 'string' || next.type !== 'string') continue;
+            if (text.slice(current.end, next.start).trim()) continue;
+            return {
+                start: next.start,
+                end: next.end,
+                token: text.slice(next.start, next.end)
+            };
+        }
+        return null;
+    }
+
     function createParser(tokens, options = {}) {
         let cursor = 0;
         const buildAst = options.buildAst === true;
@@ -456,7 +492,17 @@ function createSemanticSyntaxCore(deps = {}) {
         function parsePrimary() {
             const token = current();
             if (token.type === 'invalid') throw createParseError(token.reason || 'invalid-token', token);
-            if (token.type === 'number' || token.type === 'string' || token.type === 'char') {
+            if (token.type === 'string') {
+                advance();
+                let endToken = token;
+                let value = token.value;
+                while (current().type === 'string') {
+                    endToken = advance();
+                    value += endToken.value;
+                }
+                return node(token.type, { value }, token, endToken);
+            }
+            if (token.type === 'number' || token.type === 'char') {
                 advance();
                 return node(token.type, { value: token.value }, token, token);
             }
@@ -821,6 +867,7 @@ function createSemanticSyntaxCore(deps = {}) {
         if (!isWholeDelimitedSource(text, '{', '}', options)) return null;
         const inner = text.slice(1, -1);
         const parts = splitTopLevelDelimitedItems(inner, { ...options, keepEmpty: true, withRanges: true });
+        let warning = null;
         for (const part of parts) {
             const itemStart = leadingWhitespace + 1 + part.start;
             if (!part.text) {
@@ -833,6 +880,20 @@ function createSemanticSyntaxCore(deps = {}) {
                         end: itemStart + 1
                     }
                 };
+            }
+            if (!warning) {
+                const adjacentStringIssue = findAdjacentStringLiteralIssue(part.text, options);
+                if (adjacentStringIssue) {
+                    const start = itemStart + adjacentStringIssue.start;
+                    const end = itemStart + adjacentStringIssue.end;
+                    warning = {
+                        kind: 'adjacentStringLiteral',
+                        start,
+                        end,
+                        token: adjacentStringIssue.token,
+                        stringLiteralOrdinal: countStringLiteralStartsBefore(original, start, options)
+                    };
+                }
             }
             const parsed = parsePawnExpression(part.text, { ...options, allowAssignment: false });
             if (!parsed.ok) {
@@ -849,7 +910,7 @@ function createSemanticSyntaxCore(deps = {}) {
                 };
             }
         }
-        return { ok: true, parts };
+        return { ok: true, parts, warning };
     }
 
     function parseBraceArrayLiteralExpression(source, options = {}) {
