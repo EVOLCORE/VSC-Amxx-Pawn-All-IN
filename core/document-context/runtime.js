@@ -325,6 +325,38 @@ function createDocumentContextCore(deps) {
     }
 
     function parseContextDeclsFromSharedContext(sharedContext, cursorLine, options = {}) {
+        const includeRootLineByPath = new Map();
+        let currentRootIncludeLine = -1;
+        for (const entry of sharedContext.includeEntries || []) {
+            if (!entry?.filePath) continue;
+            if (Number(entry.depth || 0) === 0 || currentRootIncludeLine < 0) {
+                currentRootIncludeLine = Number.isInteger(entry.lineNumber) ? entry.lineNumber : -1;
+            }
+            const includeLine = currentRootIncludeLine;
+            const key = normalizeFsPath(entry.filePath);
+            if (!key || includeLine < 0) continue;
+            const previousLine = includeRootLineByPath.get(key);
+            if (previousLine == null || includeLine < previousLine) {
+                includeRootLineByPath.set(key, includeLine);
+            }
+        }
+        const includeDeclsCacheKey = sharedContext.incDecls?.length
+            ? `includes:${sharedContext.incDecls.length}:` +
+                (sharedContext.includeEntries || [])
+                    .map(entry => normalizeFsPath(entry?.filePath || ''))
+                    .filter(Boolean)
+                    .join('|')
+            : '';
+        const getOuterDeclsForLine = lineNumber => {
+            if (!sharedContext.incDecls?.length || !includeRootLineByPath.size) {
+                return sharedContext.incDecls;
+            }
+            const maxLine = Number.isInteger(lineNumber) ? lineNumber : Number.MAX_SAFE_INTEGER;
+            return sharedContext.incDecls.filter(decl => {
+                const includeLine = includeRootLineByPath.get(normalizeFsPath(decl?.filePath || ''));
+                return includeLine == null || includeLine <= maxLine;
+            });
+        };
         return withCtrlCharForContent(sharedContext.text, () => parseFileDecls(
             sharedContext.text,
             sharedContext.fp,
@@ -333,7 +365,10 @@ function createDocumentContextCore(deps) {
             sharedContext.preprocessedState,
             {
                 cursorCache: options.cursorCache !== false,
-                preparseLocals: options.preparseLocals === true
+                preparseLocals: options.preparseLocals === true,
+                outerDecls: sharedContext.incDecls,
+                getOuterDeclsForLine,
+                outerDeclsCacheKey: includeDeclsCacheKey
             }
         ), sharedContext.fp, sharedContext.finalCtrlChar);
     }

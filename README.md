@@ -14,7 +14,7 @@ The extension is built around a shared semantic core, so hover, completion, and 
 - Scope-aware completion that understands the current function/block, so local variables and arguments are suggested only where they are actually visible.
 - Completion ordering prefers active micro-scope locals from nested blocks, branches, and `for` declarations, then regular function locals, function arguments, globals, and include declarations.
 - Semantic hover for globals, locals, function arguments, functions, includes, enum members, struct-like enum fields, bitmasks, array/indexed access, and call signatures.
-- Hover modes: normal hover, disabled hover, or an experimental Ctrl-only mode for Windows.
+- Hover modes: normal hover, disabled hover, or experimental Ctrl/Shift/Alt-only modes for Windows.
 - Compact/full/signature-only hover content modes.
 - Optional Go to Definition links inside hover content.
 - Persistent hover support for regular symbols and diagnostic/error context.
@@ -76,7 +76,8 @@ code --install-extension amxx-pawn-all-in-*.vsix
 ```json
 {
   "amxxPawnAllIn.liveValidationMode": "edited",
-  "amxxPawnAllIn.liveValidationIssueMode": "errors-and-warnings"
+  "amxxPawnAllIn.liveValidationIssueMode": "errors-and-warnings",
+  "amxxPawnAllIn.liveValidationTypingDelayMs": 700
 }
 ```
 
@@ -113,8 +114,11 @@ Then use the `AMXX Pawn All-In: Compile Current File` command or the editor titl
 - `amxxPawnAllIn.liveValidationIssueMode`
   `errors-only` or `errors-and-warnings`.
 
+- `amxxPawnAllIn.liveValidationTypingDelayMs`
+  Delay before live validation runs after typing. Increase it if temporary diagnostics appear while a token is still being entered. `0` means validate only after the edit crosses a line boundary or the cursor leaves the edited line.
+
 - `amxxPawnAllIn.hoverMode`
-  `disabled`, `normal`, or `ctrl-hack`. `ctrl-hack` is an experimental Windows-only mode that tries to show the extension hover only while Ctrl is held; on other platforms it falls back to normal mode.
+  `disabled`, `normal`, `ctrl-hack`, `shift-hack`, or `alt-hack`. The `*-hack` modes are experimental Windows-only modes that try to show the extension hover only while the selected modifier key is held; on other platforms they fall back to normal mode.
 
 - `amxxPawnAllIn.hoverContentMode`
   `full`, `compact`, or `signature-only`.

@@ -13,6 +13,7 @@ function createHoverContentFeature(deps) {
         buildColoredVariableAccessLine,
         buildColoredSignatureLine,
         buildEnumMemberLine,
+        getVariableInitializerUsageText,
         getEnumDeclsForVariableDims,
         buildBitmaskParts,
         formatBitmaskValueHex,
@@ -30,9 +31,28 @@ function createHoverContentFeature(deps) {
 
     function appendEnumMembersSection(md, enumDecl, title = 'Members') {
         if (!Array.isArray(enumDecl?.enumMembers) || !enumDecl.enumMembers.length) return;
-        md.appendMarkdown(`\n\n### ${title}\nCount: ${enumDecl.enumMembers.length}`);
+        const resolvedCount = String(enumDecl.value || '').trim();
+        const countText = /^-?\d+$/.test(resolvedCount)
+            ? resolvedCount
+            : String(enumDecl.enumMembers.length);
+        md.appendMarkdown(`\n\n### ${title}\nCount: ${countText}`);
         md.appendMarkdown('\n');
         md.appendCodeblock(enumDecl.enumMembers.map(buildEnumMemberLine).join('\n'), 'amxxpawn');
+    }
+
+    function appendVariableInitializerInfoSection(md, data, options = {}) {
+        if (data?.type !== 'variable' || typeof getVariableInitializerUsageText !== 'function') return;
+        const initializerSize = getVariableInitializerUsageText(data, {
+            allDecls: options.allDecls || [],
+            lookup: options.lookup || null
+        });
+        if (!initializerSize) return;
+        const label = t('hover.initializerSize', null, 'Initializer size');
+        md.appendMarkdown(`\n\n### ${t('hover.kind.info')}\n${label}: \`${initializerSize}\``);
+    }
+
+    function normalizeEnumInfoName(name) {
+        return String(name || '').replace(/^_?\s*:\s*/, '').trim();
     }
 
     function buildArgHoverInfo(matches, currentFilePath = '', includeDocs = true, options = {}) {
@@ -107,6 +127,9 @@ function createHoverContentFeature(deps) {
                 allDecls: options.allDecls || [],
                 lookup: options.lookup || null
             }), 'amxxpawn');
+            if (options.includeInitializerInfo) {
+                appendVariableInitializerInfoSection(md, data, options);
+            }
         }
 
         const docsText = data.docs || data.enumDocs || '';
@@ -213,8 +236,20 @@ function createHoverContentFeature(deps) {
         md.appendCodeblock(buildSig(member, { allDecls }), 'amxxpawn');
 
         const infoLines = [];
-        if (enumDecl.enumDisplayName) infoLines.push(`Enum: \`${enumDecl.enumDisplayName}\``);
-        if (enumDecl.name) infoLines.push(`Container: \`${enumDecl.name}\``);
+        const enumDisplayName = String(enumDecl.enumDisplayName || '').trim();
+        const enumContainerName = String(enumDecl.name || '').trim();
+        const normalizedEnumDisplayName = normalizeEnumInfoName(enumDisplayName);
+        const normalizedEnumContainerName = normalizeEnumInfoName(enumContainerName);
+        if (enumDisplayName) {
+            infoLines.push(`Enum: \`${enumDisplayName}\``);
+        }
+        if (
+            enumContainerName &&
+            normalizedEnumContainerName &&
+            normalizedEnumContainerName !== normalizedEnumDisplayName
+        ) {
+            infoLines.push(`Container: \`${enumContainerName}\``);
+        }
         if (Array.isArray(enumDecl.enumMembers)) {
             const memberIndex = enumDecl.enumMembers.findIndex(item => item.name === member.name);
             if (memberIndex >= 0) {
@@ -222,9 +257,16 @@ function createHoverContentFeature(deps) {
             }
         }
         if (member.dims) {
-            infoLines.push(`Shape: \`${member.dims}\``);
-            const firstDim = parseDimsParts(member.dims)[0];
+            const dimParts = parseDimsParts(member.dims);
+            const firstDim = dimParts[0];
             const dimSpec = parseDimSpec(firstDim, allDecls);
+            const shapeDuplicatesCapacity =
+                dimParts.length === 1 &&
+                dimSpec.capacity != null &&
+                String(firstDim || '').trim() === String(dimSpec.capacity);
+            if (!shapeDuplicatesCapacity) {
+                infoLines.push(`Shape: \`${member.dims}\``);
+            }
             if (dimSpec.capacity != null) {
                 infoLines.push(`Capacity: ${dimSpec.capacity}${dimSpec.isChar ? ' char-bytes' : ''}`);
                 const measure = measurePawnStringLiteral(fieldExpr, escapeChar);
@@ -317,6 +359,7 @@ function createHoverContentFeature(deps) {
             appendHoverMatchSection(md, baseSignatureMatch, currentFilePath, {
                 includeSignature: !showColoredSignature,
                 includeDescription: false,
+                includeInitializerInfo: !isSignatureOnlyMode && !isCompactMode,
                 allDecls,
                 lookup
             });

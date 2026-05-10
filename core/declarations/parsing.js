@@ -1074,10 +1074,24 @@ function createDeclarationParsingCore(deps) {
         const usePreparsedLocals = options.preparseLocals === true;
         const cursorCacheKey = `${cursorLine === undefined ? '__all__' : String(cursorLine)}::locals:${usePreparsedLocals ? 1 : 0}`;
         const useCursorCache = options.cursorCache !== false;
+        const filterEnumEvalOuterDecls = decls => (Array.isArray(decls) ? decls : [])
+            .filter(decl =>
+                decl?.type === 'define' ||
+                decl?.type === 'enum' ||
+                decl?.type === 'enum-item'
+            );
+        const parseOuterDecls = filterEnumEvalOuterDecls(options.outerDecls);
+        const getParseOuterDeclsForLine = typeof options.getOuterDeclsForLine === 'function'
+            ? lineNumber => filterEnumEvalOuterDecls(options.getOuterDeclsForLine(lineNumber))
+            : () => parseOuterDecls;
+        const outerDeclsCacheKey = String(options.outerDeclsCacheKey ?? (
+            parseOuterDecls.length ? `outer:${parseOuterDecls.length}` : ''
+        ));
         let fileCache = cacheKey ? fileDeclParseCache.get(cacheKey) : null;
         const canReuseEquivalentBase = !!(
             fileCache &&
             fileCache.fileName === fileName &&
+            fileCache.outerDeclsCacheKey === outerDeclsCacheKey &&
             areDependencyStampsFresh(fileCache.dependencyStamps) &&
             preprocessedState?.semanticEquivalentBodyEdit
         );
@@ -1086,12 +1100,14 @@ function createDeclarationParsingCore(deps) {
             !fileCache ||
             fileCache.text !== text ||
             fileCache.fileName !== fileName ||
+            fileCache.outerDeclsCacheKey !== outerDeclsCacheKey ||
             !areDependencyStampsFresh(fileCache.dependencyStamps)
         ) {
             if (canReuseEquivalentBase) {
                 fileCache = {
                     text,
                     fileName,
+                    outerDeclsCacheKey,
                     byCursorLine: fileCache.byCursorLine,
                     sequentialCursorState: fileCache.sequentialCursorState,
                     dependencyStamps: fileCache.dependencyStamps,
@@ -1126,6 +1142,7 @@ function createDeclarationParsingCore(deps) {
             fileCache = {
                 text,
                 fileName,
+                outerDeclsCacheKey,
                 byCursorLine: new Map(),
                 sequentialCursorState: null,
                 dependencyStamps: buildDependencyStampMap(
@@ -1189,9 +1206,10 @@ function createDeclarationParsingCore(deps) {
                         }
                         if (!isPotentialDeclarationStartLine(strippedLines[i])) { i++; continue; }
                         if (isPotentialEnumDeclarationLine(strippedLines[i])) {
-                            const enumEvalOuterDecls = topLevelActiveDefines.size
-                                ? globals.concat([...topLevelActiveDefines.values()])
-                                : globals;
+                            const enumEvalOuterDecls = globals.concat(
+                                topLevelActiveDefines.size ? [...topLevelActiveDefines.values()] : [],
+                                getParseOuterDeclsForLine(i)
+                            );
                             const enumBlock = parseEnumBlock(rawLines, i, filePath, fileName, lineCtrlChars, strippedLines, enumEvalOuterDecls);
                             if (enumBlock) {
                                 if (pendingDeprecatedMessage != null && applyDeprecatedPragmaToNextDecl(enumBlock.decls, pendingDeprecatedMessage)) {

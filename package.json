@@ -1,8 +1,13 @@
 {
   "name": "amxx-pawn-all-in",
   "displayName": "%displayName%",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "publisher": "Faktor",
+  "icon": "resources/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/droads/VSC-Amxx-Pawn-All-IN.git"
+  },
   "engines": {
     "vscode": "^1.60.0"
   },
@@ -196,6 +201,14 @@
           "order": 89,
           "markdownDescription": "%config.liveValidationScanOnOpen.markdownDescription%"
         },
+        "amxxPawnAllIn.liveValidationTypingDelayMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5000,
+          "default": 700,
+          "order": 89.02,
+          "markdownDescription": "%config.liveValidationTypingDelayMs.markdownDescription%"
+        },
         "amxxPawnAllIn.liveValidationIssueMode": {
           "type": "string",
           "enum": ["errors-only", "errors-and-warnings"],
@@ -271,14 +284,16 @@
         },
         "amxxPawnAllIn.hoverMode": {
           "type": "string",
-          "enum": ["disabled", "normal", "ctrl-hack"],
+          "enum": ["disabled", "normal", "ctrl-hack", "shift-hack", "alt-hack"],
           "default": "normal",
           "order": 90,
           "markdownDescription": "%config.hoverMode.markdownDescription%",
           "enumDescriptions": [
             "%config.hoverMode.enum.disabled%",
             "%config.hoverMode.enum.normal%",
-            "%config.hoverMode.enum.ctrl-hack%"
+            "%config.hoverMode.enum.ctrl-hack%",
+            "%config.hoverMode.enum.shift-hack%",
+            "%config.hoverMode.enum.alt-hack%"
           ]
         },
         "amxxPawnAllIn.hoverContentMode": {

@@ -1,0 +1,9 @@
+.vscode/**
+.github/**
+scripts/**
+testfiles/**
+node_modules/**
+*.vsix
+*.cpuprofile
+tmp-*
+.gitignore

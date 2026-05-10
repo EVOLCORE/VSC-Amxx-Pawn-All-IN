@@ -30,16 +30,53 @@ function createRenderCore(deps) {
             /^(?:true|false|cellmin|cellmax)$/i.test(source);
     }
 
+    function hasImplicitArrayDimension(dims) {
+        return parseDimsParts(dims || '').some(part => !String(part || '').trim());
+    }
+
+    function hasExplicitArrayDimension(dims) {
+        return parseDimsParts(dims || '').some(part => !!String(part || '').trim());
+    }
+
+    function shouldRenderInferredVariableShape(data, value) {
+        if (!String(value || '').trim()) return false;
+        if (data?.isArg) return false;
+        const dims = data?.dims || '';
+        return arrayShapeCore.countDims(dims) > 0 && hasImplicitArrayDimension(dims);
+    }
+
     function getVariableInitializerText(data, options = {}) {
         const value = String(data?.value || '').trim();
         if (shouldRenderVariableInitializer(data, value)) return ` = ${value}`;
-        const dimCount = arrayShapeCore.countDims(data?.dims || '');
-        if (dimCount > 0 && value) {
-            const shape = arrayShapeCore.getInitializerDisplayShape(data.dims || '', value, options)
-                .filter(size => Number.isInteger(size) && size >= 0);
-            if (shape.length) return ` size(${shape.join(', ')})`;
+        if (shouldRenderInferredVariableShape(data, value)) {
+            const dimCount = arrayShapeCore.countDims(data?.dims || '');
+            const shape = arrayShapeCore.getInitializerDisplayShape(data.dims || '', value, options);
+            if (
+                shape.length === dimCount &&
+                shape.every(size => Number.isInteger(size) && size >= 0)
+            ) {
+                return ` size(${shape.join(', ')})`;
+            }
         }
         return '';
+    }
+
+    function getVariableInitializerUsageShape(data, options = {}) {
+        if (data?.type !== 'variable' || data?.isArg) return [];
+        const value = String(data?.value || '').trim();
+        const dims = data?.dims || '';
+        const dimCount = arrayShapeCore.countDims(dims);
+        if (!value || dimCount <= 0 || !hasExplicitArrayDimension(dims)) return [];
+
+        const shape = arrayShapeCore.inferDisplayInitializerShape(value, dimCount, options);
+        return shape.length === dimCount && shape.every(size => Number.isInteger(size) && size >= 0)
+            ? shape
+            : [];
+    }
+
+    function getVariableInitializerUsageText(data, options = {}) {
+        const shape = getVariableInitializerUsageShape(data, options);
+        return shape.length ? `[${shape.join('][')}]` : '';
     }
 
     function buildSig(data, options = {}) {
@@ -87,6 +124,7 @@ function createRenderCore(deps) {
 
     return {
         getEnumItemValueText,
+        getVariableInitializerUsageText,
         buildEnumMemberLine,
         buildSig
     };

@@ -1,5 +1,9 @@
 const { spawn } = require('child_process');
 const path = require('path');
+const {
+    getHoverModifierHackKey,
+    isHoverModifierHackMode
+} = require('../../core/hover-modes');
 
 // Hover feature shell. It owns provider registration and error isolation,
 // while the heavy hover-building logic can continue living elsewhere until we
@@ -13,12 +17,13 @@ function createHoverFeature(deps) {
         getHoverMode,
         buildHoverAtPosition
     } = deps;
-    const CTRL_HACK_REOPEN_WINDOW_MS = 700;
-    const CTRL_HACK_SELECTION_RESTORE_DELAY_MS = 0;
-    const CTRL_HACK_RESTART_MIN_DELAY_MS = 800;
-    const CTRL_HACK_RESTART_MAX_DELAY_MS = 8000;
+    const MODIFIER_HACK_REOPEN_WINDOW_MS = 700;
+    const MODIFIER_HACK_SELECTION_RESTORE_DELAY_MS = 0;
+    const MODIFIER_HACK_RESTART_MIN_DELAY_MS = 800;
+    const MODIFIER_HACK_RESTART_MAX_DELAY_MS = 8000;
 
-    function createWindowsCtrlHackTracker(onStateChange) {
+    function createWindowsModifierHackTracker(mode, onStateChange) {
+        const keySpec = getHoverModifierHackKey(mode) || getHoverModifierHackKey('ctrl-hack');
         if (process.platform !== 'win32') {
             return {
                 start: () => false,
@@ -28,11 +33,11 @@ function createHoverFeature(deps) {
             };
         }
 
-        let ctrlPressed = false;
+        let modifierPressed = false;
         let trackerProcess = null;
         let stdoutBuffer = '';
         let restartTimer = null;
-        let restartDelayMs = CTRL_HACK_RESTART_MIN_DELAY_MS;
+        let restartDelayMs = MODIFIER_HACK_RESTART_MIN_DELAY_MS;
         let disposed = false;
         const powershellPath = path.join(
             process.env.SystemRoot || 'C:\\Windows',
@@ -51,9 +56,9 @@ function createHoverFeature(deps) {
 
         const emitState = nextState => {
             const normalized = !!nextState;
-            if (normalized === ctrlPressed) return;
-            ctrlPressed = normalized;
-            onStateChange?.(ctrlPressed);
+            if (normalized === modifierPressed) return;
+            modifierPressed = normalized;
+            onStateChange?.(modifierPressed);
         };
 
         const stop = () => {
@@ -65,7 +70,7 @@ function createHoverFeature(deps) {
                 trackerProcess.kill();
                 trackerProcess = null;
             }
-            restartDelayMs = CTRL_HACK_RESTART_MIN_DELAY_MS;
+            restartDelayMs = MODIFIER_HACK_RESTART_MIN_DELAY_MS;
             emitState(false);
         };
 
@@ -74,7 +79,7 @@ function createHoverFeature(deps) {
             clearRestartTimer();
             const delayMs = restartDelayMs;
             restartDelayMs = Math.min(
-                CTRL_HACK_RESTART_MAX_DELAY_MS,
+                MODIFIER_HACK_RESTART_MAX_DELAY_MS,
                 restartDelayMs * 2
             );
             restartTimer = setTimeout(() => {
@@ -91,7 +96,7 @@ function createHoverFeature(deps) {
                 `Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class NativeKeyboardState { [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vKey); }'`,
                 '$last = $null',
                 'while ($true) {',
-                '    $pressed = ([NativeKeyboardState]::GetAsyncKeyState(0x11) -band 0x8000) -ne 0',
+                `    $pressed = ([NativeKeyboardState]::GetAsyncKeyState(${keySpec.vKey}) -band 0x8000) -ne 0`,
                 '    if ($pressed -ne $last) {',
                 '        if ($pressed) { [Console]::Out.WriteLine("1") } else { [Console]::Out.WriteLine("0") }',
                 '        [Console]::Out.Flush()',
@@ -113,7 +118,7 @@ function createHoverFeature(deps) {
 
             trackerProcess.stdout?.setEncoding('utf8');
             trackerProcess.stdout?.on('data', chunk => {
-                restartDelayMs = CTRL_HACK_RESTART_MIN_DELAY_MS;
+                restartDelayMs = MODIFIER_HACK_RESTART_MIN_DELAY_MS;
                 stdoutBuffer += String(chunk || '');
                 const lines = stdoutBuffer.split(/\r?\n/);
                 stdoutBuffer = lines.pop() || '';
@@ -148,13 +153,16 @@ function createHoverFeature(deps) {
             start,
             stop,
             isRunning: () => !!trackerProcess,
-            isPressed: () => ctrlPressed
+            isPressed: () => modifierPressed,
+            keyLabel: keySpec.label,
+            mode
         };
     }
 
     function register(context) {
-        let ctrlHackTracker = null;
-        let lastCtrlHackDeniedHover = null;
+        let modifierHackTracker = null;
+        let modifierHackTrackerMode = '';
+        let lastModifierHackDeniedHover = null;
 
         const getPositionSnapshot = position => ({
             line: Number(position?.line) || 0,
@@ -176,16 +184,16 @@ function createHoverFeature(deps) {
             left.isEmpty === right.isEmpty &&
             isSamePositionSnapshot(left.anchor, right.anchor) &&
             isSamePositionSnapshot(left.active, right.active);
-        const clearLastCtrlHackDeniedHover = () => {
-            lastCtrlHackDeniedHover = null;
+        const clearLastModifierHackDeniedHover = () => {
+            lastModifierHackDeniedHover = null;
         };
-        const rememberCtrlHackDeniedHover = (document, position) => {
+        const rememberModifierHackDeniedHover = (document, position) => {
             const activeEditor = vscode.window.activeTextEditor;
             if (!activeEditor || activeEditor.document !== document) {
-                clearLastCtrlHackDeniedHover();
+                clearLastModifierHackDeniedHover();
                 return;
             }
-            lastCtrlHackDeniedHover = {
+            lastModifierHackDeniedHover = {
                 editor: activeEditor,
                 document,
                 documentVersion: document.version,
@@ -194,16 +202,16 @@ function createHoverFeature(deps) {
                 timestamp: Date.now()
             };
         };
-        const isCtrlHackDeniedHoverStillReusable = state => {
+        const isModifierHackDeniedHoverStillReusable = state => {
             if (!state) return false;
-            if ((Date.now() - state.timestamp) > CTRL_HACK_REOPEN_WINDOW_MS) return false;
+            if ((Date.now() - state.timestamp) > MODIFIER_HACK_REOPEN_WINDOW_MS) return false;
             const activeEditor = vscode.window.activeTextEditor;
             if (!activeEditor || activeEditor !== state.editor) return false;
             if (activeEditor.document !== state.document) return false;
             if (activeEditor.document.version !== state.documentVersion) return false;
             return isSameSelectionSnapshot(cloneSelectionSnapshot(activeEditor.selection), state.selectionSnapshot);
         };
-        const closeCtrlHackHover = () => {
+        const closeModifierHackHover = () => {
             vscode.commands.executeCommand('editor.action.closeHover').then(
                 undefined,
                 () => {}
@@ -215,10 +223,10 @@ function createHoverFeature(deps) {
                 );
             }, 30);
         };
-        const tryReplayCtrlHackHover = () => {
-            const state = lastCtrlHackDeniedHover;
-            if (!isCtrlHackDeniedHoverStillReusable(state)) return;
-            clearLastCtrlHackDeniedHover();
+        const tryReplayModifierHackHover = () => {
+            const state = lastModifierHackDeniedHover;
+            if (!isModifierHackDeniedHoverStillReusable(state)) return;
+            clearLastModifierHackDeniedHover();
             const activeEditor = vscode.window.activeTextEditor;
             if (!activeEditor || activeEditor !== state.editor) return;
             if (typeof vscode.Position !== 'function' || typeof vscode.Selection !== 'function') {
@@ -253,7 +261,7 @@ function createHoverFeature(deps) {
                         if (!editorNow || editorNow !== activeEditor || editorNow.document !== state.document) return;
                         editorNow.selections = originalSelections;
                         editorNow.selection = originalSelections[0];
-                    }, CTRL_HACK_SELECTION_RESTORE_DELAY_MS);
+                    }, MODIFIER_HACK_SELECTION_RESTORE_DELAY_MS);
                 },
                 () => {
                     const editorNow = vscode.window.activeTextEditor;
@@ -264,42 +272,48 @@ function createHoverFeature(deps) {
             );
         };
 
-        const stopCtrlHackTracker = () => {
-            ctrlHackTracker?.stop();
-            ctrlHackTracker = null;
-            clearLastCtrlHackDeniedHover();
+        const stopModifierHackTracker = () => {
+            modifierHackTracker?.stop();
+            modifierHackTracker = null;
+            modifierHackTrackerMode = '';
+            clearLastModifierHackDeniedHover();
         };
-        const ensureCtrlHackTracker = () => {
+        const ensureModifierHackTracker = mode => {
             if (process.platform !== 'win32') return false;
-            if (!ctrlHackTracker) {
-                ctrlHackTracker = createWindowsCtrlHackTracker(pressed => {
+            if (!isHoverModifierHackMode(mode)) return false;
+            if (modifierHackTracker && modifierHackTrackerMode !== mode) {
+                stopModifierHackTracker();
+            }
+            if (!modifierHackTracker) {
+                modifierHackTracker = createWindowsModifierHackTracker(mode, pressed => {
                     if (pressed) {
-                        tryReplayCtrlHackHover();
+                        tryReplayModifierHackHover();
                         return;
                     }
                     if (!pressed) {
-                        clearLastCtrlHackDeniedHover();
-                        closeCtrlHackHover();
+                        clearLastModifierHackDeniedHover();
+                        closeModifierHackHover();
                     }
                 });
+                modifierHackTrackerMode = mode;
             }
-            const wasRunning = ctrlHackTracker.isRunning();
-            return wasRunning || ctrlHackTracker.start();
+            const wasRunning = modifierHackTracker.isRunning();
+            return wasRunning || modifierHackTracker.start();
         };
         const getEffectiveHoverMode = () => {
             const configuredMode = getHoverMode();
-            if (configuredMode !== 'ctrl-hack') return configuredMode;
+            if (!isHoverModifierHackMode(configuredMode)) return configuredMode;
             if (process.platform !== 'win32') return 'normal';
-            if (ensureCtrlHackTracker()) return 'ctrl-hack';
+            if (ensureModifierHackTracker(configuredMode)) return configuredMode;
             return 'normal';
         };
         const refreshHoverModeRuntime = () => {
             refreshExtensionSettings();
             const mode = getHoverMode();
-            if (mode === 'ctrl-hack' && process.platform === 'win32') {
-                ensureCtrlHackTracker();
+            if (isHoverModifierHackMode(mode) && process.platform === 'win32') {
+                ensureModifierHackTracker(mode);
             } else {
-                stopCtrlHackTracker();
+                stopModifierHackTracker();
             }
         };
 
@@ -309,11 +323,11 @@ function createHoverFeature(deps) {
                     const hoverMode = getEffectiveHoverMode();
                     const shouldProvideHover =
                         hoverMode !== 'disabled' &&
-                        (hoverMode !== 'ctrl-hack' || ctrlHackTracker?.isPressed());
-                    if (hoverMode === 'ctrl-hack' && !shouldProvideHover) {
-                        rememberCtrlHackDeniedHover(document, position);
+                        (!isHoverModifierHackMode(hoverMode) || modifierHackTracker?.isPressed());
+                    if (isHoverModifierHackMode(hoverMode) && !shouldProvideHover) {
+                        rememberModifierHackDeniedHover(document, position);
                     } else {
-                        clearLastCtrlHackDeniedHover();
+                        clearLastModifierHackDeniedHover();
                     }
                     return shouldProvideHover
                         ? buildHoverAtPosition(document, position)
@@ -339,7 +353,7 @@ function createHoverFeature(deps) {
         }
         context.subscriptions.push({
             dispose() {
-                stopCtrlHackTracker();
+                stopModifierHackTracker();
             }
         });
         refreshHoverModeRuntime();

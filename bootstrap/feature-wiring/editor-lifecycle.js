@@ -27,6 +27,7 @@ function buildEditorLifecycleFeature(deps, support, liveValidationRuntime) {
         getPawnFileExtensions,
         getIncludeFileExtensions,
         getLiveValidationMode,
+        getLiveValidationTypingDelayMs,
         shouldRunLiveValidationScanOnOpen,
         getExternalIncludeWatchMode,
         isPersistentIncludeDeclarationCacheEnabled
@@ -95,6 +96,7 @@ function buildEditorLifecycleFeature(deps, support, liveValidationRuntime) {
         getIncludeFileExtensions,
         scheduleWarmDocumentContext,
         getLiveValidationMode,
+        getLiveValidationTypingDelayMs,
         shouldRunLiveValidationScanOnOpen,
         scheduleLiveValidation,
         resolveEditedValidationPlan,

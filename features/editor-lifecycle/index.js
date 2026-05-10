@@ -30,6 +30,7 @@ function createEditorLifecycleFeature(deps) {
         getIncludeFileExtensions = () => ['.inc', '.inl'],
         scheduleWarmDocumentContext,
         getLiveValidationMode,
+        getLiveValidationTypingDelayMs = () => 700,
         shouldRunLiveValidationScanOnOpen,
         scheduleLiveValidation,
         resolveEditedValidationPlan,
@@ -333,6 +334,133 @@ function createEditorLifecycleFeature(deps) {
                 handleVisibleOrActivePawnDocument(pawnDoc, delayMs);
             })
             .catch(() => {});
+    };
+    const getTypingValidationDelayMs = () => {
+        const rawDelay = Number(getLiveValidationTypingDelayMs());
+        return Number.isFinite(rawDelay)
+            ? Math.max(0, Math.min(5000, Math.floor(rawDelay)))
+            : 700;
+    };
+    const pendingLineChangeValidations = new Map();
+    const lastKnownSelectionLineByPath = new Map();
+    let lastActiveDocumentPath = normalizeLifecyclePath(vscode.window.activeTextEditor?.document?.fileName || '');
+    const getSelectionLine = editor => {
+        const line = editor?.selection?.active?.line;
+        return Number.isInteger(line) ? line : null;
+    };
+    const getChangeStartLine = contentChanges => {
+        for (const change of contentChanges || []) {
+            const line = change?.range?.start?.line;
+            if (Number.isInteger(line)) return line;
+        }
+        return null;
+    };
+    const didChangeLineBoundary = contentChanges => {
+        let firstStartLine = null;
+        for (const change of contentChanges || []) {
+            const text = String(change?.text || '');
+            if (/[\r\n]/.test(text)) return true;
+            const startLine = change?.range?.start?.line;
+            const endLine = change?.range?.end?.line;
+            if (Number.isInteger(startLine)) {
+                if (firstStartLine == null) {
+                    firstStartLine = startLine;
+                } else if (firstStartLine !== startLine) {
+                    return true;
+                }
+            }
+            if (Number.isInteger(startLine) && Number.isInteger(endLine) && startLine !== endLine) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const mergeTextValidationPlans = (left, right) => {
+        if (!left) return right || null;
+        if (!right) return left;
+        if (left.full || right.full) {
+            return {
+                full: true,
+                reason: right.reason || left.reason
+            };
+        }
+        const lines = new Set();
+        for (const line of left.lines || []) lines.add(line);
+        for (const line of right.lines || []) lines.add(line);
+        return {
+            lines: [...lines].sort((a, b) => a - b),
+            reason: right.reason || left.reason,
+            editImpact: right.editImpact || left.editImpact
+        };
+    };
+    const scheduleTextValidationPlan = (document, plan, delayMs) => {
+        if (!plan) return;
+        if (plan.full) {
+            scheduleLiveValidation(liveValidationCollection, document, {
+                full: true,
+                delayMs,
+                reason: plan.reason
+            });
+            return;
+        }
+        scheduleLiveValidation(liveValidationCollection, document, {
+            lines: plan.lines,
+            delayMs,
+            reason: plan.reason,
+            editImpact: plan.editImpact
+        });
+    };
+    const rememberSelectionLine = (document, contentChanges = []) => {
+        const key = normalizeLifecyclePath(document?.fileName || '');
+        if (!key) return;
+        const activeLine = isDocumentActive(document)
+            ? getSelectionLine(vscode.window.activeTextEditor)
+            : null;
+        const fallbackLine = getChangeStartLine(contentChanges);
+        const line = activeLine ?? fallbackLine;
+        if (Number.isInteger(line)) {
+            lastKnownSelectionLineByPath.set(key, line);
+        }
+        if (Number.isInteger(activeLine)) {
+            lastActiveDocumentPath = key;
+        }
+    };
+    const storePendingLineChangeValidation = (document, plan, contentChanges = []) => {
+        const key = normalizeLifecyclePath(document?.fileName || '');
+        if (!key || !plan) return;
+        const existing = pendingLineChangeValidations.get(key);
+        pendingLineChangeValidations.set(key, {
+            document,
+            plan: mergeTextValidationPlans(existing?.plan || null, plan)
+        });
+        rememberSelectionLine(document, contentChanges);
+        logLifecycle(`text-change defer-until-line-change file=${document.fileName || ''} reason=${plan.reason || ''}`);
+    };
+    const takePendingLineChangeValidation = documentOrPath => {
+        const key = typeof documentOrPath === 'string'
+            ? normalizeLifecyclePath(documentOrPath)
+            : normalizeLifecyclePath(documentOrPath?.fileName || '');
+        if (!key) return null;
+        const entry = pendingLineChangeValidations.get(key) || null;
+        pendingLineChangeValidations.delete(key);
+        return entry;
+    };
+    const dropPendingLineChangeValidation = documentOrPath => {
+        const key = typeof documentOrPath === 'string'
+            ? normalizeLifecyclePath(documentOrPath)
+            : normalizeLifecyclePath(documentOrPath?.fileName || '');
+        if (!key) return;
+        pendingLineChangeValidations.delete(key);
+        lastKnownSelectionLineByPath.delete(key);
+    };
+    const flushPendingLineChangeValidation = (documentOrPath, reason = 'lineChanged') => {
+        const entry = takePendingLineChangeValidation(documentOrPath);
+        if (!entry?.plan) return false;
+        const document = typeof documentOrPath === 'string' ? entry.document : documentOrPath;
+        if (!isLiveLifecyclePawnDocument(document)) return false;
+        logLifecycle(`text-change flush-deferred reason=${reason} file=${document.fileName || ''}`);
+        scheduleTextValidationPlan(document, entry.plan, 0);
+        return true;
     };
 
     const hasFreshFullCachedResultForVersion = doc => {
@@ -692,9 +820,13 @@ function createEditorLifecycleFeature(deps) {
         invalidateDocumentCaches(filePath, { editImpact });
         scheduleWarmDocumentContext(document, 180);
         const mode = getLiveValidationMode();
+        let validationPlan = null;
         if (mode === 'full') {
             logLifecycle(`text-change schedule full file=${filePath}`);
-            scheduleLiveValidation(liveValidationCollection, document, { full: true, delayMs: 260, reason: 'textChangedFull' });
+            validationPlan = {
+                full: true,
+                reason: 'textChangedFull'
+            };
         } else if (mode === 'edited') {
             const editedPlan = resolveEditedValidationPlan(document, event.contentChanges, editImpact);
             logLifecycle(
@@ -702,22 +834,42 @@ function createEditorLifecycleFeature(deps) {
                 `lines=${Array.isArray(editedPlan.lines) ? editedPlan.lines.length : 0} reason=${editedPlan.reason || ''}`
             );
             if (editedPlan.full) {
-                scheduleLiveValidation(liveValidationCollection, document, {
+                validationPlan = {
                     full: true,
-                    delayMs: 220,
                     reason: editedPlan.reason
-                });
+                };
             } else {
-                scheduleLiveValidation(liveValidationCollection, document, {
+                validationPlan = {
                     lines: editedPlan.lines,
-                    delayMs: 220,
                     reason: editedPlan.reason,
                     editImpact
-                });
+                };
             }
         } else {
+            dropPendingLineChangeValidation(document);
             logLifecycle(`text-change skip mode=${mode} file=${filePath}`);
         }
+        if (!validationPlan) return;
+        const typingDelayMs = getTypingValidationDelayMs();
+        if (typingDelayMs === 0) {
+            if (!didChangeLineBoundary(event.contentChanges)) {
+                storePendingLineChangeValidation(document, validationPlan, event.contentChanges);
+                return;
+            }
+            const pendingEntry = takePendingLineChangeValidation(document);
+            scheduleTextValidationPlan(
+                document,
+                mergeTextValidationPlans(pendingEntry?.plan || null, validationPlan),
+                0
+            );
+            return;
+        }
+        const pendingEntry = takePendingLineChangeValidation(document);
+        scheduleTextValidationPlan(
+            document,
+            mergeTextValidationPlans(pendingEntry?.plan || null, validationPlan),
+            typingDelayMs
+        );
     }
 
     function handleDidSaveTextDocument(doc) {
@@ -729,6 +881,7 @@ function createEditorLifecycleFeature(deps) {
             scheduleIncludeGraphWatcherRefresh();
             rememberWatcherFileStamp(doc.fileName);
         }
+        dropPendingLineChangeValidation(doc);
         const previousSavedVersion = lastSavedDocumentVersions.get(doc.fileName);
         if (previousSavedVersion === doc.version) {
             return;
@@ -759,13 +912,37 @@ function createEditorLifecycleFeature(deps) {
             scheduleIncludeGraphWatcherRefresh();
         }
         if (!isLiveLifecyclePawnDocument(doc)) return;
+        dropPendingLineChangeValidation(doc);
         lastSavedDocumentVersions.delete(doc.fileName);
         invalidateDocumentCaches(doc.fileName);
         clearScheduledLiveValidation(doc.fileName);
         liveValidationCollection.delete(doc.uri);
     }
 
+    function handleDidChangeTextEditorSelection(event) {
+        if (getTypingValidationDelayMs() !== 0) return;
+        const editor = event?.textEditor || null;
+        const document = editor?.document || null;
+        if (!isLiveLifecyclePawnDocument(document)) return;
+        const key = normalizeLifecyclePath(document.fileName || '');
+        if (!key) return;
+        const nextLine = getSelectionLine(editor);
+        if (!Number.isInteger(nextLine)) return;
+        const previousLine = lastKnownSelectionLineByPath.get(key);
+        lastKnownSelectionLineByPath.set(key, nextLine);
+        lastActiveDocumentPath = key;
+        if (!pendingLineChangeValidations.has(key)) return;
+        if (Number.isInteger(previousLine) && previousLine !== nextLine) {
+            flushPendingLineChangeValidation(document, 'selectionLineChanged');
+        }
+    }
+
     async function handleDidChangeActiveTextEditor(editor) {
+        const nextActivePath = normalizeLifecyclePath(editor?.document?.fileName || '');
+        if (getTypingValidationDelayMs() === 0 && lastActiveDocumentPath && lastActiveDocumentPath !== nextActivePath) {
+            flushPendingLineChangeValidation(lastActiveDocumentPath, 'activeEditorChanged');
+        }
+        lastActiveDocumentPath = nextActivePath;
         if (!isFileBackedLifecycleDocument(editor?.document || null)) {
             ensureIncludeGraphWatchers();
             scheduleVisibleDocumentWarmups();
@@ -877,6 +1054,9 @@ function createEditorLifecycleFeature(deps) {
             vscode.workspace.onDidSaveTextDocument(handleDidSaveTextDocument),
             vscode.workspace.onDidCloseTextDocument(handleDidCloseTextDocument),
             vscode.window.onDidChangeActiveTextEditor(handleDidChangeActiveTextEditor),
+            ...(typeof vscode.window.onDidChangeTextEditorSelection === 'function'
+                ? [vscode.window.onDidChangeTextEditorSelection(handleDidChangeTextEditorSelection)]
+                : []),
             ...(typeof vscode.window.onDidChangeVisibleTextEditors === 'function'
                 ? [vscode.window.onDidChangeVisibleTextEditors(handleDidChangeVisibleTextEditors)]
                 : []),
@@ -889,6 +1069,8 @@ function createEditorLifecycleFeature(deps) {
                 clearIdleVisibleWarmupTimer();
                 idleVisibleWarmupState.queue = [];
                 idleVisibleWarmupState.queuedKeys.clear();
+                pendingLineChangeValidations.clear();
+                lastKnownSelectionLineByPath.clear();
                 clearIncludeGraphWatcherRefreshTimer();
                 disposeRegisteredIncludeGraphWatchers();
             }
@@ -938,6 +1120,7 @@ function createEditorLifecycleFeature(deps) {
         handleDidChangeTextDocument,
         handleDidSaveTextDocument,
         handleDidCloseTextDocument,
+        handleDidChangeTextEditorSelection,
         handleDidChangeActiveTextEditor,
         handleDidChangeVisibleTextEditors,
         handleDidChangeConfiguration,
@@ -945,6 +1128,8 @@ function createEditorLifecycleFeature(deps) {
             clearIdleVisibleWarmupTimer();
             idleVisibleWarmupState.queue = [];
             idleVisibleWarmupState.queuedKeys.clear();
+            pendingLineChangeValidations.clear();
+            lastKnownSelectionLineByPath.clear();
             clearIncludeGraphWatcherRefreshTimer();
             disposeRegisteredIncludeGraphWatchers();
         }

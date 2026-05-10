@@ -9,6 +9,7 @@ const { createIncludeCacheCodec } = require('./include-cache-codec');
 const {
     attachIncludeDeclIndexesFromSerializedOrBuild,
     createIncludeDeclAccumulator,
+    dedupeIncludeDecls,
     serializeIncludeDeclIndexes
 } = require('./include-decl-indexes');
 const { createIncludePersistentCache } = require('./include-persistent-cache');
@@ -133,13 +134,15 @@ function createDocumentIncludeSystem(deps) {
 
     function reviveIncludeDecls(serializedDecls = [], filePath = '', options = {}) {
         if (!Array.isArray(serializedDecls)) return [];
-        const decls = serializedDecls.map(item => {
+        const revivedDecls = serializedDecls.map(item => {
             const decl = reviveIncludeDeclCompactObject(item);
             return {
                 ...decl,
                 modifiers: Array.isArray(decl.modifiers) ? [...decl.modifiers] : []
             };
         });
+        const decls = dedupeIncludeDecls(revivedDecls);
+        const indexes = decls.length === revivedDecls.length ? options.indexes : null;
         const enumDeclByName = new Map();
         for (const decl of decls) {
             if (decl?.type !== 'enum') continue;
@@ -159,7 +162,7 @@ function createDocumentIncludeSystem(deps) {
             attachLazyIncludeDocs(decls, filePath);
         }
         return options.attachIndexes
-            ? attachIncludeDeclIndexesFromSerializedOrBuild(decls, options.indexes)
+            ? attachIncludeDeclIndexesFromSerializedOrBuild(decls, indexes)
             : decls;
     }
 

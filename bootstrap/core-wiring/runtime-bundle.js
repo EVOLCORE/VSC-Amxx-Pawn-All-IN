@@ -203,6 +203,7 @@ function createSharedRuntimeBundle(sources) {
         extractEnumSymbolName: declarationSupportRuntime.extractEnumSymbolName,
         getEnumDeclsForVariableDims: declarationSupportRuntime.getEnumDeclsForVariableDims,
         buildEnumMemberLine: declarationSupportRuntime.buildEnumMemberLine,
+        getVariableInitializerUsageText: declarationSupportRuntime.getVariableInitializerUsageText,
         buildSig: declarationSupportRuntime.buildSig,
         measurePawnStringLiteral: baseSyntaxRuntime.measurePawnStringLiteral,
         isFunctionLikeDefineDecl: declarationSupportRuntime.isFunctionLikeDefineDecl,

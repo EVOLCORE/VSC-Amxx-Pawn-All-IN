@@ -1,4 +1,5 @@
 const { computeFunctionRangeMaps: defaultComputeFunctionRangeMaps } = require('../../core/declarations/scope');
+const { isHoverModifierHackMode } = require('../../core/hover-modes');
 
 // Persistent hover is a feature-level lifecycle wrapper around the built-in VS Code
 // hover widget. It is separate from hover content generation because it manages
@@ -54,7 +55,8 @@ function createPersistentHoverFeature(deps) {
     }
 
     function isPersistentHoverSuppressedByHoverMode() {
-        return typeof getHoverMode === 'function' && getHoverMode() === 'ctrl-hack';
+        if (typeof getHoverMode !== 'function') return false;
+        return isHoverModifierHackMode(getHoverMode());
     }
 
     function getEffectivePersistentHoverMode() {

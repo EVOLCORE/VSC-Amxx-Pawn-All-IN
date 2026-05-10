@@ -120,10 +120,62 @@ function createSymbolUsageDiagnostics(deps = {}) {
         return '';
     }
 
+    function hasUnmatchedTernaryQuestionBefore(source, colonIndex, occurrenceStart) {
+        let parenDepth = 0;
+        let bracketDepth = 0;
+        let braceDepth = 0;
+        let inString = false;
+        let stringChar = '';
+        const ternaryStack = [];
+
+        for (let index = 0; index < colonIndex; index++) {
+            const char = source[index] || '';
+            if (inString) {
+                if (char === stringChar) inString = false;
+                continue;
+            }
+            if (char === '"' || char === "'") {
+                inString = true;
+                stringChar = char;
+                continue;
+            }
+            if (char === '(') parenDepth++;
+            else if (char === ')' && parenDepth > 0) parenDepth--;
+            else if (char === '[') bracketDepth++;
+            else if (char === ']' && bracketDepth > 0) bracketDepth--;
+            else if (char === '{') braceDepth++;
+            else if (char === '}' && braceDepth > 0) braceDepth--;
+            else if (char === '?') {
+                ternaryStack.push({ parenDepth, bracketDepth, braceDepth, index });
+            } else if (char === ':') {
+                for (let stackIndex = ternaryStack.length - 1; stackIndex >= 0; stackIndex--) {
+                    const question = ternaryStack[stackIndex];
+                    if (
+                        question.parenDepth === parenDepth &&
+                        question.bracketDepth === bracketDepth &&
+                        question.braceDepth === braceDepth
+                    ) {
+                        ternaryStack.splice(stackIndex, 1);
+                        break;
+                    }
+                }
+            }
+        }
+
+        return ternaryStack.some(question =>
+            question.index < occurrenceStart &&
+            question.parenDepth === parenDepth &&
+            question.bracketDepth === bracketDepth &&
+            question.braceDepth === braceDepth
+        );
+    }
+
     function classifyVariableOccurrence(source, start, end) {
         const next = findNextNonWhitespaceIndex(source, end);
         const nextChar = next >= 0 ? source[next] : '';
-        if (nextChar === ':') return { read: false, written: false, skip: true };
+        if (nextChar === ':' && !hasUnmatchedTernaryQuestionBefore(source, next, start)) {
+            return { read: false, written: false, skip: true };
+        }
         if (
             (source.slice(Math.max(0, start - 2), start) === '++') ||
             (source.slice(Math.max(0, start - 2), start) === '--') ||

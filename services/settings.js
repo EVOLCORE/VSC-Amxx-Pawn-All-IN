@@ -1,5 +1,6 @@
 const path = require('path');
 const { createUtilityCore } = require('../core/utils');
+const { normalizeHoverMode } = require('../core/hover-modes');
 
 const {
     normalizeLiveValidationIssueMode
@@ -19,6 +20,7 @@ function createSettingsService(vscode) {
         liveValidationMode: `${CONFIG_NAMESPACE}.liveValidationMode`,
         liveValidationIssueMode: `${CONFIG_NAMESPACE}.liveValidationIssueMode`,
         liveValidationScanOnOpen: `${CONFIG_NAMESPACE}.liveValidationScanOnOpen`,
+        liveValidationTypingDelayMs: `${CONFIG_NAMESPACE}.liveValidationTypingDelayMs`,
         unusedStockValidationMode: `${CONFIG_NAMESPACE}.unusedStockValidationMode`,
         callbackSignatureMode: `${CONFIG_NAMESPACE}.callbackSignatureMode`,
         includeValidationMode: `${CONFIG_NAMESPACE}.includeValidationMode`,
@@ -45,6 +47,7 @@ function createSettingsService(vscode) {
         CONFIG_KEYS.liveValidationMode,
         CONFIG_KEYS.liveValidationIssueMode,
         CONFIG_KEYS.liveValidationScanOnOpen,
+        CONFIG_KEYS.liveValidationTypingDelayMs,
         CONFIG_KEYS.unusedStockValidationMode,
         CONFIG_KEYS.callbackSignatureMode,
         CONFIG_KEYS.includeValidationMode,
@@ -112,6 +115,7 @@ function createSettingsService(vscode) {
         liveValidationMode: 'edited',
         liveValidationIssueMode: 'errors-and-warnings',
         liveValidationScanOnOpen: true,
+        liveValidationTypingDelayMs: 700,
         unusedStockValidationMode: 'reachable-only',
         callbackSignatureMode: 'strict',
         includeValidationMode: 'balanced',
@@ -171,6 +175,10 @@ function createSettingsService(vscode) {
             config.get('liveValidationIssueMode', 'errors-and-warnings')
         );
         settings.liveValidationScanOnOpen = !!config.get('liveValidationScanOnOpen', true);
+        const rawLiveValidationTypingDelayMs = Number(config.get('liveValidationTypingDelayMs', 700));
+        settings.liveValidationTypingDelayMs = Number.isFinite(rawLiveValidationTypingDelayMs)
+            ? Math.max(0, Math.min(5000, Math.floor(rawLiveValidationTypingDelayMs)))
+            : 700;
         const rawUnusedStockValidationMode = String(config.get('unusedStockValidationMode', 'reachable-only') || 'reachable-only').trim().toLowerCase();
         settings.unusedStockValidationMode =
             rawUnusedStockValidationMode === 'skip' || rawUnusedStockValidationMode === 'all'
@@ -194,11 +202,7 @@ function createSettingsService(vscode) {
         settings.debugOutput = !!config.get('debugOutput', false);
         settings.completionEnabled = !!config.get('completionEnabled', true);
 
-        const rawHoverMode = String(config.get('hoverMode', 'normal') || 'normal').trim().toLowerCase();
-        settings.hoverMode =
-            rawHoverMode === 'disabled' || rawHoverMode === 'ctrl-hack'
-                ? rawHoverMode
-                : 'normal';
+        settings.hoverMode = normalizeHoverMode(config.get('hoverMode', 'normal'));
         const rawHoverContentMode = String(config.get('hoverContentMode', 'full') || 'full').trim().toLowerCase();
         settings.hoverContentMode =
             rawHoverContentMode === 'compact' || rawHoverContentMode === 'signature-only'
@@ -260,6 +264,7 @@ function createSettingsService(vscode) {
         getLiveValidationMode: () => settings.liveValidationMode,
         getLiveValidationIssueMode: () => settings.liveValidationIssueMode,
         shouldRunLiveValidationScanOnOpen: () => settings.liveValidationScanOnOpen,
+        getLiveValidationTypingDelayMs: () => settings.liveValidationTypingDelayMs,
         getUnusedStockValidationMode: () => settings.unusedStockValidationMode,
         getCallbackSignatureMode: () => settings.callbackSignatureMode,
         getIncludeValidationMode: () => settings.includeValidationMode,

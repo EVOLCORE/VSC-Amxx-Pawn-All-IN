@@ -15,6 +15,38 @@ function buildIncludeDeclIndexes(decls = []) {
     return { nameBuckets, variableBuckets };
 }
 
+function getIncludeDeclDedupeKey(decl) {
+    if (!decl || typeof decl !== 'object') return '';
+    return [
+        decl.filePath || decl.file || '',
+        decl.lineNumber ?? '',
+        decl.type || '',
+        decl.enumName || '',
+        decl.enumDisplayName || '',
+        decl.name || '',
+        decl.args || '',
+        decl.macroStyle || '',
+        decl.macroIndexer || '',
+        decl.typeTag || '',
+        decl.dims || '',
+        decl.value || '',
+        decl.valueDisplay || ''
+    ].join('\x1f');
+}
+
+function dedupeIncludeDecls(decls = []) {
+    if (!Array.isArray(decls) || decls.length <= 1) return Array.isArray(decls) ? decls : [];
+    const seen = new Set();
+    const result = [];
+    for (const decl of decls) {
+        const key = getIncludeDeclDedupeKey(decl);
+        if (key && seen.has(key)) continue;
+        if (key) seen.add(key);
+        result.push(decl);
+    }
+    return result;
+}
+
 function serializeIncludeDeclIndexes(decls = []) {
     if (!Array.isArray(decls) || decls.length === 0) return null;
     const nameBuckets = new Map();
@@ -86,8 +118,12 @@ function createIncludeDeclAccumulator() {
     const decls = [];
     const nameBuckets = new Map();
     const variableBuckets = new Map();
+    const seenDeclKeys = new Set();
     const pushDecl = decl => {
         if (!decl) return;
+        const declKey = getIncludeDeclDedupeKey(decl);
+        if (declKey && seenDeclKeys.has(declKey)) return;
+        if (declKey) seenDeclKeys.add(declKey);
         decls.push(decl);
         if (!decl.name) return;
         const bucket = nameBuckets.get(decl.name);
@@ -105,5 +141,6 @@ module.exports = {
     attachIncludeDeclIndexesFromSerializedOrBuild,
     buildIncludeDeclIndexes,
     createIncludeDeclAccumulator,
+    dedupeIncludeDecls,
     serializeIncludeDeclIndexes
 };

@@ -59,7 +59,7 @@ function readProvidedDeps(filePath, callName) {
     return provided;
 }
 
-function checkContract({ factoryFile, factoryName, wiringFile, callName = factoryName, allowedMissing = [] }) {
+function checkContract({ factoryFile, factoryName, wiringFile, callName = factoryName, allowedMissing = [], expectedProvided = [] }) {
     const required = readFactoryRequiredDeps(factoryFile, factoryName);
     const provided = readProvidedDeps(wiringFile, callName);
     const allowed = new Set(allowedMissing);
@@ -67,6 +67,11 @@ function checkContract({ factoryFile, factoryName, wiringFile, callName = factor
     assert(
         missing.length === 0,
         `${factoryName}: missing wiring deps: ${missing.join(', ')}`
+    );
+    const missingExpected = expectedProvided.filter(name => !provided.has(name));
+    assert(
+        missingExpected.length === 0,
+        `${factoryName}: missing expected wiring deps: ${missingExpected.join(', ')}`
     );
     return `${factoryName}: pass`;
 }
@@ -82,7 +87,8 @@ function main() {
         {
             factoryFile: 'features/editor-lifecycle/index.js',
             factoryName: 'createEditorLifecycleFeature',
-            wiringFile: 'bootstrap/feature-wiring/editor-lifecycle.js'
+            wiringFile: 'bootstrap/feature-wiring/editor-lifecycle.js',
+            expectedProvided: ['getLiveValidationTypingDelayMs']
         },
         {
             factoryFile: 'features/hover/factory.js',

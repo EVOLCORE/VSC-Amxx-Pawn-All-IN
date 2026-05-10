@@ -1,4 +1,5 @@
 const { COMPLETION_TRIGGER_CHARACTERS } = require('../features/completion');
+const { isHoverModifierHackMode } = require('../core/hover-modes');
 
 function buildLazyActivationRuntime(deps, options = {}) {
     const {
@@ -153,13 +154,19 @@ function buildLazyActivationRuntime(deps, options = {}) {
 
     const proxyHoverFeature = {
         register(proxyContext) {
-            if (settingsService?.getHoverMode?.() === 'ctrl-hack') {
+            const hoverMode = settingsService?.getHoverMode?.();
+            if (isHoverModifierHackMode(hoverMode)) {
                 ensureRegisteredRuntime();
                 return;
             }
             trackProxyDisposable(vscode.languages.registerHoverProvider('amxxpawn', {
                 provideHover(document, position) {
-                    if (settingsService?.getHoverMode?.() === 'disabled') return null;
+                    const hoverMode = settingsService?.getHoverMode?.();
+                    if (hoverMode === 'disabled') return null;
+                    if (isHoverModifierHackMode(hoverMode)) {
+                        ensureRegisteredRuntime();
+                        return null;
+                    }
                     const activeRuntime = ensureRegisteredRuntime();
                     return activeRuntime.buildHoverAtPosition(document, position);
                 }

@@ -404,9 +404,6 @@ function createDeclarationDiagnostics(deps) {
         ) {
             const lhs = normalizedAssignmentLine.text.slice(0, assignmentIndex).trim();
             const assignmentOperator = getAssignmentOperatorText(normalizedAssignmentLine.text, assignmentIndex);
-            const lhsVariableDecl = !lhs.includes('[')
-                ? ctx.lookup.findVariable(lhs)
-                : null;
             if (
                 lhs &&
                 matchesCurrentDeclarationAssignmentLhs(lhs, currentVariableDecls, lineNumber)
@@ -537,6 +534,23 @@ function createDeclarationDiagnostics(deps) {
                     );
                     return diagnostics;
                 }
+                if (!assignable.dims && assignmentOperator) {
+                    const rhs = stripTrailingSemicolon(normalizedAssignmentLine.text
+                        .slice(assignmentIndex + assignmentOperator.length)
+                        .trim());
+                    if (rhs) {
+                        const { analysisCache, analysisDecls } = getAssignmentAnalysis();
+                        const issue = findArrayMustBeIndexedIssue(rhs, analysisDecls, analysisCache, { escapeChar });
+                        if (issue) {
+                            diagnostics.push(
+                                createLiveValidationDiagnostic(
+                                    createRhsRange(rhs),
+                                    t('validation.arrayMustBeIndexed', { name: issue.name })
+                                )
+                            );
+                        }
+                    }
+                }
                 if (assignmentOperator === '=') {
                     const rhsRawStart = assignmentIndex + assignmentOperator.length;
                     const rhsRawText = normalizedAssignmentLine.text.slice(rhsRawStart);
@@ -616,37 +630,6 @@ function createDeclarationDiagnostics(deps) {
                                 )
                             );
                         }
-                    }
-                }
-            }
-            if (lhsVariableDecl && !lhsVariableDecl.dims && assignmentOperator) {
-                const rhs = stripTrailingSemicolon(normalizedAssignmentLine.text
-                    .slice(assignmentIndex + assignmentOperator.length)
-                    .trim());
-                if (rhs) {
-                    const analysisCache = getDeclarationAnalysisCache();
-                    const analysisDecls = analysisCache ? [] : ctx.allDecls;
-                    const issue = findArrayMustBeIndexedIssue(rhs, analysisDecls, analysisCache, { escapeChar });
-                    if (issue) {
-                        const rhsStart = lineText.indexOf(rhs, normalizedAssignmentLine.startOffset + assignmentIndex + assignmentOperator.length);
-                        diagnostics.push(
-                            createLiveValidationDiagnostic(
-                                rhsStart >= 0
-                                    ? createOffsetRange(
-                                        document,
-                                        lineStartOffset + rhsStart,
-                                        lineStartOffset + rhsStart + rhs.length,
-                                        docLength
-                                    )
-                                    : createOffsetRange(
-                                        document,
-                                        lineStartOffset,
-                                        lineStartOffset + Math.max(1, lineText.length),
-                                        docLength
-                                    ),
-                                t('validation.arrayMustBeIndexed', { name: issue.name })
-                            )
-                        );
                     }
                 }
             }
