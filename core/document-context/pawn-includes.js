@@ -5,6 +5,7 @@ const {
     getIncludeEntriesSignatureHash: buildIncludeEntriesSignatureHash
 } = require('../utils/signature');
 const { createUtilityCore } = require('../utils');
+const { getEffectiveIncludeFileExtensions } = require('../include-extensions');
 const { createIncludeCacheCodec } = require('./include-cache-codec');
 const {
     attachIncludeDeclIndexesFromSerializedOrBuild,
@@ -61,7 +62,6 @@ function createDocumentIncludeSystem(deps) {
     const directoryFileBaseNameCache = new Map();
     const includeSourceKindCache = new Map();
     const INCLUDE_SOURCE_KIND_CACHE_TTL_MS = 250;
-    const DEFAULT_INCLUDE_FILE_EXTENSIONS = ['.inc', '.inl'];
     const {
         INCLUDE_DECL_COMPACT_SIGNATURE,
         deserializeDependencyStamps,
@@ -361,8 +361,8 @@ function createDocumentIncludeSystem(deps) {
 
     function getConfiguredIncludeFileExtensions() {
         const rawExtensions = getIncludeFileExtensions();
-        const normalized = normalizeExtensionList(rawExtensions, DEFAULT_INCLUDE_FILE_EXTENSIONS, { useFallbackWhenEmpty: true });
-        return normalized.length ? [...new Set(normalized)] : DEFAULT_INCLUDE_FILE_EXTENSIONS;
+        const normalized = normalizeExtensionList(rawExtensions, [], { useFallbackWhenEmpty: false });
+        return getEffectiveIncludeFileExtensions(normalized, { useDefaultCustomWhenEmpty: true });
     }
 
     function getIncludeResolutionExtensions() {

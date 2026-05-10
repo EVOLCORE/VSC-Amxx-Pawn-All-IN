@@ -1,4 +1,5 @@
 const { createUtilityCore } = require('../../core/utils');
+const { getEffectiveIncludeFileExtensions } = require('../../core/include-extensions');
 
 const {
     getDocumentFingerprint: defaultGetDocumentFingerprint,
@@ -27,7 +28,7 @@ function createEditorLifecycleFeature(deps) {
         getExternalIncludeWatchMode,
         normalizeExtensionList = defaultNormalizeExtensionList,
         getPawnFileExtensions = () => ['.sma'],
-        getIncludeFileExtensions = () => ['.inc', '.inl'],
+        getIncludeFileExtensions = () => getEffectiveIncludeFileExtensions(),
         scheduleWarmDocumentContext,
         getLiveValidationMode,
         getLiveValidationTypingDelayMs = () => 700,
@@ -66,7 +67,9 @@ function createEditorLifecycleFeature(deps) {
     const INCLUDE_GRAPH_WATCHER_REFRESH_DELAY_MS = 240;
     const WATCHER_CONTENT_STARTUP_NOISE_GRACE_MS = 1200;
     const getPawnSourceExtensions = () => normalizeExtensionList(getPawnFileExtensions(), ['.sma'], { useFallbackWhenEmpty: true });
-    const getPawnIncludeExtensions = () => normalizeExtensionList(getIncludeFileExtensions(), ['.inc', '.inl'], { useFallbackWhenEmpty: true });
+    const getPawnIncludeExtensions = () => getEffectiveIncludeFileExtensions(
+        normalizeExtensionList(getIncludeFileExtensions(), [], { useFallbackWhenEmpty: false })
+    );
     const getIncludeGraphExtensions = () => {
         const result = [];
         for (const ext of [...getPawnSourceExtensions(), ...getPawnIncludeExtensions()]) {

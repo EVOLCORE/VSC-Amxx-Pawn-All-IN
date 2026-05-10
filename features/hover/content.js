@@ -13,7 +13,6 @@ function createHoverContentFeature(deps) {
         buildColoredVariableAccessLine,
         buildColoredSignatureLine,
         buildEnumMemberLine,
-        getVariableInitializerUsageText,
         getEnumDeclsForVariableDims,
         buildBitmaskParts,
         formatBitmaskValueHex,
@@ -38,17 +37,6 @@ function createHoverContentFeature(deps) {
         md.appendMarkdown(`\n\n### ${title}\nCount: ${countText}`);
         md.appendMarkdown('\n');
         md.appendCodeblock(enumDecl.enumMembers.map(buildEnumMemberLine).join('\n'), 'amxxpawn');
-    }
-
-    function appendVariableInitializerInfoSection(md, data, options = {}) {
-        if (data?.type !== 'variable' || typeof getVariableInitializerUsageText !== 'function') return;
-        const initializerSize = getVariableInitializerUsageText(data, {
-            allDecls: options.allDecls || [],
-            lookup: options.lookup || null
-        });
-        if (!initializerSize) return;
-        const label = t('hover.initializerSize', null, 'Initializer size');
-        md.appendMarkdown(`\n\n### ${t('hover.kind.info')}\n${label}: \`${initializerSize}\``);
     }
 
     function normalizeEnumInfoName(name) {
@@ -127,9 +115,6 @@ function createHoverContentFeature(deps) {
                 allDecls: options.allDecls || [],
                 lookup: options.lookup || null
             }), 'amxxpawn');
-            if (options.includeInitializerInfo) {
-                appendVariableInitializerInfoSection(md, data, options);
-            }
         }
 
         const docsText = data.docs || data.enumDocs || '';
@@ -328,8 +313,14 @@ function createHoverContentFeature(deps) {
         const isCompactMode = hoverContentMode === 'compact';
         const isSignatureOnlyMode = hoverContentMode === 'signature-only';
         const trailingDescriptions = [];
+        const trailingAliases = [];
+        const seenAliases = new Set();
         const hasPrimaryFunctionNameHover = !!hoveredWord && matches.some(match =>
-            isFunctionLikeDecl(match?.data) && match.data.name === hoveredWord
+            isFunctionLikeDecl(match?.data) && (
+                match.data.name === hoveredWord ||
+                match.data.hoverDisplayName === hoveredWord ||
+                match.data.aliasName === hoveredWord
+            )
         );
         const suppressDescriptions = options.suppressDescriptions ??
             (callArgIndex != null && !hasPrimaryFunctionNameHover);
@@ -359,7 +350,6 @@ function createHoverContentFeature(deps) {
             appendHoverMatchSection(md, baseSignatureMatch, currentFilePath, {
                 includeSignature: !showColoredSignature,
                 includeDescription: false,
-                includeInitializerInfo: !isSignatureOnlyMode && !isCompactMode,
                 allDecls,
                 lookup
             });
@@ -414,6 +404,21 @@ function createHoverContentFeature(deps) {
             if (!suppressTrailingDescriptions && docsText) {
                 trailingDescriptions.push(`### ${t('hover.description')}\n${docsText}`);
             }
+
+            if (!isSignatureOnlyMode && data.aliasDefineDecl) {
+                const aliasDefine = data.aliasDefineDecl;
+                const aliasKey = [
+                    data.aliasName || data.hoverDisplayName || aliasDefine.name || '',
+                    data.aliasTargetName || data.name || '',
+                    aliasDefine.filePath || '',
+                    aliasDefine.lineNumber ?? '',
+                    aliasDefine.value || ''
+                ].join('|');
+                if (!seenAliases.has(aliasKey)) {
+                    seenAliases.add(aliasKey);
+                    trailingAliases.push(aliasDefine);
+                }
+            }
         }
 
         if (bitmaskCtx) {
@@ -444,6 +449,22 @@ function createHoverContentFeature(deps) {
         if (trailingDescriptions.length) {
             md.appendMarkdown('\n\n---\n\n');
             md.appendMarkdown(trailingDescriptions.join('\n\n'));
+        }
+
+        if (trailingAliases.length) {
+            md.appendMarkdown('\n\n---\n\n');
+            for (let index = 0; index < trailingAliases.length; index++) {
+                if (index > 0) md.appendMarkdown('\n\n');
+                const aliasDefine = trailingAliases[index];
+                md.appendMarkdown(`### ${t('hover.alias')}`);
+                if (aliasDefine.file && !isSameFilePath(aliasDefine.filePath, currentFilePath)) {
+                    md.appendMarkdown(` \`${aliasDefine.file}\``);
+                }
+                if (aliasDefine.filePath) {
+                    md.appendMarkdown(` ${buildCommandLink(t('hover.goToDefinition'), aliasDefine.filePath, aliasDefine.lineNumber)}`);
+                }
+                md.appendCodeblock(buildSig(aliasDefine, { allDecls, lookup }), 'amxxpawn');
+            }
         }
 
         return md;

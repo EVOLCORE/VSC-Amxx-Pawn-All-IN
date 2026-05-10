@@ -1,4 +1,5 @@
 const { createLineMembership } = require('../../core/utils/line-membership');
+const { getEffectiveIncludeFileExtensions } = require('../../core/include-extensions');
 
 function createSharedContextDiagnostics(deps) {
     const {
@@ -58,14 +59,16 @@ function createSharedContextDiagnostics(deps) {
         if (cacheKey === includeFileExtensionCacheKey && includeFileExtensionCacheValue) {
             return includeFileExtensionCacheValue;
         }
-        const result = normalizeExtensionList(rawExtensions, ['.inc', '.inl'], { useFallbackWhenEmpty: true });
+        const result = getEffectiveIncludeFileExtensions(
+            normalizeExtensionList(rawExtensions, [], { useFallbackWhenEmpty: false })
+        );
         includeFileExtensionCacheKey = cacheKey;
-        includeFileExtensionCacheValue = result.length ? result : ['.inc', '.inl'];
+        includeFileExtensionCacheValue = result;
         includeFileExtensionSignature = includeFileExtensionCacheValue.join('|');
         return includeFileExtensionCacheValue;
     };
     const isFunctionLikeLookupDecl = decl => isFunctionLikeDecl(decl);
-    const isObjectAliasDefineLookupDecl = decl => decl?.type === 'define' && !decl.args;
+    const isObjectAliasDefineLookupDecl = decl => decl?.type === 'define' && !decl.args && !decl.macroStyle;
     const callSignatureDataCacheByAnalysis = new WeakMap();
     const directCallSignatureDataCacheByFunctionList = new WeakMap();
     const functionHeaderLinesByParsedDecls = new WeakMap();
@@ -146,7 +149,7 @@ function createSharedContextDiagnostics(deps) {
         if (!signatureData) {
             const aliasDefine = ctx.lookup.findAnyDeclByName(
                 callName,
-                item => item.type === 'define' && !item.args
+                item => item.type === 'define' && !item.args && !item.macroStyle
             );
             const aliasTargetName = String(aliasDefine?.value || '').trim().match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
             if (aliasTargetName) {

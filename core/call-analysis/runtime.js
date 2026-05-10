@@ -781,6 +781,29 @@ function createCallAnalysisCore(deps) {
         }
 
         const preferInclude = !!options.preferInclude;
+        const visitedAliases = options.aliasVisited instanceof Set ? options.aliasVisited : new Set();
+        const getAliasTargetName = decl => {
+            if (!decl || decl.type !== 'define' || decl.args || decl.macroStyle) return '';
+            const targetName = String(decl.value || '').trim().match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+            return targetName && targetName !== decl.name ? targetName : '';
+        };
+        const createAliasMatch = (match, aliasDefine, aliasName, immediateTargetName) => {
+            if (!match?.data || !aliasDefine || !aliasName) return match;
+            const targetDecl = match.data.aliasTargetDecl || match.data;
+            const targetName = targetDecl.name || match.data.aliasTargetName || immediateTargetName || '';
+            return {
+                ...match,
+                data: {
+                    ...targetDecl,
+                    hoverDisplayName: aliasName,
+                    aliasName,
+                    aliasTargetName: targetName,
+                    aliasImmediateTargetName: immediateTargetName || targetName,
+                    aliasDefineDecl: aliasDefine,
+                    aliasTargetDecl: targetDecl
+                }
+            };
+        };
 
         const localFunc = functions.find(d => d.name === name);
         const includeCandidates = (incDecls || []).filter(d => d.name === name && isFunctionLikeDecl(d));
@@ -806,6 +829,25 @@ function createCallAnalysisCore(deps) {
 
         if (includeFunc) {
             return { label: t('hover.kind.include'), data: includeFunc, nav: true };
+        }
+
+        if (!visitedAliases.has(name)) {
+            visitedAliases.add(name);
+            const aliasDefine = [
+                ...(functions || []),
+                ...(incDecls || [])
+            ].find(d => d.name === name && getAliasTargetName(d));
+            const targetName = getAliasTargetName(aliasDefine);
+            if (targetName && !visitedAliases.has(targetName)) {
+                const targetMatch = getPreferredFunctionHoverMatch(
+                    targetName,
+                    functions,
+                    incDecls,
+                    { ...options, aliasVisited: visitedAliases },
+                    null
+                );
+                if (targetMatch) return createAliasMatch(targetMatch, aliasDefine, name, targetName);
+            }
         }
 
         return null;

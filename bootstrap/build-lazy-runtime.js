@@ -1,5 +1,6 @@
 const { COMPLETION_TRIGGER_CHARACTERS } = require('../features/completion');
 const { isHoverModifierHackMode } = require('../core/hover-modes');
+const { getEffectiveIncludeFileExtensions } = require('../core/include-extensions');
 
 function buildLazyActivationRuntime(deps, options = {}) {
     const {
@@ -38,7 +39,7 @@ function buildLazyActivationRuntime(deps, options = {}) {
         if (!ext) return false;
         return [
             ...getConfiguredExtensions(settingsService?.getPawnFileExtensions),
-            ...getConfiguredExtensions(settingsService?.getIncludeFileExtensions)
+            ...getEffectiveIncludeFileExtensions(getConfiguredExtensions(settingsService?.getIncludeFileExtensions))
         ].includes(ext);
     };
     const shouldDetectPawnByIncludes = () =>

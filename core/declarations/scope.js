@@ -1,3 +1,5 @@
+const { isExplicitDeclarationStartLine } = require('./line-utils');
+
 function computeFunctionRangeMaps(functions = [], depths = [], lineCount = 0, options = {}) {
     const includeHeader = options?.includeHeader === true;
     const maxLine = Math.max(0, Number.isInteger(lineCount) ? lineCount : depths.length) - 1;
@@ -544,6 +546,10 @@ function createDeclarationScopeCore(deps) {
 
         while (joined.trimEnd().endsWith(',') && i < rawLines.length) {
             const cont = sourceLines[i] || '';
+            const trimmedCont = String(cont || '').trim();
+            if (!trimmedCont || trimmedCont.startsWith('#') || isExplicitDeclarationStartLine(trimmedCont)) {
+                break;
+            }
             joined += ' ' + cont.trim();
             i++;
         }

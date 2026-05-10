@@ -1,6 +1,10 @@
 const path = require('path');
 const { createUtilityCore } = require('../core/utils');
 const { normalizeHoverMode } = require('../core/hover-modes');
+const {
+    DEFAULT_CUSTOM_INCLUDE_FILE_EXTENSIONS,
+    getEffectiveIncludeFileExtensions
+} = require('../core/include-extensions');
 
 const {
     normalizeLiveValidationIssueMode
@@ -107,7 +111,7 @@ function createSettingsService(vscode) {
 
     const settings = {
         pawnFileExtensions: ['.sma'],
-        includeFileExtensions: ['.inc', '.inl'],
+        includeFileExtensions: getEffectiveIncludeFileExtensions(DEFAULT_CUSTOM_INCLUDE_FILE_EXTENSIONS),
         detectPawnLanguageByIncludes: true,
         documentContextCacheFileLimit: 0,
         includeDocumentWarmupFileLimit: 6,
@@ -139,13 +143,13 @@ function createSettingsService(vscode) {
         settings.pawnFileExtensions = (Array.isArray(rawPawnFileExtensions) ? rawPawnFileExtensions : ['.sma'])
             .map(normalizeExtensionSettingValue)
             .filter(Boolean);
-        const rawIncludeFileExtensions = config.get('includeFileExtensions', ['.inc', '.inl']);
-        settings.includeFileExtensions = (Array.isArray(rawIncludeFileExtensions) ? rawIncludeFileExtensions : ['.inc', '.inl'])
-            .map(normalizeExtensionSettingValue)
-            .filter(Boolean);
-        if (!settings.includeFileExtensions.length) {
-            settings.includeFileExtensions = ['.inc', '.inl'];
-        }
+        const rawIncludeFileExtensions = config.get('includeFileExtensions', [...DEFAULT_CUSTOM_INCLUDE_FILE_EXTENSIONS]);
+        settings.includeFileExtensions = getEffectiveIncludeFileExtensions(
+            (Array.isArray(rawIncludeFileExtensions) ? rawIncludeFileExtensions : [...DEFAULT_CUSTOM_INCLUDE_FILE_EXTENSIONS])
+                .map(normalizeExtensionSettingValue)
+                .filter(Boolean),
+            { useDefaultCustomWhenEmpty: false }
+        );
         settings.detectPawnLanguageByIncludes = !!config.get('detectPawnLanguageByIncludes', true);
 
         const rawDocumentContextCacheFileLimit = Number(config.get('documentContextCacheFileLimit', 0));

@@ -390,6 +390,7 @@ function createLiveValidationDiagnosticCore(deps) {
         getTypeCompatSeverity,
         hasExpandableObjectLikeDefineTupleArg,
         hasLineBreakInsideStringLiteral,
+        isEscapedQuote,
         isFunctionDefinitionHeaderCall,
         isFunctionLikeDecl,
         isFunctionLikeDefineDecl,

@@ -18,6 +18,7 @@ const {
 } = require('./line-utils');
 const { createDefineDeclarationEventCore } = require('./define-events');
 const { createEnumSyntaxDiagnosticsCore } = require('./enum-syntax');
+const { createMacroExpansionSyntaxCore } = require('../syntax/macro-expander');
 
 function createDeclarationParsingCore(deps) {
     const {
@@ -64,6 +65,12 @@ function createDeclarationParsingCore(deps) {
         findForScopeEndLine,
         findDepthScopeEndLine
     } = deps;
+    const macroExpansionCore = createMacroExpansionSyntaxCore({
+        isEscapedQuote,
+        isIdentifierStartChar: char => isPawnIdentifierStartCode(String(char || '').charCodeAt(0)),
+        isIdentifierContinueChar: char => isPawnIdentifierContinueCode(String(char || '').charCodeAt(0)),
+        splitTopLevel
+    });
     const {
         collectEnumMemberSyntaxIssues,
         parseEnumMemberPrefix,
@@ -164,7 +171,7 @@ function createDeclarationParsingCore(deps) {
         return -1;
     }
 
-    function parseForInit(lineText, rawLines, filePath, fileName, lineNumber, escapeChar = getActiveCtrlChar()) {
+    function parseForInit(lineText, rawLines, filePath, fileName, lineNumber, escapeChar = getActiveCtrlChar(), options = {}) {
         const content = extractParenContent(lineText, escapeChar);
         if (!content) return [];
         let d = 0, inStr = false, strCh = '', semiIdx = -1;
@@ -180,7 +187,11 @@ function createDeclarationParsingCore(deps) {
         if (!initPart) return [];
         return parseDeclLine(
             { text: initPart, startLine: lineNumber },
-            rawLines, filePath, fileName, 'local'
+            rawLines, filePath, fileName, 'local',
+            {
+                ...options,
+                escapeChar
+            }
         ).map(v => ({ ...v, isForVar: true }));
     }
 
@@ -259,9 +270,55 @@ function createDeclarationParsingCore(deps) {
         };
     }
 
-    function collectVariableDeclarationSyntaxIssuesForLine(source, decls = []) {
-        const variableDecls = (decls || []).filter(decl => decl?.type === 'variable');
+    function nextMeaningfulLineStartsDeclarationBoundary(options = {}) {
+        const lineNumber = Number.isInteger(options?.lineNumber) ? options.lineNumber : -1;
+        const sourceLines = Array.isArray(options?.strippedLines)
+            ? options.strippedLines
+            : (Array.isArray(options?.rawLines) ? options.rawLines : null);
+        if (!sourceLines || lineNumber < 0) return false;
+
+        for (let probeLine = lineNumber + 1; probeLine < sourceLines.length; probeLine++) {
+            const trimmed = String(sourceLines[probeLine] || '').trim();
+            if (!trimmed) continue;
+            return trimmed.startsWith('#') || isExplicitDeclarationStartLine(trimmed);
+        }
+        return false;
+    }
+
+    function readUnexpectedTrailingDeclarationComma(source, decls = [], options = {}) {
+        if (!nextMeaningfulLineStartsDeclarationBoundary(options)) return null;
+        const lineNumber = Number.isInteger(options?.lineNumber) ? options.lineNumber : -1;
+        const lineDecls = (decls || []).filter(decl =>
+            decl?.type === 'variable' &&
+            !decl.macroExpandedDeclaration &&
+            (!Number.isInteger(lineNumber) || decl.lineNumber === lineNumber)
+        );
+        if (!lineDecls.length) return null;
+
+        const lineText = String(source || '');
+        const sourceWithoutComment = stripLineComment(lineText, options?.escapeChar || getActiveCtrlChar());
+        const trimmedEnd = String(sourceWithoutComment || '').trimEnd();
+        if (!trimmedEnd.endsWith(',')) return null;
+        return {
+            decl: lineDecls[lineDecls.length - 1],
+            start: Math.max(0, trimmedEnd.length - 1)
+        };
+    }
+
+    function collectVariableDeclarationSyntaxIssuesForLine(source, decls = [], options = {}) {
+        const variableDecls = (decls || [])
+            .filter(decl => decl?.type === 'variable' && !decl.macroExpandedDeclaration);
         const issues = [];
+        const trailingComma = readUnexpectedTrailingDeclarationComma(source, variableDecls, options);
+        if (trailingComma) {
+            issues.push({
+                decl: trailingComma.decl,
+                startIndex: trailingComma.start,
+                length: 1,
+                messageKey: 'validation.unexpectedToken',
+                params: { token: ',' }
+            });
+        }
         for (let index = 0; index < variableDecls.length; index++) {
             const decl = variableDecls[index];
             const sameNameOccurrenceIndex = variableDecls
@@ -525,7 +582,52 @@ function createDeclarationParsingCore(deps) {
         return { decls, nextLine: endLine + 1 };
     }
 
-    function parseDeclLine(logLine, rawLines, filePath, fileName, mode) {
+    function expandDeclarationHeadMacro(line, defineDecls = [], escapeChar = getActiveCtrlChar()) {
+        if (!Array.isArray(defineDecls) || !defineDecls.length) return '';
+        const source = String(line || '').trim();
+        if (!source || source.startsWith('#')) return '';
+
+        let rest = source;
+        let prefixLength = 0;
+        let match;
+        while ((match = rest.match(MOD_RE))) {
+            prefixLength += match[0].length;
+            rest = rest.slice(match[0].length);
+        }
+        const tagMatch = rest.match(TAG_RE);
+        if (tagMatch) {
+            prefixLength += tagMatch[0].length;
+            rest = rest.slice(tagMatch[0].length);
+        }
+
+        const nameMatch = rest.match(NAME_RE);
+        if (!nameMatch) return '';
+        const macroName = nameMatch[1];
+        const defineDecl = defineDecls.find(decl => decl?.name === macroName && isFunctionLikeDefineDecl(decl));
+        if (!defineDecl) return '';
+
+        const nameStart = prefixLength;
+        const nameEnd = nameStart + nameMatch[0].length;
+        let openIndex = nameEnd;
+        while (openIndex < source.length && /\s/.test(source[openIndex] || '')) openIndex++;
+        if (source[openIndex] !== '(') return '';
+        const closeIndex = macroExpansionCore.findMatchingParenIndex(source, openIndex, escapeChar);
+        if (closeIndex < 0) return '';
+
+        const replacement = macroExpansionCore.expandFunctionLikeDefineCall(
+            defineDecl,
+            source.slice(openIndex + 1, closeIndex),
+            {
+                escapeChar,
+                defineDecls,
+                expandActualArgs: false
+            }
+        );
+        if (!replacement || replacement === source.slice(nameStart, closeIndex + 1)) return '';
+        return `${source.slice(0, nameStart)}${replacement}${source.slice(closeIndex + 1)}`.trim();
+    }
+
+    function parseDeclLine(logLine, rawLines, filePath, fileName, mode, options = {}) {
         let line = logLine.text.trim().replace(/;$/, '').trim();
         if (!line) return [];
         const preprocessorDirective = line.startsWith('#')
@@ -534,6 +636,30 @@ function createDeclarationParsingCore(deps) {
         if (line.startsWith('#') && preprocessorDirective?.keyword !== 'define') return [];
 
         const lineNumber = logLine.startLine;
+        if (!preprocessorDirective && !options.skipDeclarationMacroExpansion) {
+            const expandedLine = expandDeclarationHeadMacro(
+                line,
+                options.defineDecls,
+                options.escapeChar || getActiveCtrlChar()
+            );
+            if (expandedLine && expandedLine !== line) {
+                const expandedDecls = parseDeclLine(
+                    { text: expandedLine, startLine: lineNumber },
+                    rawLines,
+                    filePath,
+                    fileName,
+                    mode,
+                    {
+                        ...options,
+                        skipDeclarationMacroExpansion: true
+                    }
+                );
+                for (const decl of expandedDecls) {
+                    if (decl) decl.macroExpandedDeclaration = true;
+                }
+                return expandedDecls;
+            }
+        }
         const mayHaveDocs = mayHaveDocsForLine(rawLines, lineNumber);
         let docsValue = null;
         let docsResolved = false;
@@ -831,7 +957,8 @@ function createDeclarationParsingCore(deps) {
             func,
             bodyStartLine,
             bodyEndLine,
-            base.lineCtrlChars
+            base.lineCtrlChars,
+            base.defineDirectiveEvents
         );
         base.localDeclsByFunction.set(func, locals);
         return locals;
@@ -842,11 +969,32 @@ function createDeclarationParsingCore(deps) {
         return /^(?:new|static|const|enum)\b/.test(trimmed);
     }
 
-    function appendLocalsThroughCursor(locals, strippedLines, rawLines, depths, filePath, fileName, bodyFunc, fromLine, cursorLine, lineCtrlChars = []) {
+    function appendLocalsThroughCursor(locals, strippedLines, rawLines, depths, filePath, fileName, bodyFunc, fromLine, cursorLine, lineCtrlChars = [], defineDirectiveEvents = []) {
         if (!bodyFunc || fromLine > cursorLine) return;
         const bodyStartLine = (bodyFunc.headerEndLine ?? bodyFunc.startLine) + 1;
         const parseFromLine = Math.max(bodyStartLine, fromLine);
         if (parseFromLine > cursorLine) return;
+
+        let activeDefineDeclsByLine = null;
+        let activeDefineDeclsEventIndex = 0;
+        let activeDefineDeclsAdvancedThrough = -1;
+        const getActiveDefineDeclsBeforeLine = lineNumber => {
+            if (!Array.isArray(defineDirectiveEvents) || !defineDirectiveEvents.length) return [];
+            if (!activeDefineDeclsByLine) activeDefineDeclsByLine = new Map();
+            const targetLine = Math.max(-1, (Number.isInteger(lineNumber) ? lineNumber : -1) - 1);
+            if (targetLine > activeDefineDeclsAdvancedThrough) {
+                const advanced = advanceActiveDefineDecls(
+                    activeDefineDeclsByLine,
+                    defineDirectiveEvents,
+                    activeDefineDeclsAdvancedThrough + 1,
+                    targetLine,
+                    activeDefineDeclsEventIndex
+                );
+                activeDefineDeclsEventIndex = advanced.nextEventIndex;
+                activeDefineDeclsAdvancedThrough = targetLine;
+            }
+            return [...activeDefineDeclsByLine.values()];
+        };
 
         const singleStatementDecls = parseSingleStatementBodyDecls(
             strippedLines,
@@ -893,16 +1041,23 @@ function createDeclarationParsingCore(deps) {
                         lineText,
                         rawLines,
                         filePath,
-                    fileName,
-                    startK,
-                    lineCtrlChars[startK] || getActiveCtrlChar()
-                );
-            } else {
-                declsOnLine = parseDeclLine(
-                    { text: lineText, startLine: startK },
-                    rawLines, filePath, fileName, 'local'
-                );
-            }
+                        fileName,
+                        startK,
+                        lineCtrlChars[startK] || getActiveCtrlChar(),
+                        {
+                            defineDecls: getActiveDefineDeclsBeforeLine(startK)
+                        }
+                    );
+                } else {
+                    declsOnLine = parseDeclLine(
+                        { text: lineText, startLine: startK },
+                        rawLines, filePath, fileName, 'local',
+                        {
+                            defineDecls: getActiveDefineDeclsBeforeLine(startK),
+                            escapeChar: lineCtrlChars[startK] || getActiveCtrlChar()
+                        }
+                    );
+                }
             }
             for (const d of declsOnLine) {
                 const declDepth = singleStatementDecl
@@ -1009,6 +1164,7 @@ function createDeclarationParsingCore(deps) {
             const trimmed = text.trim();
             if (!trimmed) continue;
             if (trimmed.startsWith('{')) return null;
+            if (trimmed.startsWith('#') || isExplicitDeclarationStartLine(trimmed)) return null;
             return line;
         }
 
@@ -1223,7 +1379,17 @@ function createDeclarationParsingCore(deps) {
                         const startI = i;
                         const { text: joined, nextLine } = collectDeclarationText(rawLines, i, lineCtrlChars, strippedLines);
                         i = nextLine;
-                        const parsedGlobalDecls = parseDeclLine({ text: joined, startLine: startI }, rawLines, filePath, fileName, 'global');
+                        const parsedGlobalDecls = parseDeclLine(
+                            { text: joined, startLine: startI },
+                            rawLines,
+                            filePath,
+                            fileName,
+                            'global',
+                            {
+                                defineDecls: [...topLevelActiveDefines.values()],
+                                escapeChar: lineCtrlChars[startI] || getActiveCtrlChar()
+                            }
+                        );
                         if (pendingDeprecatedMessage != null && applyDeprecatedPragmaToNextDecl(parsedGlobalDecls, pendingDeprecatedMessage)) {
                             pendingDeprecatedMessage = null;
                         }
@@ -1331,7 +1497,8 @@ function createDeclarationParsingCore(deps) {
                             bodyFunc,
                             previousSequentialState.scannedToLine + 1,
                             cursorLine,
-                            lineCtrlChars
+                            lineCtrlChars,
+                            defineDirectiveEvents
                         );
                     }
                     if (nextDefineEvent && nextDefineEvent.lineNumber <= cursorLine) {
@@ -1384,7 +1551,8 @@ function createDeclarationParsingCore(deps) {
                         bodyFunc,
                         bodyStartLine,
                         cursorLine,
-                        lineCtrlChars
+                        lineCtrlChars,
+                        defineDirectiveEvents
                     );
                 }
 

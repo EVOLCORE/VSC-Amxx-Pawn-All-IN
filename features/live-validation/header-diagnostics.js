@@ -213,9 +213,13 @@ function createHeaderDiagnostics(deps) {
                 ctx.lookup
             )?.data || null)
             : null;
+        const shouldSkipCompilerLikePublicForwardSignatureCheck = parentDecl =>
+            getCallbackSignatureMode() === 'compiler-like' &&
+            functionDecl?.type === 'public' &&
+            parentDecl?.type === 'forward';
         const shouldValidateIncludeTwin =
             !!includeDecl &&
-            !(getCallbackSignatureMode() === 'compiler-like' && functionDecl?.type === 'public');
+            !shouldSkipCompilerLikePublicForwardSignatureCheck(includeDecl);
         if (shouldValidateIncludeTwin) {
             if (!compareFunctionReturnByPrototype(includeDecl, functionDecl, ctx, analysisCache)) {
                 buildHeaderMismatchDiagnostic(t('validation.functionHeadingDiffersFromPrototype'));
@@ -257,7 +261,10 @@ function createHeaderDiagnostics(deps) {
                 previousPrototype.type !== 'define';
             const isForwardLike = previousPrototype.type === 'forward' || previousPrototype.type === 'native';
             if (isForwardLike) {
-                if (!compareFunctionDeclarationsByPrototype(previousPrototype, functionDecl, ctx, analysisCache)) {
+                if (
+                    !shouldSkipCompilerLikePublicForwardSignatureCheck(previousPrototype) &&
+                    !compareFunctionDeclarationsByPrototype(previousPrototype, functionDecl, ctx, analysisCache)
+                ) {
                     buildHeaderMismatchDiagnostic(t('validation.functionHeadingDiffersFromPrototype'));
                 }
             } else if (

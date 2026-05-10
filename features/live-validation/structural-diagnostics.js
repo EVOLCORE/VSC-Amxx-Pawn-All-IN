@@ -380,6 +380,55 @@ function createStructuralDiagnostics(deps) {
             }
             return null;
         };
+        const functionHeaderTextEndsWithSemicolon = func => {
+            const startLine = func?.startLine ?? func?.lineNumber ?? -1;
+            const endLine = func?.headerEndLine ?? startLine;
+            if (startLine < 0 || endLine < startLine) return false;
+            let text = '';
+            for (let line = startLine; line <= endLine && line < strippedLines.length; line++) {
+                text += `${line > startLine ? ' ' : ''}${String(strippedLines[line] || '').trim()}`;
+            }
+            return /;\s*$/.test(text);
+        };
+        const getFunctionHeaderText = func => {
+            const startLine = func?.startLine ?? func?.lineNumber ?? -1;
+            const endLine = func?.headerEndLine ?? startLine;
+            if (startLine < 0 || endLine < startLine) return '';
+            let text = '';
+            for (let line = startLine; line <= endLine && line < strippedLines.length; line++) {
+                text += `${line > startLine ? ' ' : ''}${String(strippedLines[line] || '').trim()}`;
+            }
+            return text;
+        };
+        const functionHeaderHasInlineBody = func => {
+            const text = getFunctionHeaderText(func);
+            const name = String(func?.name || '').trim();
+            if (!text || !name) return false;
+            const nameIndex = text.indexOf(name);
+            if (nameIndex < 0) return false;
+            const openIndex = text.indexOf('(', nameIndex + name.length);
+            if (openIndex < 0) return false;
+            const closeIndex = findBalancedGroupEnd(text, openIndex, '(', ')');
+            if (closeIndex < openIndex) return false;
+            return text.slice(closeIndex + 1).includes('{');
+        };
+        const collectMissingFunctionBodyDiagnostics = () => {
+            for (const func of rootCtx.parsedDecls.functions || []) {
+                const startLine = func?.startLine ?? func?.lineNumber ?? -1;
+                if (!shouldIncludeTargetLine(targetLines, startLine)) continue;
+                if (func?.type === 'native' || func?.type === 'forward' || func?.type === 'define') continue;
+                if (functionHeaderTextEndsWithSemicolon(func)) continue;
+                if (functionHeaderHasInlineBody(func)) continue;
+                if (Number.isInteger(func?.singleStatementBodyLine)) continue;
+                if (getFunctionBodyRangeForFunction(func)) continue;
+                diagnostics.push(
+                    createLiveValidationDiagnostic(
+                        createFunctionNameRange(func),
+                        t('validation.functionBodyExpected')
+                    )
+                );
+            }
+        };
         const lineStartsWithKeyword = (trimmedLine, keyword) =>
             trimmedLine === keyword || trimmedLine.startsWith(`${keyword} `) || trimmedLine.startsWith(`${keyword}(`);
         const getStatementTerminalKindFromText = text => {
@@ -498,6 +547,7 @@ function createStructuralDiagnostics(deps) {
             );
             return terminalKind === 'return' || terminalKind === 'goto';
         };
+        collectMissingFunctionBodyDiagnostics();
         const collectUnreachableCodeDiagnostics = () => {
             const result = [];
             const terminalLineByFunctionDepth = new Map();

@@ -3,11 +3,13 @@
 AMXX Pawn All-In is a Visual Studio Code extension for AMX Mod X / Pawn development.
 It brings syntax highlighting, semantic hovers, completion, live diagnostics, include-aware analysis, and compiler integration into one focused workflow for AMXX Pawn projects.
 
+Recommended AMX Mod X version: 1.9.0 or newer.
+
 The extension is built around a shared semantic core, so hover, completion, and diagnostics use the same parsing and type-analysis rules instead of separate one-off checks.
 
 ## Features
 
-- AMXX Pawn syntax highlighting for `.sma` files and `.inc` include files.
+- AMXX Pawn syntax highlighting for source files and compiler-recognized include files, with configurable file extensions.
 - Automatic Pawn language detection for custom file extensions when a file includes Pawn headers.
 - Include-aware declarations, symbols, functions, enums, stocks, natives, forwards, macros, and project/global include paths.
 - Fast completion for functions, variables, arguments, enum fields, compiler symbols, and include declarations.
@@ -42,9 +44,25 @@ The extension is built around a shared semantic core, so hover, completion, and 
 
 ## Installation
 
+### Install from Visual Studio Marketplace
+
+The recommended installation path is the Visual Studio Marketplace:
+
+https://marketplace.visualstudio.com/items?itemName=Faktor.amxx-pawn-all-in
+
+You can also install it from inside VS Code:
+
+1. Open the Extensions view.
+2. Search for `AMXX Pawn All-In`.
+3. Click `Install`.
+
+Marketplace installs receive normal VS Code extension updates.
+
 ### Install from a VSIX release
 
-1. Download the latest `.vsix` file from the repository Releases page.
+Use this path for manual/offline installs or test builds:
+
+1. Download the latest `.vsix` file from the repository Releases page: https://github.com/droads/VSC-Amxx-Pawn-All-IN/releases
 2. Open Visual Studio Code.
 3. Open the Extensions view.
 4. Click the `...` menu in the top-right corner.
@@ -61,7 +79,7 @@ code --install-extension amxx-pawn-all-in-*.vsix
 ## Quick Start
 
 1. Open an AMXX project folder in VS Code.
-2. Open a `.sma` or `.inc` file.
+2. Open a `.sma`, `.inc`, `.p`, `.i`, `.pawn`, `.inl`, or configured include file.
 3. Configure include paths if your project uses custom include folders:
 
 ```json
@@ -97,7 +115,7 @@ Then use the `AMXX Pawn All-In: Compile Current File` command or the editor titl
   Source file extensions. Defaults to `[".sma"]`.
 
 - `amxxPawnAllIn.includeFileExtensions`
-  Include file extensions used for Pawn include resolution and language activation. You can add project-specific suffixes here when needed.
+  Extra include file extensions used for Pawn include resolution and language activation. Compiler-style include suffixes are always enabled and cannot be removed: `.inc`, `.p`, `.i`, `.pawn`. The default extra suffix is `.inl`.
 
 - `amxxPawnAllIn.detectPawnLanguageByIncludes`
   Detect Pawn files by `#include` usage even when the file extension is custom.
@@ -167,8 +185,11 @@ Primary file types:
 
 - `.sma`
 - `.inc`
+- `.p`
+- `.i`
+- `.pawn`
 
-Custom source and include extensions can be configured in VS Code settings.
+When an include is written without an extension, for example `#include <test>`, AMXX Pawn All-In follows the compiler-style include suffix list and checks `.inc`, `.p`, `.i`, and `.pawn` before any extra configured suffixes. `.inl` is only a default extra include suffix and can be removed from `amxxPawnAllIn.includeFileExtensions`. Custom source and extra include extensions can be configured in VS Code settings.
 
 ## Repository Layout
 

@@ -14,6 +14,7 @@ function createDeclLookupCore(deps) {
         BUILTIN_DECLS = []
     } = deps;
     const variableNameBucketCache = new WeakMap();
+    const ALIAS_TARGET_RE = /^([A-Za-z_@]\w*)$/;
 
     const getDeclNameBuckets = decls => {
         if (!Array.isArray(decls)) return new Map();
@@ -53,6 +54,34 @@ function createDeclLookupCore(deps) {
         const matches = getDeclNameBuckets(decls).get(name) || [];
         return predicate ? matches.filter(predicate) : [...matches];
     };
+
+    function getObjectAliasTargetName(decl) {
+        if (!decl || decl.type !== 'define' || decl.args || decl.macroStyle) return '';
+        const targetName = String(decl.value || '').trim().match(ALIAS_TARGET_RE)?.[1] || '';
+        return targetName && targetName !== decl.name ? targetName : '';
+    }
+
+    function isObjectFunctionAliasDefine(decl) {
+        return !!getObjectAliasTargetName(decl);
+    }
+
+    function createFunctionAliasMatch(match, aliasDefine, aliasName, immediateTargetName) {
+        if (!match?.data || !aliasDefine || !aliasName) return match;
+        const targetDecl = match.data.aliasTargetDecl || match.data;
+        const targetName = targetDecl.name || match.data.aliasTargetName || immediateTargetName || '';
+        return {
+            ...match,
+            data: {
+                ...targetDecl,
+                hoverDisplayName: aliasName,
+                aliasName,
+                aliasTargetName: targetName,
+                aliasImmediateTargetName: immediateTargetName || targetName,
+                aliasDefineDecl: aliasDefine,
+                aliasTargetDecl: targetDecl
+            }
+        };
+    }
 
     const getVariableNameBuckets = decls => {
         if (!Array.isArray(decls)) return new Map();
@@ -105,14 +134,15 @@ function createDeclLookupCore(deps) {
         const getGlobalVariables = () => (globalVariables ||= getVariableNameBuckets(globals));
         const getIncludeVariables = () => (includeVariables ||= getVariableNameBuckets(incDecls));
 
-        const getPreferredFunctionMatch = (name, options = {}) => {
-            if (!name) return null;
-            const preferInclude = !!options.preferInclude;
-            const cacheKey = `${preferInclude ? '1' : '0'}::${name}`;
-            if (preferredFunctionMatchCache.has(cacheKey)) {
-                return preferredFunctionMatchCache.get(cacheKey);
-            }
+        const findObjectFunctionAliasDefine = name =>
+            findDeclByNameCached(funcArgs, name, isObjectFunctionAliasDefine) ||
+            findDeclByNameCached(locals, name, isObjectFunctionAliasDefine) ||
+            findDeclByNameCached(globals, name, isObjectFunctionAliasDefine) ||
+            findDeclByNameCached(functions, name, isObjectFunctionAliasDefine) ||
+            findDeclByNameCached(incDecls, name, isObjectFunctionAliasDefine) ||
+            findDeclByNameCached(BUILTIN_DECLS, name, isObjectFunctionAliasDefine);
 
+        const getDirectPreferredFunctionMatch = (name, preferInclude = false) => {
             const localFunc = findDeclByNameCached(functions, name);
             const includeCandidates = filterDeclsByNameCached(incDecls, name, isFunctionLikeDecl);
             const includeFunc = includeCandidates.reduce(
@@ -129,6 +159,35 @@ function createDeclLookupCore(deps) {
                 if (localFunc) match = { label: t('hover.kind.function'), data: localFunc, nav: true };
                 else if (includeFunc) match = { label: t('hover.kind.include'), data: includeFunc, nav: true };
             }
+            return match;
+        };
+
+        const resolveFunctionAliasMatch = (name, options = {}, visited = new Set()) => {
+            if (!name || visited.has(name)) return null;
+            visited.add(name);
+            const aliasDefine = findObjectFunctionAliasDefine(name);
+            const targetName = getObjectAliasTargetName(aliasDefine);
+            if (!targetName || visited.has(targetName)) return null;
+            const preferInclude = !!options.preferInclude;
+            const targetMatch =
+                getDirectPreferredFunctionMatch(targetName, preferInclude) ||
+                resolveFunctionAliasMatch(targetName, options, visited);
+            return targetMatch
+                ? createFunctionAliasMatch(targetMatch, aliasDefine, name, targetName)
+                : null;
+        };
+
+        const getPreferredFunctionMatch = (name, options = {}) => {
+            if (!name) return null;
+            const preferInclude = !!options.preferInclude;
+            const cacheKey = `${preferInclude ? '1' : '0'}::${name}`;
+            if (preferredFunctionMatchCache.has(cacheKey)) {
+                return preferredFunctionMatchCache.get(cacheKey);
+            }
+
+            const match =
+                getDirectPreferredFunctionMatch(name, preferInclude) ||
+                resolveFunctionAliasMatch(name, options);
 
             preferredFunctionMatchCache.set(cacheKey, match);
             return match;
@@ -181,26 +240,31 @@ function createDeclLookupCore(deps) {
     }
 
     function getDeclMatchKey(data) {
+        const targetData = data?.aliasTargetDecl || data;
         return [
-            data?.filePath || '',
-            data?.lineNumber ?? '',
-            data?.name || '',
-            data?.type || '',
-            data?.args || '',
-            data?.value || ''
+            targetData?.filePath || '',
+            targetData?.lineNumber ?? '',
+            targetData?.name || '',
+            targetData?.type || '',
+            targetData?.args || '',
+            targetData?.value || '',
+            data?.aliasName || data?.hoverDisplayName || '',
+            data?.aliasDefineDecl?.filePath || '',
+            data?.aliasDefineDecl?.lineNumber ?? ''
         ].join('|');
     }
 
     function getDeclMatchLabel(data, argSet, localSet, globalSet, functionSet) {
-        if (argSet.has(data)) return t('hover.kind.argument');
-        if (localSet.has(data)) return data.type === 'enum' ? t('hover.kind.localEnum') : t('hover.kind.local');
-        if (globalSet.has(data)) {
-            if (data.type === 'enum-item') return t('hover.enumField');
-            if (data.type === 'enum') return t('hover.kind.enum');
+        const targetData = data?.aliasTargetDecl || data;
+        if (argSet.has(targetData)) return t('hover.kind.argument');
+        if (localSet.has(targetData)) return targetData.type === 'enum' ? t('hover.kind.localEnum') : t('hover.kind.local');
+        if (globalSet.has(targetData)) {
+            if (targetData.type === 'enum-item') return t('hover.enumField');
+            if (targetData.type === 'enum') return t('hover.kind.enum');
             return t('hover.kind.global');
         }
-        if (functionSet.has(data)) return t('hover.kind.function');
-        if (data.type === 'builtin') return t('hover.kind.compiler');
+        if (functionSet.has(targetData)) return t('hover.kind.function');
+        if (targetData.type === 'builtin') return t('hover.kind.compiler');
         return t('hover.kind.include');
     }
 
@@ -210,7 +274,8 @@ function createDeclLookupCore(deps) {
 
         for (const data of rawMatches) {
             const label = getDeclMatchLabel(data, argSet, localSet, globalSet, functionSet);
-            const nav = !argSet.has(data);
+            const navTarget = data?.aliasTargetDecl || data;
+            const nav = !argSet.has(navTarget);
             const key = `${getDeclMatchKey(data)}|${label}`;
             if (seen.has(key)) continue;
             seen.add(key);
@@ -227,10 +292,11 @@ function createDeclLookupCore(deps) {
         pushIf(lookup?.findLocal(word) ?? locals.find(d => d.name === word));
         pushIf(lookup?.findGlobal(word) ?? globals.find(d => d.name === word));
         pushIf(lookup?.findFunction(word) ?? functions.find(d => d.name === word));
-        const preferredIncludeFunc = (
-            lookup?.getPreferredFunctionMatch(word)?.data ||
-            null
-        );
+        const preferredFunctionMatch = lookup?.getPreferredFunctionMatch(word) || null;
+        const preferredIncludeFunc = preferredFunctionMatch?.data || null;
+        if (preferredIncludeFunc?.aliasDefineDecl) {
+            rawMatches.push(preferredIncludeFunc);
+        }
         rawMatches.push(...(lookup?.filterIncludes(word) ?? incDecls.filter(d =>
             d.name === word &&
             (!isFunctionLikeDecl(d) || d === preferredIncludeFunc)

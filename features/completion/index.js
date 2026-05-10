@@ -73,6 +73,8 @@ function createCompletionFeature(deps) {
         item.filterText = name;
         item.sortText = `${sortPrefix}_${name}`;
         item.detail = getCompletionDetailLabel(data, currentFilePath);
+        item.label = { label: name, description: item.detail };
+        item.labelDetails = { description: item.detail };
         if (replaceRange) item.range = replaceRange;
 
         item.insertText = isFunc

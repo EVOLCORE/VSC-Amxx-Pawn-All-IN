@@ -20,7 +20,7 @@ function createHoverSignatureFeature(deps) {
     const SIG_ERROR_CLOSE = '\u200C';
     const SIG_ACTIVE_OPEN = '\u200D';
     const SIG_ACTIVE_CLOSE = '\u2060';
-    const SIGNATURE_WRAP_WIDTH = 96;
+    const SIGNATURE_WRAP_WIDTH = 80;
     const SIGNATURE_CONTINUATION_INDENT = '    ';
 
     function getHoverAnalysisCache(allDecls, lookup, options = {}) {
@@ -150,7 +150,8 @@ function createHoverSignatureFeature(deps) {
         const macroCurrentArgIndex = isMacroDefine && params.length === 1 && currentArgIndex != null
             ? 0
             : currentArgIndex;
-        const header = `${pre}${tag}${data.name}(`;
+        const displayName = data.hoverDisplayName || data.name;
+        const header = `${pre}${tag}${displayName}(`;
         const renderedParams = params.map(p => p.trim());
         const spans = [];
         const issuePlan = validateArgs

@@ -79,6 +79,11 @@ function createRenderCore(deps) {
         return shape.length ? `[${shape.join('][')}]` : '';
     }
 
+    function getVariableInitializerUsageSizeText(data, options = {}) {
+        const shape = getVariableInitializerUsageShape(data, options);
+        return shape.length ? `initializer_size(${shape.join(', ')})` : '';
+    }
+
     function buildSig(data, options = {}) {
         const tag = data.typeTag ? `${data.typeTag}:` : '';
         const mods = (data.modifiers || []).join(' ');
@@ -110,7 +115,12 @@ function createRenderCore(deps) {
         }
         if (data.type === 'variable') {
             const dims = data.hoverDisplayName ? '' : (data.dims || '');
-            return `${pre}${tag}${displayName}${dims}${getVariableInitializerText(data, options)}`;
+            const suffixParts = [
+                getVariableInitializerText(data, options).trim(),
+                getVariableInitializerUsageSizeText(data, options)
+            ].filter(Boolean);
+            const suffix = suffixParts.length ? ` ${suffixParts.join(' ')}` : '';
+            return `${pre}${tag}${displayName}${dims}${suffix}`;
         }
         return `${pre}${tag}${leadingDims}${displayName}(${data.args || ''})`;
     }
