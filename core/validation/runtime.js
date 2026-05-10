@@ -105,7 +105,8 @@ function createValidationCore(deps) {
     }
     const normalizeTagName = value => String(value || '').replace(/^_?\s*:\s*/, '').trim();
     const isAnyTagName = value => normalizeTagName(value).toLowerCase() === 'any';
-    const isFixedPawnTagName = value => /^[A-Z]/.test(normalizeTagName(value));
+    const FIXED_PAWN_TAGS = new Set(['float', 'bool', 'string']);
+    const isFixedPawnTagName = value => FIXED_PAWN_TAGS.has(normalizeTagName(value).toLowerCase());
 
     function isIdentifierStartChar(char = '') {
         return isPawnIdentifierStartChar(char);

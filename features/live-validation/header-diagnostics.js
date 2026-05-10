@@ -226,8 +226,12 @@ function createHeaderDiagnostics(deps) {
             }
             const includeArgs = splitTopLevel(includeDecl.args || '');
 
-            const maxArgs = Math.max(includeArgs.length, localArgs.length);
-            for (let index = 0; index < maxArgs; index++) {
+            const isPublicForwardCallback =
+                functionDecl?.type === 'public' && includeDecl?.type === 'forward';
+            const argLimit = isPublicForwardCallback
+                ? Math.min(includeArgs.length, localArgs.length)
+                : Math.max(includeArgs.length, localArgs.length);
+            for (let index = 0; index < argLimit; index++) {
                 const expectedParam = includeArgs[index];
                 const actualParam = localArgs[index];
                 let message = '';
