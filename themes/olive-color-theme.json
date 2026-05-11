@@ -43,30 +43,39 @@
     },
     {
       "scope": [
-        "keyword.other.todo.comment.pawn"
+        "comment.keyword.todo.pawn"
       ],
       "settings": {
-        "foreground": "#FF1F86",
+        "foreground": "#FF6DA7",
         "fontStyle": "bold italic"
       }
     },
     {
       "scope": [
-        "storage.type.annotation.comment.pawn",
-        "variable.parameter.comment.pawn"
+        "comment.annotation.tag.pawn",
+        "comment.annotation.parameter.pawn"
       ],
       "settings": {
-        "foreground": "#66D9EF",
+        "foreground": "#8A9F9B",
         "fontStyle": "italic"
       }
     },
     {
       "scope": [
-        "string.quoted.double.comment.pawn",
-        "string.quoted.single.comment.pawn"
+        "comment.string.quoted.double.pawn",
+        "comment.string.quoted.single.pawn"
       ],
       "settings": {
-        "foreground": "#E6DB74",
+        "foreground": "#8E9670",
+        "fontStyle": "italic"
+      }
+    },
+    {
+      "scope": [
+        "comment.constant.numeric.pawn"
+      ],
+      "settings": {
+        "foreground": "#9382AA",
         "fontStyle": "italic"
       }
     },
@@ -204,6 +213,14 @@
     },
     {
       "scope": [
+        "constant.other.enum.member.pawn"
+      ],
+      "settings": {
+        "foreground": "#E7E7D6"
+      }
+    },
+    {
+      "scope": [
         "constant.language",
         "constant.numeric",
         "constant.numeric.integer.pawn",
@@ -211,8 +228,7 @@
         "constant.numeric.float.pawn",
         "constant.numeric.hex.pawn",
         "constant.numeric.symbol.pawn",
-        "constant.numeric.preprocessor.pawn",
-        "constant.numeric.comment.pawn"
+        "constant.numeric.preprocessor.pawn"
       ],
       "settings": {
         "foreground": "#AE81FF"

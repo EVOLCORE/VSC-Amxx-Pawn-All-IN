@@ -20,6 +20,7 @@ const {
 const { splitPawnLines } = require('../syntax/lines');
 const { createArrayShapeCore } = require('../array-shape');
 const { createArrayShapeDiagnosticsCore } = require('./array-shape-diagnostics');
+const { getEnumMemberTagNameForExpression } = require('./enum-member-tag-compat');
 const { createNumericDimensionValidationCore } = require('./numeric-dimensions');
 const { createParamMetaCore } = require('./param-meta');
 const { createTypeCompatCore } = require('./type-compat');
@@ -981,14 +982,6 @@ function createValidationCore(deps) {
         if (s.startsWith("'")) return finish({ tag: '', dims: '' });
         if (/^-?(\d+\.\d*|\.\d+)([eE][+-]?\d+)?$/.test(s)) return finish({ tag: 'Float', dims: '' });
         if (s === 'true' || s === 'false') return finish({ tag: 'bool', dims: '' });
-        if (
-            s === 'cellmin' ||
-            s === 'cellmax' ||
-            (!/^[A-Za-z_@]\w*$/.test(s) && evaluatePawnNumericExpr(s, allDecls, new Set(), analysisCache) != null)
-        ) {
-            return finish({ tag: '', dims: '' });
-        }
-
         const tagCastExpr = rootTagCast || semanticSyntaxCore.getRootTagCastExpression(s, { escapeChar: getActiveCtrlChar() });
         if (tagCastExpr && !FORBIDDEN.has(tagCastExpr.tag)) {
             const underlying = inferArgType(tagCastExpr.expression, allDecls, analysisCache);
@@ -996,6 +989,14 @@ function createValidationCore(deps) {
                 ...underlying,
                 tag: tagCastExpr.tag
             });
+        }
+
+        if (
+            s === 'cellmin' ||
+            s === 'cellmax' ||
+            (!/^[A-Za-z_@]\w*$/.test(s) && evaluatePawnNumericExpr(s, allDecls, new Set(), analysisCache) != null)
+        ) {
+            return finish({ tag: '', dims: '' });
         }
 
         const callExpr = parseWholeCallExpression(s);
@@ -1563,6 +1564,14 @@ function createValidationCore(deps) {
 
         const expectedTag = expectedTargetTag;
         const actualTag = rhsType?.tag || '';
+        const enumMemberTagName = getEnumMemberTagNameForExpression(
+            rhs,
+            (name, predicate) => findAnyDeclByNameFromSources(decls, name, predicate, analysisCache)
+        );
+        if (enumMemberTagName) {
+            const enumTagResult = explainPawnTagCompat(expectedTag, enumMemberTagName, decls, analysisCache);
+            if (enumTagResult.status === 'ok') return null;
+        }
         const result = explainPawnTagCompat(expectedTag, actualTag, decls, analysisCache);
         if (result.status !== 'warn' || !result.reason) return null;
 

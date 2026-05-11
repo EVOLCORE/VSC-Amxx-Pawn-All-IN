@@ -1,5 +1,6 @@
 const { computeFunctionRangeMaps: defaultComputeFunctionRangeMaps } = require('../../core/declarations/scope');
 const { isHoverModifierHackMode } = require('../../core/hover-modes');
+const { shouldSchedulePersistentHoverForSelectionEvent } = require('../../core/persistent-hover/selection-events');
 
 // Persistent hover is a feature-level lifecycle wrapper around the built-in VS Code
 // hover widget. It is separate from hover content generation because it manages
@@ -129,7 +130,9 @@ function createPersistentHoverFeature(deps) {
         if (isPersistentHoverSuppressedByHoverMode()) return;
         if (isPersistentHoverTypingSuspended()) return;
         if (!isPersistentHoverStateStillCurrent(state)) return;
+        if (state.hoverCommandSucceeded) return;
         vscode.commands.executeCommand('editor.action.showHover').then(() => {
+            state.hoverCommandSucceeded = true;
             if (!isPersistentHoverStateStillCurrent(state)) return;
             setTimeout(() => {
                 if (!isPersistentHoverStateStillCurrent(state)) return;
@@ -145,6 +148,7 @@ function createPersistentHoverFeature(deps) {
         if (!isPersistentHoverEnabled()) return null;
         if (isPersistentHoverSuppressedByHoverMode()) return null;
         if (isPersistentHoverTypingSuspended()) return null;
+        if (editor !== vscode.window.activeTextEditor) return null;
         if (!editor || !isPawnDocument(editor.document) || !editor.selection.isEmpty) return null;
 
         const position = editor.selection.active;
@@ -169,7 +173,8 @@ function createPersistentHoverFeature(deps) {
             document: editor.document,
             position,
             ctx,
-            persistentTarget
+            persistentTarget,
+            hoverCommandSucceeded: false
         };
 
         if (getEffectivePersistentHoverMode() === 'error-context' && !hasPersistentHoverErrorContext(state)) {
@@ -185,14 +190,14 @@ function createPersistentHoverFeature(deps) {
         if (isPersistentHoverSuppressedByHoverMode()) return;
         if (isPersistentHoverTypingSuspended()) return;
 
-        const state = getPersistentHoverState(editor);
-        if (!state) return;
-
         persistentHoverShowTimer = setTimeout(() => {
             persistentHoverShowTimer = null;
+            const state = getPersistentHoverState(editor);
+            if (!state) return;
             showPersistentHover(state);
             persistentHoverRetryTimers = retryDelays.map(retryDelay =>
                 setTimeout(() => {
+                    if (state.hoverCommandSucceeded) return;
                     if (!isPersistentHoverStateStillCurrent(state)) return;
                     showPersistentHover(state);
                 }, retryDelay)
@@ -219,6 +224,11 @@ function createPersistentHoverFeature(deps) {
         context.subscriptions.push(
             vscode.window.onDidChangeTextEditorSelection(event => {
                 if (event.textEditor !== vscode.window.activeTextEditor) return;
+                if (!shouldSchedulePersistentHoverForSelectionEvent(vscode, event)) {
+                    clearPersistentHoverTimers();
+                    closePersistentHover();
+                    return;
+                }
                 schedulePersistentHover(event.textEditor, 10, [120, 260]);
             }),
             vscode.window.onDidChangeActiveTextEditor(editor => {

@@ -196,6 +196,19 @@ function createNumericDimensionValidationCore(deps) {
                     seen.delete(name);
                     return nested == null ? 'NaN' : String(nested);
                 }
+                if (
+                    decl.type === 'variable' &&
+                    !decl.dims &&
+                    Array.isArray(decl.modifiers) &&
+                    decl.modifiers.includes('const')
+                ) {
+                    const constValue = String(decl.value || '').trim();
+                    if (!constValue || seen.has(name)) return 'NaN';
+                    seen.add(name);
+                    const nested = evaluatePawnNumericExpr(constValue, decls, seen, analysisCache);
+                    seen.delete(name);
+                    return nested == null ? 'NaN' : String(nested);
+                }
 
                 return full;
             });

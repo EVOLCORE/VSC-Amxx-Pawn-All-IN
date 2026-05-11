@@ -392,7 +392,13 @@ function createDeclarationParsingCore(deps) {
         const openIdx = text.indexOf('{');
         const closeIdx = text.lastIndexOf('}');
         if (openIdx < 0 || closeIdx <= openIdx) return null;
-        const enumHeader = text.slice(0, openIdx).replace(/\s+/g, ' ').trim();
+        const headerSourceLines = Array.isArray(strippedLines) ? strippedLines : rawLines;
+        const headerSourceText = headerSourceLines.slice(startLine, endLine + 1).join('\n');
+        const headerOpenIdx = headerSourceText.indexOf('{');
+        const enumHeaderSource = headerOpenIdx >= 0
+            ? headerSourceText.slice(0, headerOpenIdx)
+            : text.slice(0, openIdx);
+        const enumHeader = enumHeaderSource.replace(/\s+/g, ' ').trim();
         const enumHeaderSpec = parseEnumHeaderSpec(enumHeader);
         const enumName = enumHeaderSpec.displayName;
         const enumSymbolName = enumHeaderSpec.symbolName;

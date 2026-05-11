@@ -1,5 +1,6 @@
 const { COMPLETION_TRIGGER_CHARACTERS } = require('../features/completion');
 const { isHoverModifierHackMode } = require('../core/hover-modes');
+const { shouldSchedulePersistentHoverForSelectionEvent } = require('../core/persistent-hover/selection-events');
 const {
     getEffectiveIncludeFileExtensions,
     normalizeIncludeExtensionList
@@ -252,6 +253,7 @@ function buildLazyActivationRuntime(deps, options = {}) {
             const schedule = (editor, delayMs, retryDelays) =>
                 ensureRegisteredRuntime().persistentHoverFeature.schedulePersistentHover?.(editor, delayMs, retryDelays);
             trackProxyDisposable(vscode.window.onDidChangeTextEditorSelection(event => {
+                if (!shouldSchedulePersistentHoverForSelectionEvent(vscode, event)) return;
                 schedule(event.textEditor, 10, [120, 260]);
             }));
             trackProxyDisposable(vscode.window.onDidChangeActiveTextEditor(editor => {

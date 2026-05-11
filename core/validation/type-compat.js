@@ -1,4 +1,5 @@
 const { isAnyPawnTagName } = require('../syntax/tags');
+const { getEnumMemberTagNameForExpression } = require('./enum-member-tag-compat');
 
 function createTypeCompatCore(deps) {
     const {
@@ -64,6 +65,17 @@ function createTypeCompatCore(deps) {
                 };
             }
 
+            const explainEnumMemberTagCompat = () => {
+                if (!expectedTag || !actual || actualRootTagCast) return null;
+                const enumName = getEnumMemberTagNameForExpression(
+                    actual,
+                    (name, predicate) => findLocalDeclByNameFromSources(decls, name, predicate, analysisCache)
+                );
+                if (!enumName) return null;
+                const enumTagResult = explainPawnTagCompat(expectedTag, enumName, decls, analysisCache);
+                return enumTagResult.status === 'ok' ? enumTagResult : null;
+            };
+
             let effectiveActualTag = actualTag;
             let effectiveActualDims = actualDims;
             let effectiveActualElementTag = '';
@@ -116,6 +128,8 @@ function createTypeCompatCore(deps) {
                 if (explicitUntypedActual) {
                     return { status: 'ok', reason: '' };
                 }
+                const enumMemberTagCompat = explainEnumMemberTagCompat();
+                if (enumMemberTagCompat) return enumMemberTagCompat;
                 return explainPawnTagCompat(expectedTag, effectiveActualTag, decls, analysisCache);
             }
 

@@ -347,13 +347,8 @@ public main(value)
     );
     const singleStatementSoundPathDecl = singleStatementDeclScopeContext.parsedDecls.locals.find(decl => decl.name === 'soundPath');
     assert(
-        singleStatementSoundPathDecl?.scopeEndLine >= 8,
-        `single-statement body declaration should stay visible through the enclosing block, got: ${JSON.stringify(singleStatementSoundPathDecl || null)}`
-    );
-    const singleStatementDeclScopeDiagnostics = liveValidation.collectLiveValidationDiagnostics(singleStatementDeclScopeDocument);
-    assert(
-        !singleStatementDeclScopeDiagnostics.some(diagnostic => /unknown symbol: soundPath|unknown symbol.*soundPath/i.test(diagnostic.message)),
-        `single-statement body declaration should be visible to following lines, got: ${singleStatementDeclScopeDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+        singleStatementSoundPathDecl?.scopeEndLine === 7,
+        `single-statement body declaration should stay scoped to the body line, got: ${JSON.stringify(singleStatementSoundPathDecl || null)}`
     );
     const bracedForDeclScopeDocument = new MockDocument(
         path.join(workspaceRoot, 'feature-wiring-braced-for-decl-scope.sma'),
@@ -1093,6 +1088,71 @@ public sw_native_parent(id)
     assert(
         compilerLikeNativeDiagnostics.some(diagnostic => diagnostic.message === functionHeadingDiffers),
         `compiler-like callback signature mode should not suppress native/public prototype mismatch, got: ${compilerLikeNativeDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+
+    const enumTagRegressionDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-enum-tag-regressions.sma'),
+        `
+enum TestStruct
+{
+    TestValue
+}
+
+enum TestStruct // duplicate should still be parsed as TestStruct
+{
+    TestValue2
+}
+
+enum WeaponIdType
+{
+    WEAPON_NONE
+}
+
+enum ZombieAttributesData
+{
+    Float:ZombieAttr_Health
+}
+
+const WeaponIdType:WEAPON_ID = WeaponIdType:75;
+const MAX_LIGHTSTYLE_LEN = 64;
+
+native Float:bio_api_get_attributes_config(const ZombieAttributesData:key);
+
+new gBuffer[2][MAX_LIGHTSTYLE_LEN];
+new Float:gAttrs[ZombieAttributesData];
+new ZombieAttributesData:gKey = ZombieAttr_Health;
+
+main()
+{
+    gBuffer[1][0] = 0;
+    gAttrs[ZombieAttr_Health] = bio_api_get_attributes_config(ZombieAttr_Health);
+}
+`.trimStart()
+    );
+    const enumTagRegressionDiagnostics = liveValidation.collectLiveValidationDiagnostics(enumTagRegressionDocument);
+    assert(
+        enumTagRegressionDiagnostics.some(diagnostic =>
+            diagnostic.message === t('validation.symbolAlreadyDefined', { name: 'TestStruct' })
+        ),
+        `inline-comment duplicate enum header should report duplicate enum name, got: ${enumTagRegressionDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    assert(
+        !enumTagRegressionDiagnostics.some(diagnostic =>
+            /expected tag:\s*WeaponIdType/i.test(diagnostic.message)
+        ),
+        `custom enum tag cast to numeric literal should not report expected tag, got: ${enumTagRegressionDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    assert(
+        !enumTagRegressionDiagnostics.some(diagnostic =>
+            /unknown dimension symbol:\s*MAX_LIGHTSTYLE_LEN/i.test(diagnostic.message)
+        ),
+        `const scalar dimensions should resolve in indexed access, got: ${enumTagRegressionDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    assert(
+        !enumTagRegressionDiagnostics.some(diagnostic =>
+            /tag mismatch:\s*expected ZombieAttributesData,\s*got Float/i.test(diagnostic.message)
+        ),
+        `typed enum members should be accepted as their enum key tag in calls, got: ${enumTagRegressionDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
     );
 
     fs.rmSync(tempRoot, { recursive: true, force: true });

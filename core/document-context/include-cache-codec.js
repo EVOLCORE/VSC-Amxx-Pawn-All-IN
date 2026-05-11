@@ -33,7 +33,7 @@ function createIncludeCacheCodec({ normalizeFsPath, getDefineStateKey, getDefine
         'deprecated',
         'deprecatedMessage'
     ];
-    const INCLUDE_DECL_COMPACT_SCHEMA_VERSION = 'v2-underscore-value-defines';
+    const INCLUDE_DECL_COMPACT_SCHEMA_VERSION = 'v3-deprecated-pragmas';
     const INCLUDE_DECL_COMPACT_SIGNATURE = `${INCLUDE_DECL_COMPACT_SCHEMA_VERSION}|${INCLUDE_DECL_COMPACT_KEYS.join('|')}`;
 
     function serializeDependencyStamps(dependencyStamps) {

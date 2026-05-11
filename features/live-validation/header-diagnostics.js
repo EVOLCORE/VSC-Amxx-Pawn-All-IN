@@ -283,9 +283,10 @@ function createHeaderDiagnostics(deps) {
                 functionDecl.type !== 'forward' &&
                 functionDecl.type !== 'native'
             ) {
-                buildHeaderMismatchDiagnostic(
+                diagnostics.push(createLiveValidationDiagnostic(
+                    nameRange,
                     t('validation.symbolAlreadyDefined', { name: functionDecl.name })
-                );
+                ));
             }
         }
 

@@ -290,8 +290,8 @@ function getCompletionBraceDepthBefore(document, position, ctx) {
 }
 
 function isTopLevelFunctionDeclarationCompletionPrefix(prefixText) {
-    const prefix = String(prefixText || '').trim();
-    if (!prefix) return true;
+    const prefix = String(prefixText || '').trimStart();
+    if (!prefix.trim()) return true;
     return /^(?:(?:public|stock|static)\s+)*(?:[A-Za-z_@][A-Za-z0-9_@]*\s*:\s*)?$/i.test(prefix);
 }
 

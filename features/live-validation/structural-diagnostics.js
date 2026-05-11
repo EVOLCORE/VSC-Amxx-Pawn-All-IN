@@ -76,6 +76,44 @@ function createStructuralDiagnostics(deps) {
             functions: rootCtx.parsedDecls.functions || [],
             functionBodyRangeByLine
         });
+        const createNameRangeOnLine = (lineNumber, name) => {
+            const lineText = rawLines[lineNumber] || '';
+            const lineStartOffset = getLineStartOffset(lineNumber);
+            const nameText = String(name || '');
+            const nameIndex = nameText ? lineText.indexOf(nameText) : -1;
+            return nameIndex >= 0
+                ? createOffsetRange(
+                    document,
+                    lineStartOffset + nameIndex,
+                    lineStartOffset + nameIndex + Math.max(1, nameText.length),
+                    docLength
+                )
+                : createOffsetRange(
+                    document,
+                    lineStartOffset,
+                    lineStartOffset + Math.max(1, lineText.length),
+                    docLength
+                );
+        };
+        const collectDuplicateEnumNameDiagnostics = () => {
+            const seenEnumNames = new Map();
+            for (const decl of rootCtx.parsedDecls.globals || []) {
+                if (decl?.type !== 'enum' || !decl.name || decl.name === '_') continue;
+                const lineNumber = decl.lineNumber ?? -1;
+                if (!Number.isInteger(lineNumber) || lineNumber < 0) continue;
+                if (seenEnumNames.has(decl.name)) {
+                    if (shouldIncludeTargetLine(targetLines, lineNumber)) {
+                        diagnostics.push(createLiveValidationDiagnostic(
+                            createNameRangeOnLine(lineNumber, decl.name),
+                            t('validation.symbolAlreadyDefined', { name: decl.name })
+                        ));
+                    }
+                    continue;
+                }
+                seenEnumNames.set(decl.name, decl);
+            }
+        };
+        collectDuplicateEnumNameDiagnostics();
         const returnStyleByFunction = new Map();
         const terminalStateByFunction = new Map();
         const functionLikeDefineDeclsByName = new Map();

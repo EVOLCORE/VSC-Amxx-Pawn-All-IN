@@ -1,8 +1,8 @@
-const { findNextNonWhitespaceIndex } = require('../syntax/whitespace');
-
 function defaultIsEscapedQuote(source, index) {
     return String(source || '')[index - 1] === '\\';
 }
+
+const EXISTING_CALL_ARGUMENT_LOOKAHEAD_LINES = 8;
 
 function createCompletionInsertTextCore(deps = {}) {
     const {
@@ -69,15 +69,131 @@ function createCompletionInsertTextCore(deps = {}) {
         return inString;
     }
 
-    function hasExistingCallArgumentsAfterCompletion(document, position, replaceRange) {
+    function getDocumentLineText(document, lineNumber) {
+        try {
+            return String(document?.lineAt?.(lineNumber)?.text || '');
+        } catch {
+            return '';
+        }
+    }
+
+    function findExistingCallArgumentBlockAfterCompletion(document, position, replaceRange) {
         const line = Number.isInteger(position?.line) ? position.line : -1;
-        if (line < 0) return false;
-        const lineText = String(document?.lineAt?.(line)?.text || '');
+        if (line < 0) return null;
         const endCharacter = Number.isInteger(replaceRange?.end?.character)
             ? replaceRange.end.character
             : (Number.isInteger(position?.character) ? position.character : 0);
-        const nextIndex = findNextNonWhitespaceIndex(lineText, endCharacter);
-        return nextIndex >= 0 && lineText[nextIndex] === '(';
+        const lineCount = Number.isInteger(document?.lineCount)
+            ? document.lineCount
+            : line + 1;
+        const lastLine = Math.min(
+            Math.max(line, lineCount - 1),
+            line + EXISTING_CALL_ARGUMENT_LOOKAHEAD_LINES
+        );
+        let inBlockComment = false;
+        let open = null;
+
+        for (let lineNumber = line; lineNumber <= lastLine; lineNumber++) {
+            const lineText = getDocumentLineText(document, lineNumber);
+            let index = lineNumber === line
+                ? Math.max(0, Math.min(lineText.length, endCharacter))
+                : 0;
+
+            while (index < lineText.length) {
+                if (inBlockComment) {
+                    const blockEnd = lineText.indexOf('*/', index);
+                    if (blockEnd < 0) {
+                        index = lineText.length;
+                        continue;
+                    }
+                    inBlockComment = false;
+                    index = blockEnd + 2;
+                    continue;
+                }
+
+                const char = lineText[index] || '';
+                const next = lineText[index + 1] || '';
+                if (/\s/.test(char)) {
+                    index++;
+                    continue;
+                }
+                if (char === '/' && next === '*') {
+                    inBlockComment = true;
+                    index += 2;
+                    continue;
+                }
+                if (char === '/' && next === '/') {
+                    break;
+                }
+                if (char !== '(') return null;
+                open = { line: lineNumber, character: index };
+                break;
+            }
+            if (open) break;
+        }
+
+        if (!open) return null;
+
+        let depth = 0;
+        let inString = false;
+        let stringChar = '';
+        inBlockComment = false;
+        for (let lineNumber = open.line; lineNumber <= lastLine; lineNumber++) {
+            const lineText = getDocumentLineText(document, lineNumber);
+            let index = lineNumber === open.line ? open.character : 0;
+            while (index < lineText.length) {
+                if (inBlockComment) {
+                    const blockEnd = lineText.indexOf('*/', index);
+                    if (blockEnd < 0) {
+                        index = lineText.length;
+                        continue;
+                    }
+                    inBlockComment = false;
+                    index = blockEnd + 2;
+                    continue;
+                }
+
+                const char = lineText[index] || '';
+                const next = lineText[index + 1] || '';
+                if (inString) {
+                    if (char === stringChar && !isEscapedQuote(lineText, index)) {
+                        inString = false;
+                    }
+                    index++;
+                    continue;
+                }
+                if (char === '/' && next === '*') {
+                    inBlockComment = true;
+                    index += 2;
+                    continue;
+                }
+                if (char === '/' && next === '/') break;
+                if (char === '"' || char === "'") {
+                    inString = true;
+                    stringChar = char;
+                    index++;
+                    continue;
+                }
+                if (char === '(') {
+                    depth++;
+                } else if (char === ')') {
+                    depth--;
+                    if (depth <= 0) {
+                        return {
+                            open,
+                            close: { line: lineNumber, character: index }
+                        };
+                    }
+                }
+                index++;
+            }
+        }
+
+        return { open, close: null };
+    }
+
+    function hasExistingCallArgumentsAfterCompletion(document, position, replaceRange) {
+        return !!findExistingCallArgumentBlockAfterCompletion(document, position, replaceRange);
     }
 
     function getFunctionCompletionInsertionContext(document, position, replaceRange, options = {}) {
@@ -86,9 +202,11 @@ function createCompletionInsertTextCore(deps = {}) {
         const lineText = line >= 0 ? String(document?.lineAt?.(line)?.text || '') : '';
         const escapeChar = options.escapeChar || '';
         const insideString = isInsideStringLiteralOnLine(lineText, character, escapeChar);
-        const hasExistingCallArguments = hasExistingCallArgumentsAfterCompletion(document, position, replaceRange);
+        const existingArgumentBlock = findExistingCallArgumentBlockAfterCompletion(document, position, replaceRange);
+        const hasExistingCallArguments = !!existingArgumentBlock;
         return {
             insideString,
+            existingArgumentBlock,
             hasExistingCallArguments,
             shouldInsertCallArguments: !insideString && !hasExistingCallArguments
         };
@@ -99,6 +217,7 @@ function createCompletionInsertTextCore(deps = {}) {
         buildDeclarationArgSnippetText,
         getCallParamPlaceholderName,
         getFunctionCompletionInsertionContext,
+        findExistingCallArgumentBlockAfterCompletion,
         hasExistingCallArgumentsAfterCompletion,
         isInsideStringLiteralOnLine
     };

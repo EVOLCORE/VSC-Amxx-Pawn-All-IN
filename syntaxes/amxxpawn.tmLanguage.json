@@ -25,6 +25,9 @@
       "include": "#characters"
     },
     {
+      "include": "#enums"
+    },
+    {
       "include": "#numbers"
     },
     {
@@ -217,27 +220,27 @@
     "comment-highlights": {
       "patterns": [
         {
-          "name": "keyword.other.todo.comment.pawn",
+          "name": "comment.keyword.todo.pawn",
           "match": "\\b(?:TODO|FIXME|NOTE|HACK|WARNING|WARN|BUG|DEPRECATED)\\b"
         },
         {
-          "name": "storage.type.annotation.comment.pawn",
+          "name": "comment.annotation.tag.pawn",
           "match": "@(?:param|return|returns|note|error|deprecated|warning|warn|throws?)\\b"
         },
         {
-          "name": "variable.parameter.comment.pawn",
+          "name": "comment.annotation.parameter.pawn",
           "match": "(?<=@param\\s)[A-Za-z_][A-Za-z0-9_@]*"
         },
         {
-          "name": "constant.numeric.comment.pawn",
+          "name": "comment.constant.numeric.pawn",
           "match": "(?<![\\w.])-?(?:0[xX][0-9A-Fa-f]+|\\d+\\.\\d+(?:[eE][+-]?\\d+)?|\\d+)\\b"
         },
         {
-          "name": "string.quoted.double.comment.pawn",
+          "name": "comment.string.quoted.double.pawn",
           "match": "\"[^\"\\n]*\""
         },
         {
-          "name": "string.quoted.single.comment.pawn",
+          "name": "comment.string.quoted.single.pawn",
           "match": "'[^'\\n]*'"
         }
       ]
@@ -492,6 +495,50 @@
             }
           },
           "match": "('(?:\\^.|.)')|('.+')"
+        }
+      ]
+    },
+    "enums": {
+      "patterns": [
+        {
+          "name": "meta.enum.block.pawn",
+          "begin": "\\b(enum|struct)\\b",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.enum.pawn"
+            }
+          },
+          "end": "\\}",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.section.block.pawn"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#comments"
+            },
+            {
+              "include": "#strings"
+            },
+            {
+              "include": "#characters"
+            },
+            {
+              "include": "#numbers"
+            },
+            {
+              "name": "storage.modifier.tag.pawn",
+              "match": "\\b[A-Za-z_@][A-Za-z0-9_@]*\\s*:"
+            },
+            {
+              "name": "constant.other.enum.member.pawn",
+              "match": "\\b[A-Za-z_@][A-Za-z0-9_@]*\\b(?=\\s*(?:\\[|,|=|$))"
+            },
+            {
+              "include": "#operators"
+            }
+          ]
         }
       ]
     },

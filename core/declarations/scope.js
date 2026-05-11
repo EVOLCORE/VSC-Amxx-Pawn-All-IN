@@ -457,7 +457,7 @@ function createDeclarationScopeCore(deps) {
 
             const scopeEndLine = decls.some(decl => decl?.isForVar)
                 ? findSingleStatementControlEndLine(lines, depths, lineNumber, lineCtrlChars)
-                : findDepthScopeEndLine(depths, bodyInfo.bodyLine, depths[bodyInfo.bodyLine] ?? 0);
+                : bodyInfo.bodyLine;
 
             byLine.set(bodyInfo.bodyLine, {
                 decls,

@@ -8,6 +8,10 @@ const { createUtilityCore } = require('../utils');
 const { getEffectiveIncludeFileExtensions } = require('../include-extensions');
 const { splitPawnLines } = require('../syntax/lines');
 const { getPreprocessedCtrlCharState } = require('../syntax/preprocessed-state');
+const {
+    parseDeprecatedPragmaMessage,
+    applyDeprecatedPragmaToNextDecl
+} = require('../declarations/docs');
 const { createIncludeCacheCodec } = require('./include-cache-codec');
 const {
     attachIncludeDeclIndexesFromSerializedOrBuild,
@@ -1058,18 +1062,31 @@ function createDocumentIncludeSystem(deps) {
                 ctrlCharState: getPreprocessedCtrlCharState(resolvedPreprocessedState)
             });
             const decls = withCtrlCharForContent(content, () => {
-                    const rawLines = contentSnapshot.rawLines;
-                    const strippedLines = contentSnapshot.strippedLines;
-                    const lineCtrlChars = contentSnapshot.lineCtrlChars;
-                    const depths = contentSnapshot.lineDepths;
-                    const decls    = [];
+                const rawLines = contentSnapshot.rawLines;
+                const strippedLines = contentSnapshot.strippedLines;
+                const lineCtrlChars = contentSnapshot.lineCtrlChars;
+                const depths = contentSnapshot.lineDepths;
+                const decls = [];
+                let pendingDeprecatedMessage = null;
                 let i = 0;
                 while (i < rawLines.length) {
                     if (depths[i] !== 0) { i++; continue; }
+                    const deprecatedMessage = parseDeprecatedPragmaMessage(strippedLines[i]);
+                    if (deprecatedMessage != null) {
+                        pendingDeprecatedMessage = deprecatedMessage;
+                        i++;
+                        continue;
+                    }
                     if (!isPotentialDeclarationStartLine(strippedLines[i])) { i++; continue; }
                     if (isPotentialEnumDeclarationLine(strippedLines[i])) {
                         const enumBlock = parseEnumBlock(rawLines, i, filePath, fileName, lineCtrlChars, strippedLines, decls);
                         if (enumBlock) {
+                            if (
+                                pendingDeprecatedMessage != null &&
+                                applyDeprecatedPragmaToNextDecl(enumBlock.decls, pendingDeprecatedMessage)
+                            ) {
+                                pendingDeprecatedMessage = null;
+                            }
                             decls.push(...enumBlock.decls);
                             i = enumBlock.nextLine;
                             continue;
@@ -1078,7 +1095,14 @@ function createDocumentIncludeSystem(deps) {
                     const startI = i;
                     const { text: joined, nextLine } = collectDeclarationText(rawLines, i, lineCtrlChars, strippedLines);
                     i = nextLine;
-                    for (const d of parseDeclLine({ text: joined, startLine: startI }, rawLines, filePath, fileName, 'include')) {
+                    const parsedDecls = parseDeclLine({ text: joined, startLine: startI }, rawLines, filePath, fileName, 'include');
+                    if (
+                        pendingDeprecatedMessage != null &&
+                        applyDeprecatedPragmaToNextDecl(parsedDecls, pendingDeprecatedMessage)
+                    ) {
+                        pendingDeprecatedMessage = null;
+                    }
+                    for (const d of parsedDecls) {
                         if (d.type !== 'define') decls.push(d);
                     }
                 }

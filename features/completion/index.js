@@ -67,6 +67,8 @@ function createCompletionFeature(deps) {
     const baseCandidatesCache = new WeakMap();
     const candidatePrefixFilterCache = new WeakMap();
     const candidateItemsCache = new WeakMap();
+    const forwardImplementationDeclMapCache = new WeakMap();
+    const forwardImplementationCandidatesCache = new WeakMap();
     const controlContextCache = new WeakMap();
     const completionIntentCache = new WeakMap();
     const MAX_CANDIDATE_ITEM_CACHE_ENTRIES = 16;
@@ -101,13 +103,24 @@ function createCompletionFeature(deps) {
         return getCompletionDetailLabelUncached(data, currentFilePath);
     }
 
+    function appendDeprecatedCompletionDetail(label, data) {
+        const text = String(label || '').trim();
+        if (data?.deprecated !== true) return text;
+        if (/\bdeprecated\b/i.test(text)) return text;
+        return text ? `${text} · deprecated` : 'deprecated';
+    }
+
     function getCompletionDetailLabelUncached(data, currentFilePath = '') {
         const isLocal = data.isArg || data.isLocal;
         const isCurrentFile = isSameFilePath(data.filePath, currentFilePath);
         const typeLabel = getCompletionTypeLabel(data);
-        if (data.type === 'builtin') return t('hover.kind.compiler');
-        if (isLocal || isCurrentFile || !data.file) return typeLabel;
-        return `${data.file} · ${typeLabel}`;
+        if (data.type === 'builtin') {
+            return appendDeprecatedCompletionDetail(t('hover.kind.compiler'), data);
+        }
+        if (isLocal || isCurrentFile || !data.file) {
+            return appendDeprecatedCompletionDetail(typeLabel, data);
+        }
+        return appendDeprecatedCompletionDetail(`${data.file} · ${typeLabel}`, data);
     }
 
     function normalizeForwardCompletionBodyStyle(value) {
@@ -140,6 +153,7 @@ function createCompletionFeature(deps) {
             ? String(name).slice(1)
             : name;
         const filterText = callInsertName === name ? name : `${callInsertName} ${name}`;
+        const filterAliases = callInsertName === name ? [name] : [callInsertName, name];
         const kindMap = {
             native: vscode.CompletionItemKind.Function,
             stock: vscode.CompletionItemKind.Method,
@@ -159,7 +173,11 @@ function createCompletionFeature(deps) {
             isFunc,
             callInsertName,
             filterText,
+            filterAliases,
             normalizedFilterText: String(filterText || '').toLowerCase(),
+            normalizedFilterAliases: filterAliases
+                .map(alias => String(alias || '').toLowerCase())
+                .filter(Boolean),
             kind: kindMap[data?.type] ?? vscode.CompletionItemKind.Text
         };
     }
@@ -206,7 +224,9 @@ function createCompletionFeature(deps) {
         const item = new vscode.CompletionItem(name);
 
         item.kind = identity.kind;
-        item.filterText = identity.filterText;
+        item.filterText = options.prefixStartsWithAt && String(name || '').startsWith('@')
+            ? name
+            : identity.filterText;
         item.sortText = `${sortPrefix}_${name}`;
         item.detail = detailOverride || getCompletionDetailLabel(data, currentFilePath);
         item.label = { label: name, description: item.detail };
@@ -218,6 +238,7 @@ function createCompletionFeature(deps) {
 
         if (isFunc) {
             if (useForwardBodySnippet) {
+                item.range = getForwardBodyReplacementRange(replaceRange, options.existingArgumentBlock);
                 const argSnippetText = getDeclarationArgSnippetText(data);
                 const header = `${declarationInsertName}(${argSnippetText})`;
                 item.insertText = new vscode.SnippetString(
@@ -272,7 +293,9 @@ function createCompletionFeature(deps) {
             getRangeCacheKey(replaceRange),
             String(options.forwardBodyStyle || ''),
             options.isForwardImplementationContext ? 1 : 0,
-            String(options.callInsertMode || '')
+            String(options.callInsertMode || ''),
+            options.prefixStartsWithAt ? 1 : 0,
+            getExistingArgumentBlockCacheKey(options.existingArgumentBlock)
         ].join('|');
     }
 
@@ -295,6 +318,100 @@ function createCompletionFeature(deps) {
         }
         cache.set(cacheKey, items);
         return items;
+    }
+
+    function getExistingArgumentBlockCacheKey(block = null) {
+        if (!block?.open) return '';
+        const close = block.close || {};
+        return [
+            block.open.line,
+            block.open.character,
+            Number.isInteger(close.line) ? close.line : -1,
+            Number.isInteger(close.character) ? close.character : -1
+        ].join(':');
+    }
+
+    function getForwardBodyReplacementRange(replaceRange = null, existingArgumentBlock = null) {
+        const close = existingArgumentBlock?.close;
+        if (!replaceRange?.start || !Number.isInteger(close?.line) || !Number.isInteger(close?.character)) {
+            return replaceRange;
+        }
+        return new vscode.Range(
+            replaceRange.start,
+            new vscode.Position(close.line, close.character + 1)
+        );
+    }
+
+    function addForwardImplementationAlias(map, alias, data) {
+        const key = String(alias || '').toLowerCase();
+        if (!key || map.has(key)) return;
+        map.set(key, data);
+    }
+
+    function getForwardImplementationDeclMap(incDecls) {
+        if (!Array.isArray(incDecls) || !incDecls.length) return new Map();
+        const cached = forwardImplementationDeclMapCache.get(incDecls);
+        if (cached) return cached;
+
+        const map = new Map();
+        for (const data of incDecls) {
+            if (!data || data.type !== 'forward' || !isFunctionLikeDecl(data)) continue;
+            const identity = getCompletionIdentity(data);
+            addForwardImplementationAlias(map, identity.name, data);
+            addForwardImplementationAlias(map, identity.callInsertName, data);
+        }
+        forwardImplementationDeclMapCache.set(incDecls, map);
+        return map;
+    }
+
+    function findForwardImplementationDecl(data, incDecls) {
+        if (!data || data.type === 'forward') return null;
+        const map = getForwardImplementationDeclMap(incDecls);
+        if (!map.size) return null;
+        const identity = getCompletionIdentity(data);
+        const aliases = identity.normalizedFilterAliases?.length
+            ? identity.normalizedFilterAliases
+            : [identity.normalizedFilterText];
+        for (const alias of aliases) {
+            const forwardDecl = map.get(String(alias || '').toLowerCase());
+            if (forwardDecl) return forwardDecl;
+        }
+        return null;
+    }
+
+    function getForwardImplementationCandidates(candidates, incDecls) {
+        if (!Array.isArray(candidates) || !candidates.length || !Array.isArray(incDecls) || !incDecls.length) {
+            return candidates;
+        }
+
+        let perIncludeCache = forwardImplementationCandidatesCache.get(candidates);
+        if (!perIncludeCache) {
+            perIncludeCache = new WeakMap();
+            forwardImplementationCandidatesCache.set(candidates, perIncludeCache);
+        }
+        const cached = perIncludeCache.get(incDecls);
+        if (cached) return cached;
+
+        const result = [];
+        const seen = new Set();
+        for (const candidate of candidates) {
+            const forwardDecl = findForwardImplementationDecl(candidate?.d, incDecls);
+            const resolvedCandidate = forwardDecl
+                ? { d: forwardDecl, p: candidate.p, i: getCompletionIdentity(forwardDecl) }
+                : candidate;
+            const data = resolvedCandidate?.d;
+            const identity = resolvedCandidate?.i || getCompletionIdentity(data);
+            const key = [
+                data?.type || '',
+                identity?.name || data?.name || '',
+                data?.filePath || ''
+            ].join('|');
+            if (seen.has(key)) continue;
+            seen.add(key);
+            result.push(resolvedCandidate);
+        }
+        perIncludeCache.set(incDecls, result);
+        return result;
     }
 
     function padSortNumber(value, width) {
@@ -402,6 +519,10 @@ function createCompletionFeature(deps) {
         return String(item?.filterText || label || '').toLowerCase();
     }
 
+    function getCompletionDataFilterAliases(data) {
+        return getCompletionIdentity(data).normalizedFilterAliases || [getCompletionDataFilterText(data)];
+    }
+
     function partitionByPrefix(entries, prefix, getText) {
         const normalizedPrefix = String(prefix || '').toLowerCase();
         if (!normalizedPrefix) {
@@ -462,9 +583,51 @@ function createCompletionFeature(deps) {
     }
 
     function filterCompletionCandidatesForPrefixUncached(candidates, normalizedPrefix) {
-        const result = partitionByPrefix(candidates, normalizedPrefix, candidate =>
-            candidate.i?.normalizedFilterText || getCompletionDataFilterText(candidate.d)
-        );
+        if (!normalizedPrefix) {
+            return {
+                entries: candidates,
+                candidates,
+                startsWithCount: candidates.length,
+                containsCount: candidates.length,
+                mode: 'all'
+            };
+        }
+
+        const startsWith = [];
+        const contains = [];
+        for (const candidate of candidates) {
+            const aliases = candidate.i?.normalizedFilterAliases || getCompletionDataFilterAliases(candidate.d);
+            let matchedContains = false;
+            let matchedStartsWith = false;
+            for (const alias of aliases) {
+                if (!alias) continue;
+                if (alias.startsWith(normalizedPrefix)) {
+                    matchedStartsWith = true;
+                    break;
+                }
+                if (!matchedContains && alias.includes(normalizedPrefix)) {
+                    matchedContains = true;
+                }
+            }
+            if (matchedStartsWith) {
+                startsWith.push(candidate);
+            } else if (matchedContains) {
+                contains.push(candidate);
+            }
+        }
+        const result = startsWith.length
+            ? {
+                entries: startsWith,
+                startsWithCount: startsWith.length,
+                containsCount: startsWith.length + contains.length,
+                mode: 'startsWith'
+            }
+            : {
+                entries: contains,
+                startsWithCount: 0,
+                containsCount: contains.length,
+                mode: 'contains'
+            };
         return { ...result, candidates: result.entries };
     }
 
@@ -505,15 +668,12 @@ function createCompletionFeature(deps) {
         return item;
     }
 
-    function getServiceKeywordCandidatesForPrefix(items, prefix) {
+    function getServiceKeywordCandidatesForPrefix(prefix, hasExistingStartsWith = false) {
         const normalizedPrefix = String(prefix || '').toLowerCase();
         if (!normalizedPrefix) {
             return SERVICE_KEYWORD_COMPLETIONS.map((definition, index) => ({ definition, index }));
         }
 
-        const existingStartsWith = items.some(item =>
-            getCompletionItemFilterText(item).startsWith(normalizedPrefix)
-        );
         const startsWith = [];
         const contains = [];
         SERVICE_KEYWORD_COMPLETIONS.forEach((definition, index) => {
@@ -524,7 +684,7 @@ function createCompletionFeature(deps) {
                 contains.push({ definition, index });
             }
         });
-        if (existingStartsWith || startsWith.length) return startsWith;
+        if (hasExistingStartsWith || startsWith.length) return startsWith;
         return contains;
     }
 
@@ -574,8 +734,8 @@ function createCompletionFeature(deps) {
         );
     }
 
-    function addServiceKeywordCompletions(items, document, position, replaceRange, ctx, prefix = '') {
-        const candidates = getServiceKeywordCandidatesForPrefix(items, prefix);
+    function addServiceKeywordCompletions(items, document, position, replaceRange, ctx, prefix = '', hasExistingStartsWith = false) {
+        const candidates = getServiceKeywordCandidatesForPrefix(prefix, hasExistingStartsWith);
         if (!candidates.length) return;
         const statementContext = isStatementStartCompletionContext(document, position, replaceRange);
         const elseContext = isElseCompletionContext(document, position, replaceRange);
@@ -758,18 +918,31 @@ function createCompletionFeature(deps) {
                     forwardBodyStyle,
                     isForwardImplementationContext: forwardBodyStyle !== 'disabled' &&
                         completionIntent === 'top-level-declaration',
-                    callInsertMode: insertionContext.shouldInsertCallArguments ? 'call-with-args' : 'name-only'
+                    callInsertMode: insertionContext.shouldInsertCallArguments ? 'call-with-args' : 'name-only',
+                    existingArgumentBlock: insertionContext.existingArgumentBlock,
+                    prefixStartsWithAt: String(prefix || '').trimStart().startsWith('@')
                 };
 
                 const candidates = getBaseCompletionCandidates(ctx, line);
                 const filteredCandidates = filterCompletionCandidatesForPrefix(candidates, prefix);
+                const completionCandidates = completionItemOptions.isForwardImplementationContext
+                    ? getForwardImplementationCandidates(filteredCandidates.candidates, incDecls)
+                    : filteredCandidates.candidates;
                 const items = getCandidateCompletionItems(
-                    filteredCandidates.candidates,
+                    completionCandidates,
                     fp,
                     replaceRange,
                     completionItemOptions
                 ).slice();
-                addServiceKeywordCompletions(items, document, position, replaceRange, ctx, prefix);
+                addServiceKeywordCompletions(
+                    items,
+                    document,
+                    position,
+                    replaceRange,
+                    ctx,
+                    prefix,
+                    filteredCandidates.startsWithCount > 0
+                );
 
                 logCompletion(
                     `items=${items.length}/${items.length} candidates=${filteredCandidates.candidates.length}/${candidates.length} ` +

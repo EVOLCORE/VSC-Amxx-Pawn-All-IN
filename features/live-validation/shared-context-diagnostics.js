@@ -63,9 +63,10 @@ function createSharedContextDiagnostics(deps) {
         if (cacheKey === includeFileExtensionCacheKey && includeFileExtensionCacheValue) {
             return includeFileExtensionCacheValue;
         }
-        const result = getEffectiveIncludeFileExtensions(
-            normalizeExtensionList(rawExtensions, [], { useFallbackWhenEmpty: false })
-        );
+        const normalizedExtensions = Array.isArray(rawExtensions)
+            ? normalizeExtensionList(rawExtensions, [], { useFallbackWhenEmpty: false })
+            : undefined;
+        const result = getEffectiveIncludeFileExtensions(normalizedExtensions);
         includeFileExtensionCacheKey = cacheKey;
         includeFileExtensionCacheValue = result;
         includeFileExtensionSignature = includeFileExtensionCacheValue.join('|');

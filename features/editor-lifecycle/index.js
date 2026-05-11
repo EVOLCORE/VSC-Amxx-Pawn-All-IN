@@ -357,6 +357,11 @@ function createEditorLifecycleFeature(deps) {
             ? Math.max(0, Math.min(5000, Math.floor(rawDelay)))
             : 700;
     };
+    const getTypingContextWarmupDelayMs = () => {
+        const typingDelayMs = getTypingValidationDelayMs();
+        if (typingDelayMs <= 0) return 350;
+        return Math.min(typingDelayMs, 250);
+    };
     const pendingLineChangeValidations = new Map();
     const lastKnownSelectionLineByPath = new Map();
     let lastActiveDocumentPath = normalizeLifecyclePath(vscode.window.activeTextEditor?.document?.fileName || '');
@@ -832,7 +837,6 @@ function createEditorLifecycleFeature(deps) {
         const editImpact = summarizeDocumentEditImpact(document, event.contentChanges);
         recordDocumentEditImpact(filePath, document.version, editImpact);
         invalidateDocumentCaches(filePath, { editImpact });
-        scheduleWarmDocumentContext(document, 180);
         const mode = getLiveValidationMode();
         let validationPlan = null;
         if (mode === 'full') {
@@ -863,8 +867,9 @@ function createEditorLifecycleFeature(deps) {
             dropPendingLineChangeValidation(document);
             logLifecycle(`text-change skip mode=${mode} file=${filePath}`);
         }
-        if (!validationPlan) return;
         const typingDelayMs = getTypingValidationDelayMs();
+        scheduleWarmDocumentContext(document, getTypingContextWarmupDelayMs());
+        if (!validationPlan) return;
         if (typingDelayMs === 0) {
             if (!didChangeLineBoundary(event.contentChanges)) {
                 storePendingLineChangeValidation(document, validationPlan, event.contentChanges);
