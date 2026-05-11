@@ -1,3 +1,6 @@
+const { readPawnIdentifierAt } = require('./identifiers');
+const { PAWN_STRUCTURAL_KEYWORD_SET } = require('./keywords');
+
 function createStatementClassifier(deps) {
     const {
         isEscapedQuote,
@@ -10,14 +13,6 @@ function createStatementClassifier(deps) {
         evaluatePawnNumericExpr,
         looksLikePawnExpressionFragment
     } = deps;
-
-    const statementClassifierKeywords = [
-        'if', 'for', 'while', 'switch', 'do', 'else', 'case', 'default',
-        'return', 'break', 'continue', 'new', 'static', 'const', 'enum',
-        'stock', 'public', 'private', 'native', 'forward', 'state',
-        'goto', 'assert', 'sleep', 'exit'
-    ];
-    const statementClassifierKeywordSet = new Set(statementClassifierKeywords);
 
     function isIdentifierBoundaryBefore(source, index) {
         return index <= 0 || !isIdentifierContinueChar(source[index - 1] || '');
@@ -35,15 +30,10 @@ function createStatementClassifier(deps) {
     }
 
     function readIdentifierAt(source, index) {
-        const text = String(source || '');
-        if (!isIdentifierStartChar(text[index] || '')) return null;
-        let end = index + 1;
-        while (end < text.length && isIdentifierContinueChar(text[end])) end++;
-        return {
-            text: text.slice(index, end),
-            start: index,
-            end
-        };
+        return readPawnIdentifierAt(source, index, {
+            isIdentifierStartChar,
+            isIdentifierContinueChar
+        });
     }
 
     function collectStatementLevelIdentifiers(source, names = null) {
@@ -233,7 +223,7 @@ function createStatementClassifier(deps) {
         const start = findFirstNonWhitespaceIndex(text, 0);
         const trimmed = text.slice(start).trim();
         const firstIdentifier = readIdentifierAt(text, start);
-        const firstKeyword = firstIdentifier && statementClassifierKeywordSet.has(firstIdentifier.text)
+        const firstKeyword = firstIdentifier && PAWN_STRUCTURAL_KEYWORD_SET.has(firstIdentifier.text)
             ? firstIdentifier.text
             : '';
         const switchLabel = parseSwitchLabelAt(text, start);

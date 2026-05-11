@@ -38,24 +38,32 @@ function createCallDiagnostics(deps) {
             return diagnostics;
         }
 
-        const createWholeCallRange = () => {
-            let cursor = Math.max(0, callCtx.openOffset - 1);
-            while (cursor >= 0 && /\s/.test(ctx.text[cursor])) cursor--;
-            while (cursor >= 0 && isIdentifierContinueChar(ctx.text[cursor])) cursor--;
-            const startOffset = cursor + 1;
-            const closeOffset = Number.isInteger(callCtx.closeOffset)
-                ? callCtx.closeOffset
-                : findMatchingParenOffset(ctx.text, callCtx.openOffset, ctx.text.length, ctx.resolver);
-            const endOffset = closeOffset >= 0 ? closeOffset + 1 : callCtx.openOffset + 1;
-            return createOffsetRange(document, startOffset, endOffset, docLength);
-        };
-
         const findCallNameOffsets = () => {
+            if (
+                Number.isInteger(callCtx.nameStartOffset) &&
+                Number.isInteger(callCtx.nameEndOffset) &&
+                callCtx.nameStartOffset >= 0 &&
+                callCtx.nameStartOffset < callCtx.nameEndOffset
+            ) {
+                return {
+                    startOffset: callCtx.nameStartOffset,
+                    endOffset: callCtx.nameEndOffset
+                };
+            }
             let cursor = Math.max(0, callCtx.openOffset - 1);
             while (cursor >= 0 && /\s/.test(ctx.text[cursor])) cursor--;
             const endOffset = cursor + 1;
             while (cursor >= 0 && isIdentifierContinueChar(ctx.text[cursor])) cursor--;
             return { startOffset: cursor + 1, endOffset };
+        };
+
+        const createWholeCallRange = () => {
+            const { startOffset } = findCallNameOffsets();
+            const closeOffset = Number.isInteger(callCtx.closeOffset)
+                ? callCtx.closeOffset
+                : findMatchingParenOffset(ctx.text, callCtx.openOffset, ctx.text.length, ctx.resolver);
+            const endOffset = closeOffset >= 0 ? closeOffset + 1 : callCtx.openOffset + 1;
+            return createOffsetRange(document, startOffset, endOffset, docLength);
         };
 
         const createCallNameRange = () => {

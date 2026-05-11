@@ -6,6 +6,7 @@ function createUsageDiagnostics(deps) {
         collectSymbolUsageIssues,
         createLiveValidationDiagnostic,
         createOffsetRange,
+        getCallbackSignatureMode,
         getFunctionRangeMaps,
         getWarningSeverity,
         isIncludeDocument,
@@ -61,11 +62,16 @@ function createUsageDiagnostics(deps) {
         if (!parsedDecls) {
             return EMPTY_DIAGNOSTICS;
         }
+        const cacheSignature = `callback:${getCallbackSignatureMode?.() || 'strict'}`;
         let byParsedDecls = semanticSession?.symbolUsageIssuesByParsedDecls || null;
         if (byParsedDecls?.has(parsedDecls)) {
-            return byParsedDecls.get(parsedDecls) || EMPTY_DIAGNOSTICS;
+            const cached = byParsedDecls.get(parsedDecls);
+            if (cached?.signature === cacheSignature) {
+                return cached.issues || EMPTY_DIAGNOSTICS;
+            }
         }
         const issues = collectSymbolUsageIssues(rootCtx, {
+            callbackSignatureMode: getCallbackSignatureMode?.() || 'strict',
             functionRangeMaps: getFunctionRangeMaps(rootCtx)
         }) || EMPTY_DIAGNOSTICS;
         if (semanticSession) {
@@ -73,7 +79,10 @@ function createUsageDiagnostics(deps) {
                 byParsedDecls = new WeakMap();
                 semanticSession.symbolUsageIssuesByParsedDecls = byParsedDecls;
             }
-            byParsedDecls.set(parsedDecls, issues);
+            byParsedDecls.set(parsedDecls, {
+                signature: cacheSignature,
+                issues
+            });
         }
         return issues;
     }

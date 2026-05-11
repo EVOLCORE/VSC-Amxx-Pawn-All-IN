@@ -14,6 +14,7 @@ function createDeclLookupCore(deps) {
         BUILTIN_DECLS = []
     } = deps;
     const variableNameBucketCache = new WeakMap();
+    const objectAliasTargetNameCache = new WeakMap();
     const ALIAS_TARGET_RE = /^([A-Za-z_@]\w*)$/;
 
     const getDeclNameBuckets = decls => {
@@ -27,6 +28,8 @@ function createDeclLookupCore(deps) {
         }
 
         const buckets = new Map();
+        const shouldBuildVariableBuckets = !variableNameBucketCache.has(decls);
+        const variableBuckets = shouldBuildVariableBuckets ? new Map() : null;
         for (const decl of decls) {
             if (!decl?.name) continue;
             const bucket = buckets.get(decl.name);
@@ -35,8 +38,14 @@ function createDeclLookupCore(deps) {
             } else {
                 buckets.set(decl.name, [decl]);
             }
+            if (variableBuckets && decl.type === 'variable' && !variableBuckets.get(decl.name)) {
+                variableBuckets.set(decl.name, decl);
+            }
         }
         declNameBucketCache.set(decls, buckets);
+        if (variableBuckets) {
+            variableNameBucketCache.set(decls, variableBuckets);
+        }
         return buckets;
     };
 
@@ -55,10 +64,31 @@ function createDeclLookupCore(deps) {
         return predicate ? matches.filter(predicate) : [...matches];
     };
 
+    const findBestDeclByNameCached = (decls, name, predicate = null, score = null) => {
+        const matches = getDeclNameBuckets(decls).get(name);
+        if (!matches?.length) return null;
+        let best = null;
+        let bestScore = -Infinity;
+        for (const decl of matches) {
+            if (predicate && !predicate(decl)) continue;
+            const currentScore = score ? score(decl) : 0;
+            if (!best || currentScore > bestScore) {
+                best = decl;
+                bestScore = currentScore;
+            }
+        }
+        return best;
+    };
+
     function getObjectAliasTargetName(decl) {
         if (!decl || decl.type !== 'define' || decl.args || decl.macroStyle) return '';
+        if (objectAliasTargetNameCache.has(decl)) {
+            return objectAliasTargetNameCache.get(decl);
+        }
         const targetName = String(decl.value || '').trim().match(ALIAS_TARGET_RE)?.[1] || '';
-        return targetName && targetName !== decl.name ? targetName : '';
+        const result = targetName && targetName !== decl.name ? targetName : '';
+        objectAliasTargetNameCache.set(decl, result);
+        return result;
     }
 
     function isObjectFunctionAliasDefine(decl) {
@@ -94,11 +124,22 @@ function createDeclLookupCore(deps) {
         }
 
         const buckets = new Map();
+        const shouldBuildNameBuckets = !declNameBucketCache.has(decls);
+        const nameBuckets = shouldBuildNameBuckets ? new Map() : null;
         for (const decl of decls) {
-            if (decl?.type !== 'variable' || !decl?.name || buckets.get(decl.name)) continue;
+            if (!decl?.name) continue;
+            if (nameBuckets) {
+                const bucket = nameBuckets.get(decl.name);
+                if (bucket) bucket.push(decl);
+                else nameBuckets.set(decl.name, [decl]);
+            }
+            if (decl.type !== 'variable' || buckets.get(decl.name)) continue;
             buckets.set(decl.name, decl);
         }
         variableNameBucketCache.set(decls, buckets);
+        if (nameBuckets) {
+            declNameBucketCache.set(decls, nameBuckets);
+        }
         return buckets;
     };
 
@@ -144,11 +185,11 @@ function createDeclLookupCore(deps) {
 
         const getDirectPreferredFunctionMatch = (name, preferInclude = false) => {
             const localFunc = findDeclByNameCached(functions, name);
-            const includeCandidates = filterDeclsByNameCached(incDecls, name, isFunctionLikeDecl);
-            const includeFunc = includeCandidates.reduce(
-                (best, candidate) =>
-                    !best || (candidate.lineNumber ?? -1) > (best.lineNumber ?? -1) ? candidate : best,
-                null
+            const includeFunc = findBestDeclByNameCached(
+                incDecls,
+                name,
+                isFunctionLikeDecl,
+                candidate => candidate.lineNumber ?? -1
             );
 
             let match = null;
@@ -312,17 +353,29 @@ function createDeclLookupCore(deps) {
 
     function findFirstNavigableDecl(lookup, name) {
         if (!lookup || !name) return null;
-        const finders = [
-            lookup.findFuncArg,
-            lookup.findLocal,
-            lookup.findGlobal,
-            lookup.findFunction,
-            finderName => lookup.findInclude(finderName, d => !!d.filePath)
-        ];
+        const findExactNavigableDecl = finderName => {
+            const finders = [
+                lookup.findFuncArg,
+                lookup.findLocal,
+                lookup.findGlobal,
+                lookup.findFunction,
+                candidateName => lookup.findInclude(candidateName, d => !!d.filePath)
+            ];
 
-        for (const finder of finders) {
-            const decl = finder(name);
-            if (decl?.filePath) return decl;
+            for (const finder of finders) {
+                const decl = finder(finderName);
+                if (decl?.filePath) return decl;
+            }
+            return null;
+        };
+
+        const exactDecl = findExactNavigableDecl(name);
+        if (exactDecl) return exactDecl;
+
+        const text = String(name || '');
+        if (text && !text.startsWith('@')) {
+            const atPublicDecl = findExactNavigableDecl(`@${text}`);
+            if (atPublicDecl) return atPublicDecl;
         }
         return null;
     }

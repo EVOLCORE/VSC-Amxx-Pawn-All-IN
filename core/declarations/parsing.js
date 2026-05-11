@@ -12,13 +12,18 @@ const {
     isExplicitDeclarationStartLine,
     isPawnIdentifierContinueCode,
     isPawnIdentifierStartCode,
+    isPreprocessorDirectiveLine,
     isPotentialDeclarationStartLine,
     isPotentialEnumDeclarationLine,
     isWhitespaceCharCode
 } = require('./line-utils');
 const { createDefineDeclarationEventCore } = require('./define-events');
 const { createEnumSyntaxDiagnosticsCore } = require('./enum-syntax');
+const { findBalancedGroupEnd } = require('../syntax/balanced');
+const { startsWithLocalDeclarationKeyword } = require('../syntax/keywords');
 const { createMacroExpansionSyntaxCore } = require('../syntax/macro-expander');
+const { createVirtualExpandedLineContextCore } = require('../syntax/virtual-expanded-line-context');
+const { getPreprocessedCtrlCharState } = require('../syntax/preprocessed-state');
 
 function createDeclarationParsingCore(deps) {
     const {
@@ -52,6 +57,7 @@ function createDeclarationParsingCore(deps) {
         parseFunctionStateSpecTail,
         computeLineDepths,
         collectDeclarationText,
+        collectForHeaderText,
         withCtrlCharForContent,
         getCtrlCharStateForContent,
         preprocessPawnContent,
@@ -71,6 +77,10 @@ function createDeclarationParsingCore(deps) {
         isIdentifierContinueChar: char => isPawnIdentifierContinueCode(String(char || '').charCodeAt(0)),
         splitTopLevel
     });
+    const virtualExpandedLineContextCore = createVirtualExpandedLineContextCore({
+        macroExpansionCore,
+        isFunctionLikeDefineDecl
+    });
     const {
         collectEnumMemberSyntaxIssues,
         parseEnumMemberPrefix,
@@ -81,6 +91,24 @@ function createDeclarationParsingCore(deps) {
         isEscapedQuote,
         stripLineComment
     });
+    const enumEvalOuterDeclsCache = new WeakMap();
+    const filterEnumEvalOuterDecls = decls => {
+        if (!Array.isArray(decls)) return [];
+        const cached = enumEvalOuterDeclsCache.get(decls);
+        if (cached) return cached;
+        const filtered = [];
+        for (const decl of decls) {
+            if (
+                decl?.type === 'define' ||
+                decl?.type === 'enum' ||
+                decl?.type === 'enum-item'
+            ) {
+                filtered.push(decl);
+            }
+        }
+        enumEvalOuterDeclsCache.set(decls, filtered);
+        return filtered;
+    };
 
     function parseVarPiece(piece, modifiers, filePath, fileName, lineNumber, docs, mayHaveDocs = true) {
         let s = piece.trim().replace(/;$/, '').trim();
@@ -143,32 +171,10 @@ function createDeclarationParsingCore(deps) {
     }
 
     function findMatchingParenInText(source, openIndex, escapeChar = getActiveCtrlChar()) {
-        const text = String(source || '');
-        if (text[openIndex] !== '(') return -1;
-        let depth = 0;
-        let inStr = false;
-        let strCh = '';
-        for (let index = openIndex; index < text.length; index++) {
-            const char = text[index];
-            if (inStr) {
-                if (char === strCh && !isEscapedQuote(text, index, escapeChar)) {
-                    inStr = false;
-                }
-                continue;
-            }
-            if (char === '"' || char === '\'') {
-                inStr = true;
-                strCh = char;
-                continue;
-            }
-            if (char === '(') {
-                depth++;
-            } else if (char === ')') {
-                depth--;
-                if (depth === 0) return index;
-            }
-        }
-        return -1;
+        return findBalancedGroupEnd(source, openIndex, '(', ')', {
+            escapeChar,
+            isEscapedQuote
+        });
     }
 
     function parseForInit(lineText, rawLines, filePath, fileName, lineNumber, escapeChar = getActiveCtrlChar(), options = {}) {
@@ -280,7 +286,7 @@ function createDeclarationParsingCore(deps) {
         for (let probeLine = lineNumber + 1; probeLine < sourceLines.length; probeLine++) {
             const trimmed = String(sourceLines[probeLine] || '').trim();
             if (!trimmed) continue;
-            return trimmed.startsWith('#') || isExplicitDeclarationStartLine(trimmed);
+            return isPreprocessorDirectiveLine(trimmed) || isExplicitDeclarationStartLine(trimmed);
         }
         return false;
     }
@@ -585,7 +591,7 @@ function createDeclarationParsingCore(deps) {
     function expandDeclarationHeadMacro(line, defineDecls = [], escapeChar = getActiveCtrlChar()) {
         if (!Array.isArray(defineDecls) || !defineDecls.length) return '';
         const source = String(line || '').trim();
-        if (!source || source.startsWith('#')) return '';
+        if (!source || isPreprocessorDirectiveLine(source)) return '';
 
         let rest = source;
         let prefixLength = 0;
@@ -603,7 +609,7 @@ function createDeclarationParsingCore(deps) {
         const nameMatch = rest.match(NAME_RE);
         if (!nameMatch) return '';
         const macroName = nameMatch[1];
-        const defineDecl = defineDecls.find(decl => decl?.name === macroName && isFunctionLikeDefineDecl(decl));
+        const defineDecl = virtualExpandedLineContextCore.findFunctionLikeDefineDecl(defineDecls, macroName);
         if (!defineDecl) return '';
 
         const nameStart = prefixLength;
@@ -627,13 +633,49 @@ function createDeclarationParsingCore(deps) {
         return `${source.slice(0, nameStart)}${replacement}${source.slice(closeIndex + 1)}`.trim();
     }
 
+    function findForKeywordCallIndex(source, escapeChar = getActiveCtrlChar()) {
+        const text = String(source || '');
+        let inString = false;
+        let stringChar = '';
+        for (let index = 0; index < text.length;) {
+            const char = text[index];
+            if (inString) {
+                if (char === stringChar && !isEscapedQuote(text, index, escapeChar)) {
+                    inString = false;
+                }
+                index++;
+                continue;
+            }
+            if (char === '"' || char === "'") {
+                inString = true;
+                stringChar = char;
+                index++;
+                continue;
+            }
+            const code = text.charCodeAt(index);
+            if (!isPawnIdentifierStartCode(code)) {
+                index++;
+                continue;
+            }
+            const start = index;
+            index++;
+            while (index < text.length && isPawnIdentifierContinueCode(text.charCodeAt(index))) index++;
+            if (text.slice(start, index) !== 'for') continue;
+            let openIndex = index;
+            while (openIndex < text.length && isWhitespaceCharCode(text.charCodeAt(openIndex))) openIndex++;
+            if (text[openIndex] === '(') return start;
+        }
+        return -1;
+    }
+
     function parseDeclLine(logLine, rawLines, filePath, fileName, mode, options = {}) {
         let line = logLine.text.trim().replace(/;$/, '').trim();
         if (!line) return [];
-        const preprocessorDirective = line.startsWith('#')
+        const isPreprocessorDirective = isPreprocessorDirectiveLine(line);
+        const preprocessorDirective = isPreprocessorDirective
             ? parsePreprocessorDirectiveLine(line)
             : null;
-        if (line.startsWith('#') && preprocessorDirective?.keyword !== 'define') return [];
+        if (isPreprocessorDirective && preprocessorDirective?.keyword !== 'define') return [];
 
         const lineNumber = logLine.startLine;
         if (!preprocessorDirective && !options.skipDeclarationMacroExpansion) {
@@ -678,7 +720,7 @@ function createDeclarationParsingCore(deps) {
             const parsedDefine = parsePreprocessorDefineDirective(preprocessorDirective);
             if (!parsedDefine?.valid) return [];
             const { name, args, macroStyle, macroIndexer, value } = parsedDefine;
-            if (!macroStyle && name.startsWith('_')) return [];
+            if (!macroStyle && name.startsWith('_') && !String(value || '').trim()) return [];
             const defineDecl = {
                 name,
                 args,
@@ -712,12 +754,19 @@ function createDeclarationParsingCore(deps) {
 
         const nm = nameSource.match(NAME_RE);
         if (!nm) return [];
-        const name = nm[1];
+        let name = nm[1];
         if (FORBIDDEN.has(name)) return [];
         rest = nameSource.slice(nm[0].length).trimStart();
 
         if (rest.startsWith('(')) {
             if (mode === 'local') return [];
+            if (name.startsWith('@') && name.length > 1) {
+                if (!modifiers.includes('native') &&
+                    !modifiers.includes('forward') &&
+                    !modifiers.includes('public')) {
+                    modifiers.push('public');
+                }
+            }
             const argsRaw = extractParenContent(rest) ?? '';
             const closeParenIndex = findMatchingParenInText(rest, 0);
             const stateSpec = closeParenIndex >= 0
@@ -958,7 +1007,8 @@ function createDeclarationParsingCore(deps) {
             bodyStartLine,
             bodyEndLine,
             base.lineCtrlChars,
-            base.defineDirectiveEvents
+            base.defineDirectiveEvents,
+            base.defineDecls
         );
         base.localDeclsByFunction.set(func, locals);
         return locals;
@@ -966,10 +1016,10 @@ function createDeclarationParsingCore(deps) {
 
     function isPotentialLocalDeclarationStartLine(line) {
         const trimmed = String(line || '').trimStart();
-        return /^(?:new|static|const|enum)\b/.test(trimmed);
+        return startsWithLocalDeclarationKeyword(trimmed);
     }
 
-    function appendLocalsThroughCursor(locals, strippedLines, rawLines, depths, filePath, fileName, bodyFunc, fromLine, cursorLine, lineCtrlChars = [], defineDirectiveEvents = []) {
+    function appendLocalsThroughCursor(locals, strippedLines, rawLines, depths, filePath, fileName, bodyFunc, fromLine, cursorLine, lineCtrlChars = [], defineDirectiveEvents = [], baseDefineDecls = []) {
         if (!bodyFunc || fromLine > cursorLine) return;
         const bodyStartLine = (bodyFunc.headerEndLine ?? bodyFunc.startLine) + 1;
         const parseFromLine = Math.max(bodyStartLine, fromLine);
@@ -979,7 +1029,8 @@ function createDeclarationParsingCore(deps) {
         let activeDefineDeclsEventIndex = 0;
         let activeDefineDeclsAdvancedThrough = -1;
         const getActiveDefineDeclsBeforeLine = lineNumber => {
-            if (!Array.isArray(defineDirectiveEvents) || !defineDirectiveEvents.length) return [];
+            const baseDefines = Array.isArray(baseDefineDecls) ? baseDefineDecls : [];
+            if (!Array.isArray(defineDirectiveEvents) || !defineDirectiveEvents.length) return baseDefines;
             if (!activeDefineDeclsByLine) activeDefineDeclsByLine = new Map();
             const targetLine = Math.max(-1, (Number.isInteger(lineNumber) ? lineNumber : -1) - 1);
             if (targetLine > activeDefineDeclsAdvancedThrough) {
@@ -993,7 +1044,7 @@ function createDeclarationParsingCore(deps) {
                 activeDefineDeclsEventIndex = advanced.nextEventIndex;
                 activeDefineDeclsAdvancedThrough = targetLine;
             }
-            return [...activeDefineDeclsByLine.values()];
+            return [...baseDefines, ...activeDefineDeclsByLine.values()];
         };
 
         const singleStatementDecls = parseSingleStatementBodyDecls(
@@ -1026,16 +1077,41 @@ function createDeclarationParsingCore(deps) {
             const startK = k;
             const singleStatementDecl = singleStatementDecls.get(startK) || null;
             let declsOnLine;
+            let macroForDecls = false;
             if (singleStatementDecl) {
                 declsOnLine = singleStatementDecl.decls.map(d => ({ ...d }));
             } else {
                 const trimmedStartLine = String(strippedLines[startK] || '').trim();
+                const escapeChar = lineCtrlChars[startK] || getActiveCtrlChar();
+                const activeDefineDecls = getActiveDefineDeclsBeforeLine(startK);
+                let macroForLineText = '';
                 if (!/^for\s*\(/.test(trimmedStartLine) && !isPotentialLocalDeclarationStartLine(trimmedStartLine)) {
-                    continue;
+                    const virtualLine = virtualExpandedLineContextCore.getVirtualExpandedLineContext(
+                        trimmedStartLine,
+                        activeDefineDecls,
+                        {
+                            escapeChar,
+                            expandActualArgs: false,
+                            maxOutputLength: 8192
+                        }
+                    );
+                    const expandedLine = virtualLine.hasExpansion && virtualLine.changed
+                        ? virtualLine.expandedText
+                        : '';
+                    const forIndex = findForKeywordCallIndex(expandedLine, escapeChar);
+                    if (forIndex < 0) {
+                        continue;
+                    }
+                    macroForLineText = expandedLine.slice(forIndex);
+                    macroForDecls = true;
                 }
-                const { text: joinedText, nextLine } = collectDeclarationText(rawLines, k, lineCtrlChars, strippedLines);
-                const lineText = joinedText.trim();
-                k = nextLine - 1;
+                const declarationText = macroForLineText
+                    ? { text: macroForLineText, nextLine: k + 1 }
+                    : /^for\s*\(/.test(trimmedStartLine)
+                        ? collectForHeaderText(rawLines, k, lineCtrlChars, strippedLines)
+                        : collectDeclarationText(rawLines, k, lineCtrlChars, strippedLines);
+                const lineText = declarationText.text.trim();
+                k = declarationText.nextLine - 1;
                 if (/^for\s*\(/.test(lineText)) {
                     declsOnLine = parseForInit(
                         lineText,
@@ -1043,18 +1119,21 @@ function createDeclarationParsingCore(deps) {
                         filePath,
                         fileName,
                         startK,
-                        lineCtrlChars[startK] || getActiveCtrlChar(),
+                        escapeChar,
                         {
-                            defineDecls: getActiveDefineDeclsBeforeLine(startK)
+                            defineDecls: activeDefineDecls
                         }
                     );
+                    if (macroForDecls) {
+                        declsOnLine = declsOnLine.map(decl => ({ ...decl, macroForVar: true }));
+                    }
                 } else {
                     declsOnLine = parseDeclLine(
                         { text: lineText, startLine: startK },
                         rawLines, filePath, fileName, 'local',
                         {
-                            defineDecls: getActiveDefineDeclsBeforeLine(startK),
-                            escapeChar: lineCtrlChars[startK] || getActiveCtrlChar()
+                            defineDecls: activeDefineDecls,
+                            escapeChar
                         }
                     );
                 }
@@ -1062,17 +1141,24 @@ function createDeclarationParsingCore(deps) {
             for (const d of declsOnLine) {
                 const declDepth = singleStatementDecl
                     ? singleStatementDecl.declDepth
-                    : isFunctionSingleStatementBodyLine
-                        ? Math.max(1, (depths[bodyFunc.startLine] ?? 0) + 1)
-                    : (depths[startK] ?? 0);
+                    : d.macroForVar
+                        ? Math.max(
+                            (depths[startK] ?? 0) + 1,
+                            depths[startK + 1] ?? ((depths[startK] ?? 0) + 1)
+                        )
+                        : isFunctionSingleStatementBodyLine
+                            ? Math.max(1, (depths[bodyFunc.startLine] ?? 0) + 1)
+                            : (depths[startK] ?? 0);
                 d.declDepth = declDepth;
                 d.scopeEndLine = singleStatementDecl
                     ? singleStatementDecl.scopeEndLine
-                    : isFunctionSingleStatementBodyLine
-                        ? startK
-                    : d.isForVar
-                        ? findForScopeEndLine(strippedLines, depths, startK, lineCtrlChars)
-                        : findDepthScopeEndLine(depths, startK, declDepth);
+                    : d.macroForVar
+                        ? findDepthScopeEndLine(depths, startK, declDepth)
+                        : isFunctionSingleStatementBodyLine
+                            ? startK
+                            : d.isForVar
+                                ? findForScopeEndLine(strippedLines, depths, startK, lineCtrlChars)
+                                : findDepthScopeEndLine(depths, startK, declDepth);
                 locals.push(d);
             }
         }
@@ -1164,7 +1250,7 @@ function createDeclarationParsingCore(deps) {
             const trimmed = text.trim();
             if (!trimmed) continue;
             if (trimmed.startsWith('{')) return null;
-            if (trimmed.startsWith('#') || isExplicitDeclarationStartLine(trimmed)) return null;
+            if (isPreprocessorDirectiveLine(trimmed) || isExplicitDeclarationStartLine(trimmed)) return null;
             return line;
         }
 
@@ -1205,7 +1291,7 @@ function createDeclarationParsingCore(deps) {
         if (changeWindow.startLine < 0) return true;
 
         const structuralMarkerRe = /#|\{|\}|\/\*|\*\//;
-        const topLevelDeclCandidateRe = /^(?:#|enum\b|new\b|static\b|stock\b|public\b|private\b|const\b|forward\b|native\b)/;
+        const topLevelDeclCandidateRe = /^(?:#|@[A-Za-z_]\w*\s*\(|enum\b|new\b|static\b|stock\b|public\b|private\b|const\b|forward\b|native\b)/;
         for (let lineNumber = changeWindow.startLine; lineNumber <= changeWindow.endLine; lineNumber++) {
             const previousRawLine = String(previousBase.rawLines[lineNumber] || '');
             const nextRawLine = String(nextRawLines[lineNumber] || '');
@@ -1225,20 +1311,54 @@ function createDeclarationParsingCore(deps) {
         return true;
     }
 
+    function countVisiblePrefixDeclsByLine(decls, cursorLine) {
+        if (!Array.isArray(decls) || cursorLine === undefined) return Array.isArray(decls) ? decls.length : 0;
+        let low = 0;
+        let high = decls.length;
+        while (low < high) {
+            const mid = (low + high) >> 1;
+            const lineNumber = decls[mid]?.lineNumber ?? -1;
+            if (lineNumber <= cursorLine) low = mid + 1;
+            else high = mid;
+        }
+        return low;
+    }
+
+    function getScopedGlobalsForCursor(base, cursorLine) {
+        const globals = Array.isArray(base?.globals) ? base.globals : [];
+        if (cursorLine === undefined) return globals;
+        const count = countVisiblePrefixDeclsByLine(globals, cursorLine);
+        if (count >= globals.length) return globals;
+        if (!base.scopedGlobalsByPrefixCount) {
+            base.scopedGlobalsByPrefixCount = new Map();
+        }
+        const cached = base.scopedGlobalsByPrefixCount.get(count);
+        if (cached) return cached;
+        const scopedGlobals = count > 0 ? globals.slice(0, count) : [];
+        base.scopedGlobalsByPrefixCount.set(count, scopedGlobals);
+        return scopedGlobals;
+    }
+
     function parseFileDecls(text, filePath, fileName, cursorLine, preprocessedState = null, options = {}) {
         const cacheKey = normalizeFsPath(filePath);
         const usePreparsedLocals = options.preparseLocals === true;
         const cursorCacheKey = `${cursorLine === undefined ? '__all__' : String(cursorLine)}::locals:${usePreparsedLocals ? 1 : 0}`;
         const useCursorCache = options.cursorCache !== false;
-        const filterEnumEvalOuterDecls = decls => (Array.isArray(decls) ? decls : [])
-            .filter(decl =>
-                decl?.type === 'define' ||
-                decl?.type === 'enum' ||
-                decl?.type === 'enum-item'
-            );
-        const parseOuterDecls = filterEnumEvalOuterDecls(options.outerDecls);
-        const getParseOuterDeclsForLine = typeof options.getOuterDeclsForLine === 'function'
-            ? lineNumber => filterEnumEvalOuterDecls(options.getOuterDeclsForLine(lineNumber))
+        const parseOuterDecls = Array.isArray(options.enumEvalOuterDecls)
+            ? options.enumEvalOuterDecls
+            : filterEnumEvalOuterDecls(options.outerDecls);
+        const getParseOuterDeclsForLine = typeof options.getEnumEvalOuterDeclsForLine === 'function'
+            ? lineNumber => {
+                const lineOuterDecls = options.getEnumEvalOuterDeclsForLine(lineNumber);
+                return Array.isArray(lineOuterDecls) ? lineOuterDecls : parseOuterDecls;
+            }
+            : typeof options.getOuterDeclsForLine === 'function'
+            ? lineNumber => {
+                const lineOuterDecls = options.getOuterDeclsForLine(lineNumber);
+                return lineOuterDecls === options.outerDecls
+                    ? parseOuterDecls
+                    : filterEnumEvalOuterDecls(lineOuterDecls);
+            }
             : () => parseOuterDecls;
         const outerDeclsCacheKey = String(options.outerDeclsCacheKey ?? (
             parseOuterDecls.length ? `outer:${parseOuterDecls.length}` : ''
@@ -1277,12 +1397,15 @@ function createDeclarationParsingCore(deps) {
                 fromFilePath: filePath,
                 rawLines: sourceSnapshot?.rawLines,
                 strippedLines: sourceCtrlCharState?.strippedLines,
+                lineCtrlChars: sourceCtrlCharState?.lineCtrlChars || [],
+                finalCtrlChar: sourceCtrlCharState?.finalCtrlChar,
                 directiveCandidateLines: sourceCtrlCharState?.directiveCandidateLines || null,
                 returnState: true
             });
             const processedText = resolvedPreprocessedState.content;
             const processedSnapshot = getFileSnapshot(filePath, processedText, {
-                rawLines: resolvedPreprocessedState.rawLines
+                rawLines: resolvedPreprocessedState.rawLines,
+                ctrlCharState: getPreprocessedCtrlCharState(resolvedPreprocessedState)
             });
             const previousBase = fileCache?.base || null;
             const processedRawLines = processedSnapshot.rawLines;
@@ -1316,12 +1439,14 @@ function createDeclarationParsingCore(deps) {
                             strippedLines,
                             lineCtrlChars,
                             finalCtrlChar: processedSnapshot.finalCtrlChar,
+                            defineDecls: previousBase.defineDecls,
                             defineDirectiveEvents: previousBase.defineDirectiveEvents,
                             depths,
                             globals: previousBase.globals,
                             functions: previousBase.functions,
                             localDeclsByFunction: null,
-                            cursorFunctionIndex: null
+                            cursorFunctionIndex: null,
+                            scopedGlobalsByPrefixCount: previousBase.scopedGlobalsByPrefixCount || new Map()
                         };
                     }
                     const defineDirectiveEvents = collectDefineDirectiveEvents(
@@ -1421,12 +1546,14 @@ function createDeclarationParsingCore(deps) {
                         strippedLines,
                         lineCtrlChars,
                         finalCtrlChar: processedSnapshot.finalCtrlChar,
+                        defineDecls: resolvedPreprocessedState.defineDecls || [],
                         defineDirectiveEvents,
                         depths,
                         globals,
                         functions,
                         localDeclsByFunction: null,
-                        cursorFunctionIndex: null
+                        cursorFunctionIndex: null,
+                        scopedGlobalsByPrefixCount: new Map()
                     };
                 }, filePath, processedSnapshot.finalCtrlChar)
             };
@@ -1444,6 +1571,7 @@ function createDeclarationParsingCore(deps) {
                 rawLines,
                 strippedLines,
                 lineCtrlChars,
+                defineDecls,
                 defineDirectiveEvents,
                 depths,
                 globals,
@@ -1498,7 +1626,8 @@ function createDeclarationParsingCore(deps) {
                             previousSequentialState.scannedToLine + 1,
                             cursorLine,
                             lineCtrlChars,
-                            defineDirectiveEvents
+                            defineDirectiveEvents,
+                            defineDecls
                         );
                     }
                     if (nextDefineEvent && nextDefineEvent.lineNumber <= cursorLine) {
@@ -1552,7 +1681,8 @@ function createDeclarationParsingCore(deps) {
                         bodyStartLine,
                         cursorLine,
                         lineCtrlChars,
-                        defineDirectiveEvents
+                        defineDirectiveEvents,
+                        defineDecls
                     );
                 }
 
@@ -1610,9 +1740,7 @@ function createDeclarationParsingCore(deps) {
                 return cursorLine >= declLine && cursorLine <= scopeEndLine;
             });
 
-            const scopedGlobals = cursorLine === undefined
-                ? globals
-                : globals.filter(globalDecl => globalDecl.lineNumber <= cursorLine);
+            const scopedGlobals = getScopedGlobalsForCursor(fileCache.base, cursorLine);
             const activeDefineDecls = [...activeDefinesMap.values()];
             const scopedDefineGlobals = activeDefineDecls.filter(isObjectLikeDefineDecl);
             const scopedDefineFunctions = activeDefineDecls
@@ -1702,6 +1830,7 @@ function createDeclarationParsingCore(deps) {
         isExplicitDeclarationStartLine,
         parseDeclLine,
         collectActiveDefineDecls,
+        filterEnumEvalOuterDecls,
         parseFileDecls
     };
 }

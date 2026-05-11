@@ -1,6 +1,23 @@
 const { createUtilityCore } = require('../utils');
+const { normalizePathKey } = require('../utils/path');
+const {
+    isAnyPawnTagName,
+    isFixedPawnTagName,
+    normalizePawnTagName
+} = require('../syntax/tags');
+const {
+    containsPawnIdentifierStartChar,
+    getPawnIdentifierName,
+    isPawnIdentifierName
+} = require('../syntax/identifiers');
+const { findBalancedGroupEnd: findBalancedGroupEndCore } = require('../syntax/balanced');
 const { createSemanticSyntaxCore } = require('../syntax/semantic-classifier');
 const { createMacroExpansionSyntaxCore } = require('../syntax/macro-expander');
+const {
+    findPreviousNonWhitespaceIndex: findPreviousPawnNonWhitespaceIndex,
+    skipPawnWhitespace
+} = require('../syntax/whitespace');
+const { splitPawnLines } = require('../syntax/lines');
 const { createArrayShapeCore } = require('../array-shape');
 const { createArrayShapeDiagnosticsCore } = require('./array-shape-diagnostics');
 const { createNumericDimensionValidationCore } = require('./numeric-dimensions');
@@ -40,11 +57,10 @@ function createValidationCore(deps) {
         isPawnIdentifierStartChar = defaultIsPawnIdentifierStartChar,
         isPawnIdentifierContinueChar = defaultIsPawnIdentifierContinueChar
     } = deps;
-    const declLookupCache = new WeakMap();
     const effectiveDeclDimPartsCache = new WeakMap();
     const functionReturnTypeCache = new WeakMap();
     const functionReturnTypeStableCache = new Map();
-    const normalizeCachePath = value => String(value || '').replace(/\\/g, '/').toLowerCase();
+    const normalizeCachePath = normalizePathKey;
     const semanticSyntaxCore = createSemanticSyntaxCore({
         isEscapedQuote,
         isIdentifierStartChar: isPawnIdentifierStartChar,
@@ -100,12 +116,9 @@ function createValidationCore(deps) {
         !String(expectedTag || '').trim() &&
         !String(actualDims || '').trim() &&
         String(actualTag || '').toLowerCase() === 'bool';
-    function normalizeEnumName(value) {
-        return String(value || '').replace(/^_?\s*:\s*/, '').trim();
-    }
-    const normalizeTagName = value => String(value || '').replace(/^_?\s*:\s*/, '').trim();
-    const isAnyTagName = value => normalizeTagName(value).toLowerCase() === 'any';
-    const isFixedPawnTagName = value => /^[A-Z]/.test(normalizeTagName(value));
+    const normalizeEnumName = normalizePawnTagName;
+    const normalizeTagName = normalizePawnTagName;
+    const isAnyTagName = isAnyPawnTagName;
 
     function isIdentifierStartChar(char = '') {
         return isPawnIdentifierStartChar(char);
@@ -154,26 +167,10 @@ function createValidationCore(deps) {
             text[probe - 1] === '0';
     }
 
-    function getDeclLookup(decls = []) {
-        if (!Array.isArray(decls) || !decls.length) return null;
-        if (decls.length < 24) return null;
-        let lookup = declLookupCache.get(decls);
-        if (lookup) return lookup;
-
-        lookup = new Map();
-        for (const decl of decls) {
-            if (!decl?.name || lookup.has(decl.name)) continue;
-            lookup.set(decl.name, decl);
-        }
-        declLookupCache.set(decls, lookup);
-        return lookup;
-    }
-
     function findDeclByNameFromList(decls = [], name = '', predicate = null) {
         if (!name) return null;
-        const lookup = predicate ? null : getDeclLookup(decls);
-        if (lookup) {
-            return lookup.get(name) || null;
+        if (predicate || (Array.isArray(decls) && decls.length >= 24)) {
+            return findDeclByNameCached(decls, name, predicate);
         }
         return decls.find(item => item.name === name && (!predicate || predicate(item))) || null;
     }
@@ -296,7 +293,7 @@ function createValidationCore(deps) {
             return { isLValue: false, isConst: false, dims: '', baseDecl: null, name: '', isIndexedAccess: false };
         }
 
-        const bareName = source.match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+        const bareName = getPawnIdentifierName(source);
         if (bareName) {
             const decl = findVariableDeclByNameFromSources(decls, bareName, analysisCache);
             if (!decl) {
@@ -365,47 +362,18 @@ function createValidationCore(deps) {
     }
 
     function findFirstNonWhitespaceIndex(source, startIndex = 0) {
-        const text = String(source || '');
-        let index = Math.max(0, startIndex);
-        while (index < text.length && /\s/.test(text[index])) index++;
-        return index;
+        return skipPawnWhitespace(source, startIndex);
     }
 
     function findPreviousNonWhitespaceIndex(source, startIndex = 0) {
-        const text = String(source || '');
-        let index = Math.min(text.length - 1, startIndex);
-        while (index >= 0 && /\s/.test(text[index])) index--;
-        return index;
+        return findPreviousPawnNonWhitespaceIndex(source, startIndex);
     }
 
     function findBalancedGroupEnd(source, openIndex, openChar = '(', closeChar = ')', escapeChar = getActiveCtrlChar()) {
-        const text = String(source || '');
-        if (text[openIndex] !== openChar) return -1;
-        let depth = 0;
-        let inStr = false;
-        let strCh = '';
-        for (let index = openIndex; index < text.length; index++) {
-            const char = text[index];
-            if (inStr) {
-                if (char === strCh && !isEscapedQuote(text, index, escapeChar)) inStr = false;
-                continue;
-            }
-            if (char === '"' || char === "'") {
-                inStr = true;
-                strCh = char;
-                continue;
-            }
-            if (char === openChar) {
-                depth++;
-                continue;
-            }
-            if (char === closeChar) {
-                depth--;
-                if (depth === 0) return index;
-                if (depth < 0) return -1;
-            }
-        }
-        return -1;
+        return findBalancedGroupEndCore(source, openIndex, openChar, closeChar, {
+            escapeChar,
+            isEscapedQuote
+        });
     }
 
     function hasUnclosedFunctionCallGroup(source, escapeChar = getActiveCtrlChar()) {
@@ -462,9 +430,13 @@ function createValidationCore(deps) {
         const text = String(source || '');
         let end = index;
         while (true) {
-            const bracketStart = findFirstNonWhitespaceIndex(text, end);
-            if (text[bracketStart] !== '[') break;
-            const closeIndex = findBalancedGroupEnd(text, bracketStart, '[', ']', escapeChar);
+            const accessStart = findFirstNonWhitespaceIndex(text, end);
+            const openChar = text[accessStart];
+            const closeChar = openChar === '['
+                ? ']'
+                : (openChar === '{' ? '}' : '');
+            if (!closeChar) break;
+            const closeIndex = findBalancedGroupEnd(text, accessStart, openChar, closeChar, escapeChar);
             if (closeIndex < 0) break;
             end = closeIndex + 1;
         }
@@ -473,7 +445,7 @@ function createValidationCore(deps) {
 
     function mayContainArrayScalarExpressionUse(source, escapeChar = getActiveCtrlChar()) {
         const text = String(source || '');
-        if (!/[A-Za-z_@]/.test(text)) return false;
+        if (!containsPawnIdentifierStartChar(text)) return false;
         let inStr = false;
         let strCh = '';
         for (let index = 0; index < text.length; index++) {
@@ -558,7 +530,7 @@ function createValidationCore(deps) {
 
         const inferred = inferArgType(source, decls, analysisCache);
         if (inferred?.dims) {
-            const bareName = source.match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+            const bareName = getPawnIdentifierName(source);
             if (bareName && findVariableDeclByNameFromSources(decls, bareName, analysisCache)?.dims) {
                 return { name: bareName };
             }
@@ -601,7 +573,7 @@ function createValidationCore(deps) {
 
     function expandExpressionMacrosForTypeInference(expr, decls = [], analysisCache = null, disabledNames = new Set()) {
         const source = String(expr || '').trim();
-        if (!source || source.length > 512 || !/[A-Za-z_@]/.test(source)) return '';
+        if (!source || source.length > 512 || !containsPawnIdentifierStartChar(source)) return '';
         const expanded = macroExpansionCore.expandMacros(source, decls, {
             escapeChar: getActiveCtrlChar(),
             disabledNames,
@@ -653,7 +625,7 @@ function createValidationCore(deps) {
                 ? String(openDocument.getText?.() || '')
                 : String(fs.readFileSync(decl.filePath, 'utf8') || '');
             if (!text) return cacheFunctionReturnTypeResult(fallback);
-            const lines = text.split(/\r?\n/);
+            const lines = splitPawnLines(text);
             const startLine = Math.max(0, Math.min(lines.length - 1, decl.lineNumber));
             let headerLine = startLine;
             const headerRe = new RegExp(`\\b${escapeRegExp(decl.name)}\\s*\\(`);
@@ -768,7 +740,7 @@ function createValidationCore(deps) {
                 item => item.type === 'define' && !item.args,
                 analysisCache
             );
-            const aliasTargetName = String(aliasDefine?.value || '').trim().match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+            const aliasTargetName = getPawnIdentifierName(aliasDefine?.value);
             if (aliasTargetName) {
                 decl = findAnyDeclByNameFromSources(
                     decls,
@@ -846,11 +818,14 @@ function createValidationCore(deps) {
         });
     }
 
+    const BINARY_BOOL_OPERATORS = new Set(['&&', '||', '<', '<=', '>', '>=', '==', '!=']);
+    const POTENTIAL_BINARY_OPERATOR_RE = /&&|\|\||==|!=|<=|>=|<<|>>|[+\-*\/%<>&|^]/;
+
     function inferTopLevelBinaryExprType(source, allDecls, analysisCache) {
+        if (!POTENTIAL_BINARY_OPERATOR_RE.test(String(source || ''))) return null;
         const binaryExpr = splitTopLevelBinaryExpression(source);
         if (!binaryExpr) return null;
-        const comparisonOps = new Set(['&&', '||', '<', '<=', '>', '>=', '==', '!=']);
-        if (binaryExpr.operators.some(op => comparisonOps.has(op))) {
+        if (binaryExpr.operators.some(op => BINARY_BOOL_OPERATORS.has(op))) {
             return { tag: 'bool', dims: '' };
         }
         const operandTypes = binaryExpr.parts.map(part => inferArgType(part, allDecls, analysisCache));
@@ -936,9 +911,11 @@ function createValidationCore(deps) {
                 return finish(underlying);
             }
         }
-        const ternaryExpr = semanticSyntaxCore.parseTopLevelTernaryExpression(s, {
-            escapeChar: getActiveCtrlChar()
-        });
+        const ternaryExpr = s.includes('?')
+            ? semanticSyntaxCore.parseTopLevelTernaryExpression(s, {
+                escapeChar: getActiveCtrlChar()
+            })
+            : null;
         if (ternaryExpr) {
             const whenTrue = inferArgType(ternaryExpr.whenTrue, allDecls, analysisCache);
             const whenFalse = inferArgType(ternaryExpr.whenFalse, allDecls, analysisCache);
@@ -1036,7 +1013,7 @@ function createValidationCore(deps) {
                     item => item.type === 'define' && !item.args,
                     analysisCache
                 );
-                const aliasTargetName = String(aliasDefine?.value || '').trim().match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+                const aliasTargetName = getPawnIdentifierName(aliasDefine?.value);
                 if (aliasTargetName) {
                     decl = findAnyDeclByNameFromSources(
                         allDecls,
@@ -1084,7 +1061,7 @@ function createValidationCore(deps) {
             }
         }
 
-        if (/^[A-Za-z_@]\w*$/.test(s)) {
+        if (isPawnIdentifierName(s)) {
             const decl = findLocalDeclByNameFromSources(
                 allDecls,
                 s,
@@ -1115,7 +1092,7 @@ function createValidationCore(deps) {
             );
             if (defineDecl) {
                 const defineValue = String(defineDecl.value || '').trim();
-                const aliasTargetName = defineValue.match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+                const aliasTargetName = getPawnIdentifierName(defineValue);
                 if (aliasTargetName && aliasTargetName !== s) {
                     return finish(inferArgType(aliasTargetName, allDecls, analysisCache));
                 }
@@ -1218,7 +1195,7 @@ function createValidationCore(deps) {
                 return true;
             }
 
-            const bareName = source.match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+            const bareName = getPawnIdentifierName(source);
             if (bareName) {
                 const bareDecl = findAnyDeclByNameFromSources(allDecls, bareName, null, analysisCache);
                 if (bareDecl?.type === 'enum-item') {
@@ -1252,7 +1229,7 @@ function createValidationCore(deps) {
                 };
             }
 
-            const memberName = source.match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+            const memberName = getPawnIdentifierName(source);
             if (!memberName) return null;
 
             const enumDecl = findLocalDeclByNameFromSources(
@@ -1276,7 +1253,7 @@ function createValidationCore(deps) {
             };
         };
         const getExplicitEnumItemCellTag = expr => {
-            const memberName = String(expr || '').trim().match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+            const memberName = getPawnIdentifierName(expr);
             if (!memberName) return '';
             const memberDecl = findAnyDeclByNameFromSources(
                 allDecls,
@@ -1288,7 +1265,7 @@ function createValidationCore(deps) {
         };
         const resolveNumericDimensionEnumField = (expr, dimSpec) => {
             if (dimSpec?.capacity == null) return null;
-            const memberName = String(expr || '').trim().match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+            const memberName = getPawnIdentifierName(expr);
             if (!memberName) return null;
 
             const memberDecl = findAnyDeclByNameFromSources(
@@ -1354,7 +1331,7 @@ function createValidationCore(deps) {
                     item => item.type === 'enum',
                     analysisCache
                 );
-                const memberName = actualExpr.match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+                const memberName = getPawnIdentifierName(actualExpr);
                 const memberDecl = enumDecl?.enumMembers?.find(item => item.name === memberName) ||
                     findLocalDeclByNameFromSources(
                         allDecls,
@@ -1512,7 +1489,7 @@ function createValidationCore(deps) {
         const value = String(defineDecl?.value || '').trim();
         if (!value) return raw;
         if (value.startsWith('{') && value.endsWith('}')) return value;
-        const aliasName = value.match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+        const aliasName = getPawnIdentifierName(value);
         if (!aliasName) return raw;
         seen.add(raw);
         const resolved = resolveTagSpecAlias(aliasName, decls, analysisCache, seen);
@@ -1625,7 +1602,7 @@ function createValidationCore(deps) {
                     item => item.type === 'define' && !item.args,
                     analysisCache
                 );
-                const aliasTargetName = String(aliasDefine?.value || '').trim().match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+                const aliasTargetName = getPawnIdentifierName(aliasDefine?.value);
                 if (aliasTargetName && findAnyDeclByNameFromSources(decls, aliasTargetName, predicate, analysisCache)) {
                     return true;
                 }

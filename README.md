@@ -5,8 +5,6 @@ It brings syntax highlighting, semantic hovers, completion, live diagnostics, in
 
 Recommended AMX Mod X version: 1.9.0 or newer.
 
-The extension is built around a shared semantic core, so hover, completion, and diagnostics use the same parsing and type-analysis rules instead of separate one-off checks.
-
 ## Features
 
 - AMXX Pawn syntax highlighting for source files and compiler-recognized include files, with configurable file extensions.
@@ -15,6 +13,8 @@ The extension is built around a shared semantic core, so hover, completion, and 
 - Fast completion for functions, variables, arguments, enum fields, compiler symbols, and include declarations.
 - Scope-aware completion that understands the current function/block, so local variables and arguments are suggested only where they are actually visible.
 - Completion ordering prefers active micro-scope locals from nested blocks, branches, and `for` declarations, then regular function locals, function arguments, globals, and include declarations.
+- Function-call completion avoids duplicating an already typed argument block, does not expand call snippets inside strings, and uses clean parameter-name placeholders for calls.
+- Forward completion can generate a new implementation body while preserving the full forward signature for declarations.
 - Semantic hover for globals, locals, function arguments, functions, includes, enum members, struct-like enum fields, bitmasks, array/indexed access, and call signatures.
 - Hover modes: normal hover, disabled hover, or experimental Ctrl/Shift/Alt-only modes for Windows.
 - Compact/full/signature-only hover content modes.
@@ -24,6 +24,7 @@ The extension is built around a shared semantic core, so hover, completion, and 
 - Live validation issue modes: errors only or errors and warnings.
 - Compiler-like diagnostics for common Pawn errors: missing/extra arguments, tag mismatches, array dimension issues, invalid indexed access, invalid statements, invalid characters, preprocessor issues, enum/initializer problems, lvalue/const issues, return-style problems, unreachable code, deprecated symbols, unused symbols, and more.
 - `#include`, `#define`, `#if/#elseif/#else/#endif`, `#pragma`, `#error`, and `#assert` analysis for live diagnostics.
+- Macro-aware local analysis for function-like macros that expand into common control/declaration patterns.
 - Detection of invalid non-Pawn characters outside strings/comments.
 - Dynamic stack usage warning that can suggest increasing `#pragma dynamic`.
 - Configurable include validation mode for balancing strict include checks with real-world AMXX include usage.
@@ -143,6 +144,12 @@ Then use the `AMXX Pawn All-In: Compile Current File` command or the editor titl
 
 - `amxxPawnAllIn.completionEnabled`
   Enable or disable completion provider.
+
+- `amxxPawnAllIn.completionForwardDeclarationStyle`
+  Controls whether forward suggestions at top level insert only a signature, a same-line body, or a next-line body.
+
+- `amxxPawnAllIn.callbackSignatureMode`
+  `strict` keeps full forward-backed callback signature checks. `compiler-like` is more tolerant of partial callback signatures and unused forward callback parameters.
 
 - `amxxPawnAllIn.persistentIncludeDeclarationCacheMaxMB`
   Disk cache limit for include declaration and include graph snapshots. `0` disables this cache.

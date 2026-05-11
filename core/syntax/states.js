@@ -1,55 +1,22 @@
+const {
+    readPawnIdentifierAt
+} = require('./identifiers');
+const { findBalancedGroupEnd } = require('./balanced');
+const { skipPawnWhitespace } = require('./whitespace');
+
 function createStateSyntaxCore() {
     const stateModelCache = new WeakMap();
 
-    const isIdentifierStart = char => !!char && /[A-Za-z_@]/.test(char);
-    const isIdentifierContinue = char => !!char && /[A-Za-z0-9_@]/.test(char);
     const isOperatorName = name => /^operator/.test(String(name || ''));
 
-    function skipWhitespace(source, index) {
-        const text = String(source || '');
-        let cursor = Math.max(0, index || 0);
-        while (cursor < text.length && /\s/.test(text[cursor])) cursor++;
-        return cursor;
-    }
-
     function readIdentifier(source, index) {
-        const text = String(source || '');
-        let cursor = Math.max(0, index || 0);
-        if (!isIdentifierStart(text[cursor] || '')) return null;
-        const start = cursor++;
-        while (cursor < text.length && isIdentifierContinue(text[cursor])) cursor++;
-        return {
-            text: text.slice(start, cursor),
-            start,
-            end: cursor
-        };
+        return readPawnIdentifierAt(source, index);
     }
 
     function findMatchingGroupEnd(source, openIndex, openChar, closeChar) {
-        const text = String(source || '');
-        if (text[openIndex] !== openChar) return -1;
-        let depth = 0;
-        let quote = '';
-        for (let index = openIndex; index < text.length; index++) {
-            const char = text[index];
-            if (quote) {
-                if (char === quote && text[index - 1] !== '\\') quote = '';
-                continue;
-            }
-            if (char === '"' || char === '\'') {
-                quote = char;
-                continue;
-            }
-            if (char === openChar) {
-                depth++;
-                continue;
-            }
-            if (char === closeChar) {
-                depth--;
-                if (depth === 0) return index;
-            }
-        }
-        return -1;
+        return findBalancedGroupEnd(source, openIndex, openChar, closeChar, {
+            isEscapedQuote: (text, index) => text[index - 1] === '\\'
+        });
     }
 
     function parseStateSpecBody(body, bodyOffset = 0) {
@@ -65,7 +32,7 @@ function createStateSyntaxCore() {
         let currentAutomaton = null;
         let firstAutomaton = null;
         while (cursor < source.length) {
-            cursor = skipWhitespace(source, cursor);
+            cursor = skipPawnWhitespace(source, cursor);
             if (cursor >= source.length) break;
 
             const first = readIdentifier(source, cursor);
@@ -77,7 +44,7 @@ function createStateSyntaxCore() {
                 });
                 break;
             }
-            cursor = skipWhitespace(source, first.end);
+            cursor = skipPawnWhitespace(source, first.end);
 
             let automaton = currentAutomaton ?? '';
             let state = first.text;
@@ -89,7 +56,7 @@ function createStateSyntaxCore() {
                 automaton = first.text;
                 automatonStart = first.start;
                 automatonEnd = first.end;
-                cursor = skipWhitespace(source, cursor + 1);
+                cursor = skipPawnWhitespace(source, cursor + 1);
                 const second = readIdentifier(source, cursor);
                 if (!second) {
                     spec.issues.push({
@@ -128,7 +95,7 @@ function createStateSyntaxCore() {
                 stateEnd: bodyOffset + stateEnd
             });
 
-            cursor = skipWhitespace(source, cursor);
+            cursor = skipPawnWhitespace(source, cursor);
             if (source[cursor] === ',') {
                 cursor++;
                 continue;
@@ -148,7 +115,7 @@ function createStateSyntaxCore() {
 
     function parseFunctionStateSpecTail(tail, baseOffset = 0) {
         const text = String(tail || '');
-        const start = skipWhitespace(text, 0);
+        const start = skipPawnWhitespace(text, 0);
         if (text[start] !== '<') return null;
         const end = findMatchingGroupEnd(text, start, '<', '>');
         if (end < 0) {
@@ -187,10 +154,10 @@ function createStateSyntaxCore() {
 
     function parseStateStatement(source) {
         const text = String(source || '');
-        let cursor = skipWhitespace(text, 0);
+        let cursor = skipPawnWhitespace(text, 0);
         const stateKeyword = readIdentifier(text, cursor);
         if (!stateKeyword || stateKeyword.text !== 'state') return null;
-        cursor = skipWhitespace(text, stateKeyword.end);
+        cursor = skipPawnWhitespace(text, stateKeyword.end);
 
         if (text[cursor] === '(') {
             const close = findMatchingGroupEnd(text, cursor, '(', ')');
@@ -205,7 +172,7 @@ function createStateSyntaxCore() {
                     }]
                 };
             }
-            cursor = skipWhitespace(text, close + 1);
+            cursor = skipPawnWhitespace(text, close + 1);
         }
 
         const first = readIdentifier(text, cursor);
@@ -220,7 +187,7 @@ function createStateSyntaxCore() {
                 }]
             };
         }
-        cursor = skipWhitespace(text, first.end);
+        cursor = skipPawnWhitespace(text, first.end);
 
         let automaton = '';
         let state = first.text;
@@ -232,7 +199,7 @@ function createStateSyntaxCore() {
             automaton = first.text;
             automatonStart = first.start;
             automatonEnd = first.end;
-            cursor = skipWhitespace(text, cursor + 1);
+            cursor = skipPawnWhitespace(text, cursor + 1);
             const second = readIdentifier(text, cursor);
             if (!second) {
                 return {
@@ -253,9 +220,9 @@ function createStateSyntaxCore() {
             stateEnd = second.end;
             cursor = second.end;
         }
-        cursor = skipWhitespace(text, cursor);
+        cursor = skipPawnWhitespace(text, cursor);
         if (text[cursor] === ';') {
-            cursor = skipWhitespace(text, cursor + 1);
+            cursor = skipPawnWhitespace(text, cursor + 1);
         }
         const trailingText = text.slice(cursor).trim();
         const hasTrailingContent = !!trailingText;

@@ -1,6 +1,17 @@
 // Shared indexed-access parsing/validation helpers used by hover and live
 // validation. This keeps array-dimension logic in one place instead of
 // duplicating behavior across UI and diagnostics paths.
+const {
+    getPawnIdentifierName,
+    isPawnIdentifierContinueChar,
+    isPawnIdentifierContinueCode,
+    isPawnIdentifierName,
+    isPawnIdentifierStartChar,
+    isPawnIdentifierStartCode
+} = require('../syntax/identifiers');
+const { splitPawnLines } = require('../syntax/lines');
+const { isPawnWhitespaceCode, skipPawnWhitespace } = require('../syntax/whitespace');
+
 function createIndexedAccessCore(deps) {
     const {
         t,
@@ -18,17 +29,6 @@ function createIndexedAccessCore(deps) {
         findUnresolvedReferenceNames,
         evaluatePawnNumericExpr
     } = deps;
-
-    const isPawnIdentifierStartCode = code =>
-        (code >= 65 && code <= 90) ||
-        (code >= 97 && code <= 122) ||
-        code === 95 ||
-        code === 64;
-    const isPawnIdentifierContinueCode = code =>
-        isPawnIdentifierStartCode(code) ||
-        (code >= 48 && code <= 57);
-    const isWhitespaceCode = code =>
-        code === 32 || code === 9 || code === 10 || code === 13 || code === 11 || code === 12;
 
     function collectIndexedAccessExpressionsFromLine(lineText, escapeChar = getActiveCtrlChar()) {
         const source = String(lineText || '');
@@ -50,7 +50,7 @@ function createIndexedAccessCore(deps) {
             let cursor = nameEnd;
             const accesses = [];
             while (cursor < source.length) {
-                while (cursor < source.length && isWhitespaceCode(source.charCodeAt(cursor))) cursor++;
+                while (cursor < source.length && isPawnWhitespaceCode(source.charCodeAt(cursor))) cursor++;
                 if (source.charCodeAt(cursor) !== 91) break;
 
                 const accessStart = cursor;
@@ -123,14 +123,11 @@ function createIndexedAccessCore(deps) {
         let cursor = 0;
         let sawModifier = false;
 
-        const skipSpaces = () => {
-            while (cursor < segment.length && /\s/.test(segment[cursor])) cursor++;
-        };
         const readIdentifier = () => {
             const start = cursor;
-            if (!/[A-Za-z_@]/.test(segment[cursor] || '')) return '';
+            if (!isPawnIdentifierStartChar(segment[cursor] || '')) return '';
             cursor++;
-            while (cursor < segment.length && /[A-Za-z0-9_@]/.test(segment[cursor])) cursor++;
+            while (cursor < segment.length && isPawnIdentifierContinueChar(segment[cursor])) cursor++;
             return segment.slice(start, cursor);
         };
         const readBraceTag = () => {
@@ -150,24 +147,24 @@ function createIndexedAccessCore(deps) {
             return false;
         };
 
-        skipSpaces();
+        cursor = skipPawnWhitespace(segment, cursor);
         while (cursor < segment.length) {
             const before = cursor;
             const ident = readIdentifier();
             if (ident) {
                 if (modifiers.has(ident.toLowerCase())) {
                     sawModifier = true;
-                    skipSpaces();
+                    cursor = skipPawnWhitespace(segment, cursor);
                     continue;
                 }
             } else if (!readBraceTag()) {
                 return false;
             }
 
-            skipSpaces();
+            cursor = skipPawnWhitespace(segment, cursor);
             if (segment[cursor] !== ':') return false;
             cursor++;
-            skipSpaces();
+            cursor = skipPawnWhitespace(segment, cursor);
             if (cursor === before) return false;
         }
 
@@ -281,8 +278,7 @@ function createIndexedAccessCore(deps) {
         if (indexedBase) return indexedBase;
         const quotedId = s.match(/^"([A-Za-z_@]\w*)"$/);
         if (quotedId) return quotedId[1];
-        const id = s.match(/^([A-Za-z_@]\w*)$/);
-        return id?.[1] || '';
+        return getPawnIdentifierName(s);
     }
 
     function buildIndexedAccessSelectionModel(accessCtx, character, escapeChar = getActiveCtrlChar(), options = {}) {
@@ -395,7 +391,7 @@ function createIndexedAccessCore(deps) {
         const word = token.text;
         const text = String(sourceText || document.getText());
         const lineCtrlChars = ctrlCharResolver?.lineCtrlChars || getCtrlCharStateForContent(text, document.fileName).lineCtrlChars;
-        const rawLines = text.split(/\r?\n/);
+        const rawLines = splitPawnLines(text);
 
         for (const decl of variableDecls) {
             if (decl?.type !== 'variable' || decl.name !== word) continue;
@@ -458,7 +454,7 @@ function createIndexedAccessCore(deps) {
             );
         }
         const actualNumericValue = evaluatePawnNumericExpr(actual, allDecls, new Set(), analysisCache);
-        const actualBareName = actual.match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+        const actualBareName = getPawnIdentifierName(actual);
         const findActualEnumItemDecl = () => actualBareName
             ? (
                 analysisCache?.findAnyDeclByName(
@@ -627,7 +623,7 @@ function createIndexedAccessCore(deps) {
                 });
             }
 
-            const memberName = actual.match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+            const memberName = getPawnIdentifierName(actual);
             const memberDecl = memberName && (
                 expectedEnumDecl.enumMembers?.find(item => item.name === memberName) ||
                 analysisCache?.findDeclByName(
@@ -647,7 +643,7 @@ function createIndexedAccessCore(deps) {
                 return cacheResult({ status: 'ok', reason: '' });
             }
 
-            if (!/^[A-Za-z_@]\w*$/.test(actual)) {
+            if (!isPawnIdentifierName(actual)) {
                 return cacheResult({ status: 'ok', reason: '' });
             }
 

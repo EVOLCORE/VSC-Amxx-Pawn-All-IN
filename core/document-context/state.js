@@ -20,12 +20,34 @@ function createDocumentContextStateCore(deps) {
         checks: new WeakMap()
     };
     const normalizeIncludeContent = content => String(content || '').replace(/\\\r?\n/g, ' ');
+    const isSameOpenDocumentPath = (left, right) => {
+        const leftPath = normalizeFsPath(left?.fileName || '');
+        const rightPath = normalizeFsPath(right?.fileName || '');
+        return !!leftPath && leftPath === rightPath;
+    };
+    const isDocumentVisibleOrActive = document => {
+        if (!document) return false;
+        if (isSameOpenDocumentPath(vscode?.window?.activeTextEditor?.document || null, document)) {
+            return true;
+        }
+        return (vscode?.window?.visibleTextEditors || []).some(editor =>
+            isSameOpenDocumentPath(editor?.document || null, document)
+        );
+    };
+    const shouldUseOpenDocumentAsSource = document => {
+        if (!document) return false;
+        if (document.isDirty === true) return true;
+        const normalized = normalizeFsPath(document.fileName || '');
+        if (!normalized) return false;
+        if (!includeDocumentModelWarmCache?.has(normalized)) return true;
+        return isDocumentVisibleOrActive(document);
+    };
     const getOpenDocument = filePath => {
         const normalized = normalizeFsPath(filePath);
         if (!normalized) return null;
         const openDocs = vscode?.workspace?.textDocuments || [];
         for (const doc of openDocs) {
-            if (normalizeFsPath(doc?.fileName) === normalized) {
+            if (normalizeFsPath(doc?.fileName) === normalized && shouldUseOpenDocumentAsSource(doc)) {
                 return doc;
             }
         }

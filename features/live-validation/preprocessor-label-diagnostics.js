@@ -96,7 +96,10 @@ function createPreprocessorLabelDiagnostics(deps) {
                 t(issue.messageKey, issue.params || {}),
                 issue.severity === 'warning' ? getWarningSeverity() : undefined
             );
-            if (issue.messageKey === 'validation.includeNotResolved') {
+            if (
+                issue.messageKey === 'validation.includeNotResolved' ||
+                issue.messageKey === 'validation.includeDependencyNotResolved'
+            ) {
                 diagnostic.code = LIVE_UNRESOLVED_INCLUDE_DIAGNOSTIC_CODE;
             }
             return diagnostic;

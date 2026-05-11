@@ -1,4 +1,11 @@
 const { createDeclarationRhsSourceReader } = require('./declaration-rhs-source');
+const {
+    isPawnIdentifierContinueChar,
+    isPawnIdentifierStartChar
+} = require('../../core/syntax/identifiers');
+const { startsWithDeclarationKeyword } = require('../../core/syntax/keywords');
+const { skipPawnWhitespace } = require('../../core/syntax/whitespace');
+const { isPreprocessorDirectiveLine } = require('../../core/syntax/preprocessor-lines');
 
 function createDeclarationDiagnostics(deps) {
     const {
@@ -51,7 +58,7 @@ function createDeclarationDiagnostics(deps) {
     function collectDeclarationLiveDiagnosticsForLine(document, lineNumber, ctx, lineText, strippedLineText, lineStartOffset, docLength, analysisCacheOrFactory = null) {
         const diagnostics = [];
         const trimmedLine = String(strippedLineText || lineText || '').trim();
-        if (!trimmedLine || trimmedLine.startsWith('#')) return diagnostics;
+        if (!trimmedLine || isPreprocessorDirectiveLine(trimmedLine)) return diagnostics;
         if (isFunctionHeaderLine(ctx, lineNumber)) return diagnostics;
         if (isPreprocessorContinuationLine(ctx, lineNumber)) return diagnostics;
 
@@ -101,7 +108,7 @@ function createDeclarationDiagnostics(deps) {
         };
         const escapeChar = ctx.resolver.ctrlCharAtLine(lineNumber);
         const occurrenceByName = new Map();
-        const isIdentifierChar = char => /[A-Za-z0-9_@]/.test(char || '');
+        const isIdentifierChar = isPawnIdentifierContinueChar;
         const findIdentifierSpanForOccurrence = (name, occurrenceIndex = 0) => {
             const target = String(name || '');
             if (!target) return null;
@@ -404,7 +411,7 @@ function createDeclarationDiagnostics(deps) {
             : -1;
         if (
             assignmentIndex >= 0 &&
-            !/^(?:new|static|const|stock|public|private|native|forward|enum)\b/.test(trimmedLine) &&
+            !startsWithDeclarationKeyword(trimmedLine) &&
             !/^\.\s*[A-Za-z_@]\w*\s*=/.test(trimmedLine)
         ) {
             const lhs = normalizedAssignmentLine.text.slice(0, assignmentIndex).trim();
@@ -483,13 +490,13 @@ function createDeclarationDiagnostics(deps) {
                 const lhsStart = lineText.indexOf(lhs, normalizedAssignmentLine.startOffset);
                 if (lhsStart < 0) return createLhsRange();
                 let cursor = lhsStart;
-                while (cursor < lineText.length && /\s/.test(lineText[cursor] || '')) cursor++;
+                cursor = skipPawnWhitespace(lineText, cursor);
                 let tagEnd = cursor;
-                if (!/[A-Za-z_@]/.test(lineText[tagEnd] || '')) return createLhsRange();
+                if (!isPawnIdentifierStartChar(lineText[tagEnd] || '')) return createLhsRange();
                 tagEnd++;
-                while (tagEnd < lineText.length && /[A-Za-z0-9_@]/.test(lineText[tagEnd] || '')) tagEnd++;
+                while (tagEnd < lineText.length && isPawnIdentifierContinueChar(lineText[tagEnd] || '')) tagEnd++;
                 let colon = tagEnd;
-                while (colon < lineText.length && /\s/.test(lineText[colon] || '')) colon++;
+                colon = skipPawnWhitespace(lineText, colon);
                 if (lineText[colon] !== ':') return createLhsRange();
                 return createOffsetRange(
                     document,

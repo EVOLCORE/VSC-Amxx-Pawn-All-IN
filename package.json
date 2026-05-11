@@ -2,7 +2,7 @@
   "name": "amxx-pawn-all-in",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "publisher": "Faktor",
   "icon": "resources/icon.png",
   "repository": {
@@ -266,7 +266,7 @@
         "amxxPawnAllIn.callbackSignatureMode": {
           "type": "string",
           "enum": ["strict", "compiler-like"],
-          "default": "strict",
+          "default": "compiler-like",
           "order": 89.2,
           "markdownDescription": "%config.callbackSignatureMode.markdownDescription%",
           "enumDescriptions": [
@@ -308,6 +308,18 @@
           "default": true,
           "order": 89.8,
           "markdownDescription": "%config.completionEnabled.markdownDescription%"
+        },
+        "amxxPawnAllIn.completionForwardDeclarationStyle": {
+          "type": "string",
+          "enum": ["disabled", "same-line", "next-line"],
+          "default": "same-line",
+          "order": 89.9,
+          "markdownDescription": "%config.completionForwardDeclarationStyle.markdownDescription%",
+          "enumDescriptions": [
+            "%config.completionForwardDeclarationStyle.enum.disabled%",
+            "%config.completionForwardDeclarationStyle.enum.same-line%",
+            "%config.completionForwardDeclarationStyle.enum.next-line%"
+          ]
         },
         "amxxPawnAllIn.hoverMode": {
           "type": "string",

@@ -165,6 +165,7 @@
   "validation.symbolAssignedValueNeverUsed": "symbol is assigned a value that is never used: \"{name}\"",
   "validation.dynamicStackUsageMayExceed": "local variable \"{name}\" may exceed #pragma dynamic in function \"{function}\": needs about {usage} cells, current limit is {limit}",
   "validation.includeNotResolved": "include not resolved: {name}. Open the project workspace or configure include paths.",
+  "validation.includeDependencyNotResolved": "include dependency not resolved: {name} (required by {parentName}). Open the project workspace or configure include paths.",
   "validation.symbolTruncated": "symbol is longer than {max} significant characters; compiler truncates it to \"{name}\"",
   "validation.macroRedefinition": "redefinition of macro (non-identical): {name}",
   "validation.constantRedefinition": "redefinition of constant (non-identical): {name}",

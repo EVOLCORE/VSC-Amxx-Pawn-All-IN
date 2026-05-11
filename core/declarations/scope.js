@@ -1,4 +1,12 @@
-const { isExplicitDeclarationStartLine } = require('./line-utils');
+const {
+    isExplicitDeclarationStartLine,
+    isPreprocessorDirectiveLine
+} = require('./line-utils');
+const {
+    hasOddTrailingBackslashContinuation,
+    removeTrailingBackslashContinuation
+} = require('../syntax/continuation');
+const { findBalancedGroupEnd } = require('../syntax/balanced');
 
 function computeFunctionRangeMaps(functions = [], depths = [], lineCount = 0, options = {}) {
     const includeHeader = options?.includeHeader === true;
@@ -126,21 +134,10 @@ function createDeclarationScopeCore(deps) {
     }
 
     function findMatchingParenInLine(line, openParenIndex, escapeChar = getActiveCtrlChar()) {
-        let d = 0, inStr = false, strCh = '';
-        for (let i = openParenIndex; i < line.length; i++) {
-            const c = line[i];
-            if (inStr) {
-                if (c === strCh && !isEscapedQuote(line, i, escapeChar)) inStr = false;
-                continue;
-            }
-            if (c === '"' || c === "'") { inStr = true; strCh = c; continue; }
-            if (c === '(') d++;
-            else if (c === ')') {
-                d--;
-                if (d === 0) return i;
-            }
-        }
-        return -1;
+        return findBalancedGroupEnd(line, openParenIndex, '(', ')', {
+            escapeChar,
+            isEscapedQuote
+        });
     }
 
     function findStatementScopeEndLine(lines, depths, startLine, startColumn, baseDepth, lineCtrlChars = []) {
@@ -458,7 +455,9 @@ function createDeclarationScopeCore(deps) {
             }
             if (!decls.length) continue;
 
-            const scopeEndLine = findSingleStatementControlEndLine(lines, depths, lineNumber, lineCtrlChars);
+            const scopeEndLine = decls.some(decl => decl?.isForVar)
+                ? findSingleStatementControlEndLine(lines, depths, lineNumber, lineCtrlChars)
+                : findDepthScopeEndLine(depths, bodyInfo.bodyLine, depths[bodyInfo.bodyLine] ?? 0);
 
             byLine.set(bodyInfo.bodyLine, {
                 decls,
@@ -472,12 +471,7 @@ function createDeclarationScopeCore(deps) {
 
     function hasTrailingLineContinuation(line, escapeChar = getActiveCtrlChar(), preparedLine = null) {
         const stripped = String(preparedLine ?? stripLineComment(String(line || ''), escapeChar)).trimEnd();
-        if (!stripped.endsWith('\\')) return false;
-        let slashCount = 0;
-        for (let i = stripped.length - 1; i >= 0 && stripped[i] === '\\'; i--) {
-            slashCount++;
-        }
-        return (slashCount % 2) === 1;
+        return hasOddTrailingBackslashContinuation(stripped);
     }
 
     function netParenBraceDepth(line, escapeChar = getActiveCtrlChar()) {
@@ -531,7 +525,7 @@ function createDeclarationScopeCore(deps) {
 
         while ((pd > 0 || bd > 0 || hasLineContinuation || awaitingBraceInitializer) && i < rawLines.length) {
             if (hasLineContinuation) {
-                joined = joined.trimEnd().replace(/\\\s*$/, '');
+                joined = removeTrailingBackslashContinuation(joined).trimEnd();
             }
             escapeChar = lineCtrlChars[i] || getActiveCtrlChar();
             const cont = sourceLines[i] || '';
@@ -547,7 +541,7 @@ function createDeclarationScopeCore(deps) {
         while (joined.trimEnd().endsWith(',') && i < rawLines.length) {
             const cont = sourceLines[i] || '';
             const trimmedCont = String(cont || '').trim();
-            if (!trimmedCont || trimmedCont.startsWith('#') || isExplicitDeclarationStartLine(trimmedCont)) {
+            if (!trimmedCont || isPreprocessorDirectiveLine(trimmedCont) || isExplicitDeclarationStartLine(trimmedCont)) {
                 break;
             }
             joined += ' ' + cont.trim();
@@ -555,6 +549,50 @@ function createDeclarationScopeCore(deps) {
         }
 
         return { text: joined, nextLine: i };
+    }
+
+    function collectForHeaderText(rawLines, startLine, lineCtrlChars = [], preparedLines = null) {
+        const sourceLines = preparedLines || rawLines;
+        let joined = '';
+        let parenDepth = 0;
+        let sawOpenParen = false;
+        let inString = false;
+        let stringChar = '';
+        let i = startLine;
+
+        for (; i < rawLines.length; i++) {
+            const line = String(sourceLines[i] || '');
+            const escapeChar = lineCtrlChars[i] || getActiveCtrlChar();
+            joined += (i === startLine ? '' : ' ') + line.trim();
+
+            for (let index = 0; index < line.length; index++) {
+                const char = line[index];
+                if (inString) {
+                    if (char === stringChar && !isEscapedQuote(line, index, escapeChar)) {
+                        inString = false;
+                    }
+                    continue;
+                }
+                if (char === '"' || char === "'") {
+                    inString = true;
+                    stringChar = char;
+                    continue;
+                }
+                if (char === '(') {
+                    sawOpenParen = true;
+                    parenDepth++;
+                    continue;
+                }
+                if (char === ')' && sawOpenParen) {
+                    parenDepth--;
+                    if (parenDepth <= 0) {
+                        return { text: joined, nextLine: i + 1 };
+                    }
+                }
+            }
+        }
+
+        return { text: joined, nextLine: Math.max(startLine + 1, i) };
     }
 
     return {
@@ -566,7 +604,8 @@ function createDeclarationScopeCore(deps) {
         findNextSignificantLine,
         findControlStatementBodyStart,
         parseSingleStatementBodyDecls,
-        collectDeclarationText
+        collectDeclarationText,
+        collectForHeaderText
     };
 }
 

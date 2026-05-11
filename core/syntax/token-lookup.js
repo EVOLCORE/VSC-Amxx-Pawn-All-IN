@@ -1,5 +1,7 @@
 // Token lookup helpers sit in syntax because they are language-mechanics
 // utilities shared by hover, navigation, declaration guards, and validation.
+const { isPawnIdentifierStartChar } = require('./identifiers');
+
 function createLookupTokenSyntaxCore(deps) {
     const {
         vscode,
@@ -75,7 +77,7 @@ function createLookupTokenSyntaxCore(deps) {
                 if (column < start || column >= start + len) continue;
                 if (
                     symbol === '&' &&
-                    /[A-Za-z_@]/.test(lineText[start + 1] || '') &&
+                    isPawnIdentifierStartChar(lineText[start + 1] || '') &&
                     !/[\w\])}]/.test(lineText[start - 1] || '')
                 ) {
                     continue;

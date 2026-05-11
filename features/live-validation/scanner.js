@@ -15,6 +15,7 @@ const {
     LIVE_VALIDATION_DIAGNOSTIC_ENGINE_SIGNATURE
 } = require('./diagnostic-engine-signature');
 const { createScannerLineState } = require('./scanner-state');
+const { isPreprocessorDirectiveLine: isPreprocessorDirectiveTextLine } = require('../../core/syntax/preprocessor-lines');
 
 const {
     normalizeLiveValidationIssueMode: defaultNormalizeLiveValidationIssueMode,
@@ -225,8 +226,7 @@ function createLiveValidationScanner(deps) {
             return !!documentScanPlan.backslashContinuationLines[lineNumber];
         };
         const isPreprocessorDirectiveLine = lineNumber => {
-            const trimmedRawLine = String(documentScanPlan.rawLines[lineNumber] || '').trimStart();
-            return trimmedRawLine.startsWith('#');
+            return isPreprocessorDirectiveTextLine(documentScanPlan.rawLines[lineNumber]);
         };
         const candidateLineNumbers = (() => {
             return documentScanPlan.lineIndex.expressionCandidateLines || [];
@@ -389,6 +389,23 @@ function createLiveValidationScanner(deps) {
         const hasContextEnumMemberDeclarationOnLine = (lineCtx, lineNumber) => {
             return !!isEnumMemberDeclarationLine(lineCtx, lineNumber);
         };
+        const macroProvidedLocalLineFlagsByParsedDecls = new WeakMap();
+        const hasMacroProvidedLocalDeclarationOnLine = (lineCtx, lineNumber) => {
+            const parsedDecls = lineCtx?.parsedDecls || null;
+            if (!parsedDecls) return false;
+            let flags = macroProvidedLocalLineFlagsByParsedDecls.get(parsedDecls);
+            if (flags === undefined) {
+                flags = null;
+                for (const local of parsedDecls.locals || []) {
+                    if (!local?.macroForVar) continue;
+                    if (!flags) flags = new Uint8Array(document.lineCount);
+                    const line = local.lineNumber;
+                    if (line >= 0 && line < document.lineCount) flags[line] = 1;
+                }
+                macroProvidedLocalLineFlagsByParsedDecls.set(parsedDecls, flags);
+            }
+            return !!flags?.[lineNumber];
+        };
         const findFunctionBodyRangeForLine = lineNumber => {
             return documentScanPlan.functionBodyRangeByLine[lineNumber] || null;
         };
@@ -510,6 +527,11 @@ function createLiveValidationScanner(deps) {
                 analysisCache = getAnalysisCacheForLine(lineNumber, lineCtx);
             }
 
+            if (lineCtx && hasMacroProvidedLocalDeclarationOnLine(lineCtx, lineNumber)) {
+                if (candidateDiagnosticsByLine) candidateDiagnosticsByLine[lineNumber] = EMPTY_DIAGNOSTICS;
+                return EMPTY_DIAGNOSTICS;
+            }
+
             if (lineCtx && hasContextEnumMemberDeclarationOnLine(lineCtx, lineNumber)) {
                 if (candidateDiagnosticsByLine) candidateDiagnosticsByLine[lineNumber] = EMPTY_DIAGNOSTICS;
                 return EMPTY_DIAGNOSTICS;
@@ -576,11 +598,13 @@ function createLiveValidationScanner(deps) {
             }
             let lineCtx = null;
             let isContextEnumMemberLine = false;
+            let isMacroLocalDeclarationLine = false;
             const getGeneralLineContext = () => {
                 if (lineCtx) return lineCtx;
                 lineCtx = getLineContext(lineNumber) || getCachedLineContext(lineNumber) || rootCtx;
                 setCachedLineContext(lineNumber, lineCtx);
                 isContextEnumMemberLine = hasContextEnumMemberDeclarationOnLine(lineCtx, lineNumber);
+                isMacroLocalDeclarationLine = hasMacroProvidedLocalDeclarationOnLine(lineCtx, lineNumber);
                 return lineCtx;
             };
             const shouldSkipContextDiagnostics = () => {
@@ -588,6 +612,10 @@ function createLiveValidationScanner(deps) {
                 if (!isContextEnumMemberLine) return false;
                 if (lineDiagnosticsByLine) lineDiagnosticsByLine[lineNumber] = EMPTY_DIAGNOSTICS;
                 return true;
+            };
+            const shouldSkipMacroRawLineDiagnostics = () => {
+                getGeneralLineContext();
+                return isMacroLocalDeclarationLine;
             };
             if (mayNeedUnknownSymbolValidation) {
                 if (shouldSkipContextDiagnostics()) return EMPTY_DIAGNOSTICS;
@@ -607,7 +635,7 @@ function createLiveValidationScanner(deps) {
                     addLineDiagnostic(diagnostic);
                 }
             }
-            if (mayNeedStrayTokenValidation) {
+            if (mayNeedStrayTokenValidation && !shouldSkipMacroRawLineDiagnostics()) {
                 if (shouldSkipContextDiagnostics()) return EMPTY_DIAGNOSTICS;
                 const ctx = getGeneralLineContext();
                 for (const diagnostic of collectStrayTokenLiveDiagnosticsForLine(
@@ -623,7 +651,7 @@ function createLiveValidationScanner(deps) {
                     addLineDiagnostic(diagnostic);
                 }
             }
-            if (mayNeedDeclarationValidation) {
+            if (mayNeedDeclarationValidation && !shouldSkipMacroRawLineDiagnostics()) {
                 if (shouldSkipContextDiagnostics()) return EMPTY_DIAGNOSTICS;
                 const ctx = getGeneralLineContext();
                 for (const diagnostic of collectDeclarationLiveDiagnosticsForLine(
@@ -639,7 +667,7 @@ function createLiveValidationScanner(deps) {
                     addLineDiagnostic(diagnostic);
                 }
             }
-            if (mayNeedExpressionOperatorValidation) {
+            if (mayNeedExpressionOperatorValidation && !shouldSkipMacroRawLineDiagnostics()) {
                 const expressionCtx = /\bsizeof\b/.test(trimmedStrippedLineText)
                     ? getGeneralLineContext()
                     : (lineCtx || rootCtx);

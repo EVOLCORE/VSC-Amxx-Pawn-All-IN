@@ -1,6 +1,9 @@
 const { COMPLETION_TRIGGER_CHARACTERS } = require('../features/completion');
 const { isHoverModifierHackMode } = require('../core/hover-modes');
-const { getEffectiveIncludeFileExtensions } = require('../core/include-extensions');
+const {
+    getEffectiveIncludeFileExtensions,
+    normalizeIncludeExtensionList
+} = require('../core/include-extensions');
 
 function buildLazyActivationRuntime(deps, options = {}) {
     const {
@@ -23,19 +26,12 @@ function buildLazyActivationRuntime(deps, options = {}) {
         return require('./build-runtime').buildActivationRuntime;
     };
 
-    const normalizeExtension = value => {
-        const ext = String(value || '').trim().toLowerCase();
-        if (!ext) return '';
-        return ext.startsWith('.') ? ext : `.${ext}`;
-    };
     const getConfiguredExtensions = getter => {
         const values = typeof getter === 'function' ? getter() : [];
-        return (Array.isArray(values) ? values : [])
-            .map(normalizeExtension)
-            .filter(Boolean);
+        return normalizeIncludeExtensionList(values, []);
     };
     const hasConfiguredExtension = (filePath = '') => {
-        const ext = normalizeExtension(path.extname(String(filePath || '')));
+        const [ext = ''] = normalizeIncludeExtensionList([path.extname(String(filePath || ''))], []);
         if (!ext) return false;
         return [
             ...getConfiguredExtensions(settingsService?.getPawnFileExtensions),
@@ -62,6 +58,13 @@ function buildLazyActivationRuntime(deps, options = {}) {
             liveValidationOutputChannel?.appendLine?.(`[completion] ${message}`);
         } catch {
             // Lazy completion logging should never affect provider results.
+        }
+    };
+    const logHover = message => {
+        try {
+            liveValidationOutputChannel?.appendLine?.(`[hover] ${message}`);
+        } catch {
+            // Lazy hover logging should never affect provider results.
         }
     };
     const disposeProxyRegistrations = () => {
@@ -162,14 +165,25 @@ function buildLazyActivationRuntime(deps, options = {}) {
             }
             trackProxyDisposable(vscode.languages.registerHoverProvider('amxxpawn', {
                 provideHover(document, position) {
+                    const startedAt = Date.now();
+                    const fileName = String(document?.fileName || '');
+                    const line = Number.isInteger(position?.line) ? position.line : -1;
+                    const character = Number.isInteger(position?.character) ? position.character : -1;
                     const hoverMode = settingsService?.getHoverMode?.();
-                    if (hoverMode === 'disabled') return null;
-                    if (isHoverModifierHackMode(hoverMode)) {
-                        ensureRegisteredRuntime();
+                    if (hoverMode === 'disabled') {
+                        logHover(`proxy-skip disabled file=${fileName} pos=${line}:${character} ms=${Date.now() - startedAt}`);
                         return null;
                     }
+                    if (isHoverModifierHackMode(hoverMode)) {
+                        ensureRegisteredRuntime();
+                        logHover(`proxy-skip modifier-hack file=${fileName} pos=${line}:${character} ms=${Date.now() - startedAt}`);
+                        return null;
+                    }
+                    logHover(`proxy-request file=${fileName} pos=${line}:${character} lang=${document?.languageId || ''}`);
                     const activeRuntime = ensureRegisteredRuntime();
-                    return activeRuntime.buildHoverAtPosition(document, position);
+                    const hover = activeRuntime.buildHoverAtPosition(document, position);
+                    logHover(`proxy-result hit=${hover ? 1 : 0} file=${fileName} pos=${line}:${character} ms=${Date.now() - startedAt}`);
+                    return hover;
                 }
             }));
         }
@@ -179,21 +193,33 @@ function buildLazyActivationRuntime(deps, options = {}) {
         register() {
             const provider = {
                 provideCompletionItems(document, position) {
+                    const startedAt = Date.now();
                     const fileName = String(document?.fileName || '');
                     const line = Number.isInteger(position?.line) ? position.line : -1;
                     const character = Number.isInteger(position?.character) ? position.character : -1;
                     if (settingsService?.isCompletionEnabled?.() === false) {
-                        logCompletion(`proxy-skip disabled file=${fileName}`);
+                        logCompletion(`proxy-skip disabled file=${fileName} ms=${Date.now() - startedAt}`);
                         return [];
                     }
                     logCompletion(`proxy-request file=${fileName} pos=${line}:${character} lang=${document?.languageId || ''}`);
                     const items = ensureRegisteredRuntime().completionFeature.provideCompletionItems?.(document, position) || [];
-                    logCompletion(`proxy-result items=${Array.isArray(items) ? items.length : 'unknown'} file=${fileName}`);
+                    logCompletion(
+                        `proxy-result items=${Array.isArray(items) ? items.length : 'unknown'} ` +
+                        `file=${fileName} ms=${Date.now() - startedAt}`
+                    );
                     return items;
                 },
                 resolveCompletionItem(item) {
-                    if (settingsService?.isCompletionEnabled?.() === false) return item;
-                    return ensureRegisteredRuntime().completionFeature.resolveCompletionItem?.(item) || item;
+                    const startedAt = Date.now();
+                    const label = String(item?.label?.label || item?.label || '');
+                    if (settingsService?.isCompletionEnabled?.() === false) {
+                        logCompletion(`proxy-resolve-skip disabled label=${label} ms=${Date.now() - startedAt}`);
+                        return item;
+                    }
+                    logCompletion(`proxy-resolve-start label=${label}`);
+                    const resolved = ensureRegisteredRuntime().completionFeature.resolveCompletionItem?.(item) || item;
+                    logCompletion(`proxy-resolve-done label=${label} ms=${Date.now() - startedAt}`);
+                    return resolved;
                 }
             };
             trackProxyDisposable(vscode.languages.registerCompletionItemProvider(
@@ -211,6 +237,13 @@ function buildLazyActivationRuntime(deps, options = {}) {
                     return ensureRegisteredRuntime().navigationFeature.provideDefinition?.(document, position) || null;
                 }
             }));
+            if (typeof vscode.languages.registerDocumentLinkProvider === 'function') {
+                trackProxyDisposable(vscode.languages.registerDocumentLinkProvider('amxxpawn', {
+                    provideDocumentLinks(document, token) {
+                        return ensureRegisteredRuntime().navigationFeature.provideDocumentLinks?.(document, token) || [];
+                    }
+                }));
+            }
         }
     };
 

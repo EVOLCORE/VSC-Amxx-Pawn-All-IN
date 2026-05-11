@@ -1,5 +1,7 @@
 const { createStructuralRangeHelpers } = require('./structural-ranges');
 const { getStructuralScanBounds } = require('./structural-scan-bounds');
+const { createControlContextTracker } = require('../../core/syntax/control-context');
+const { splitPawnLines } = require('../../core/syntax/lines');
 
 function createStructuralDiagnostics(deps) {
     const {
@@ -49,7 +51,7 @@ function createStructuralDiagnostics(deps) {
         const diagnostics = [];
         const includeDocument = isIncludeDocument(document);
         const targetLines = targetLineNumbers instanceof Set ? targetLineNumbers : null;
-        const rawLines = rootCtx.rawLines || rootCtx.text.split(/\r?\n/);
+        const rawLines = rootCtx.rawLines || splitPawnLines(rootCtx.text);
         const strippedLines = rootCtx.strippedLines || rawLines;
         const depths = rootCtx.parsedDecls.depths || [];
         const lineStartOffsets = rootCtx.lineStartOffsets || null;
@@ -76,8 +78,13 @@ function createStructuralDiagnostics(deps) {
         });
         const returnStyleByFunction = new Map();
         const terminalStateByFunction = new Map();
-        const blockContexts = [];
-        const singleLineContexts = [];
+        const functionLikeDefineDeclsByName = new Map();
+        for (const decl of rootCtx?.preprocessedState?.defineDecls || []) {
+            if (decl?.type === 'define' && decl.macroStyle === 'paren' && decl.name) {
+                functionLikeDefineDeclsByName.set(decl.name, decl);
+            }
+        }
+        const macroControlTypeCache = new Map();
         const getReturnLineContext = lineNumber =>
             scanServices?.getLineContext?.(lineNumber) || rootCtx;
         const getReturnAnalysisCache = (lineNumber, lineCtx) =>
@@ -166,23 +173,59 @@ function createStructuralDiagnostics(deps) {
             if (/^[A-Za-z_@]\w*\s*:\s*$/.test(previousTrimmedLine)) return false;
             return true;
         };
-        const hasInlineContextBefore = (source, keywordIndex, keyword) => {
-            const prefix = String(source || '').slice(0, keywordIndex);
-            if (keyword === 'break') {
-                const starts = findKeywordOccurrences(prefix, ['for', 'while', 'switch', 'do']);
-                const last = starts[starts.length - 1] || null;
-                if (!last) return false;
-                if (last.keyword === 'do') return prefix.slice(last.end).trim() !== ';';
-                return skipInlineControlHeader(prefix, last.start, last.keyword) === prefix.length;
+        const controlContextTracker = createControlContextTracker({
+            strippedLines,
+            depths,
+            classifyPawnStatementLine,
+            countStructuralBraces,
+            findFirstNonWhitespaceIndex,
+            findKeywordOccurrences,
+            skipInlineControlHeader,
+            isDoWhileClosingLine
+        });
+        const hasInlineContextBefore = controlContextTracker.hasInlineContextBefore;
+        const getMacroProvidedControlType = (decl, seen = new Set()) => {
+            if (!decl?.name) return '';
+            if (macroControlTypeCache.has(decl.name)) return macroControlTypeCache.get(decl.name);
+            if (seen.has(decl.name)) return '';
+            seen.add(decl.name);
+            const expandedStatement = classifyPawnStatementLine(String(decl.value || ''));
+            let type = '';
+            if ((expandedStatement.controlStarts || []).some(control => control.keyword === 'for')) {
+                type = 'for';
+            } else if ((expandedStatement.controlStarts || []).some(control => control.keyword === 'while')) {
+                type = 'while';
+            } else if ((expandedStatement.controlStarts || []).some(control => control.keyword === 'do')) {
+                type = 'do';
+            } else if ((expandedStatement.controlStarts || []).some(control => control.keyword === 'switch')) {
+                type = 'switch';
             }
-            if (keyword === 'continue') {
-                const starts = findKeywordOccurrences(prefix, ['for', 'while', 'do']);
-                const last = starts[starts.length - 1] || null;
-                if (!last) return false;
-                if (last.keyword === 'do') return prefix.slice(last.end).trim() !== ';';
-                return skipInlineControlHeader(prefix, last.start, last.keyword) === prefix.length;
+            if (!type) {
+                for (const match of String(decl.value || '').matchAll(/\b[A-Za-z_@][A-Za-z0-9_@]*\b/g)) {
+                    const nestedDecl = functionLikeDefineDeclsByName.get(match[0]);
+                    if (!nestedDecl || nestedDecl === decl) continue;
+                    type = getMacroProvidedControlType(nestedDecl, seen);
+                    if (type) break;
+                }
             }
-            return false;
+            seen.delete(decl.name);
+            macroControlTypeCache.set(decl.name, type);
+            return type;
+        };
+        const getMacroProvidedControlContext = source => {
+            const text = String(source || '');
+            const start = findFirstNonWhitespaceIndex(text, 0);
+            if (start >= text.length) return null;
+            const match = text.slice(start).match(/^([A-Za-z_@][A-Za-z0-9_@]*)\b/);
+            if (!match) return null;
+            const name = match[1];
+            const decl = functionLikeDefineDeclsByName.get(name);
+            if (!decl) return null;
+            let index = start + name.length;
+            index = findFirstNonWhitespaceIndex(text, index);
+            if (text[index] !== '(') return null;
+            const type = getMacroProvidedControlType(decl);
+            return type ? { type, start } : null;
         };
         const {
             createFunctionNameRange,
@@ -234,66 +277,14 @@ function createStructuralDiagnostics(deps) {
                 statement.firstKeyword
             );
         };
-        const pushControlContext = (type, lineNumber, sourceText, currentDepth, keywordIndex = -1) => {
-            const source = String(sourceText || '');
-            const resolvedKeywordIndex = keywordIndex >= 0
-                ? keywordIndex
-                : findKeywordOccurrences(source, [type])[0]?.start ?? -1;
-            if (resolvedKeywordIndex < 0) return;
-            const lineRemainder = source.slice(resolvedKeywordIndex);
-            const hasBraceBodyOnLine = /\{/.test(lineRemainder);
-            if (hasBraceBodyOnLine) {
-                const bodyDepth = currentDepth + 1;
-                blockContexts.push({
-                    type,
-                    startLine: lineNumber,
-                    bodyDepth,
-                    braceBalance: countStructuralBraces(lineRemainder),
-                    braceTrackingStartLine: lineNumber,
-                    caseValues: new Set(),
-                    caseRanges: [],
-                    seenDefault: false
-                });
-                return;
-            }
-
-            const nextBodyLine = findNextNonEmptyLine(lineNumber + 1);
-            const nextBodyText = String(strippedLines[nextBodyLine] || '').trim();
-            const nextDepth = depths[nextBodyLine] ?? currentDepth;
-            if (nextBodyLine < strippedLines.length && /^\{/.test(nextBodyText)) {
-                blockContexts.push({
-                    type,
-                    startLine: lineNumber,
-                    bodyDepth: currentDepth + 1,
-                    braceBalance: 0,
-                    braceTrackingStartLine: nextBodyLine,
-                    caseValues: new Set(),
-                    caseRanges: [],
-                    seenDefault: false
-                });
-                return;
-            }
-            if (nextBodyLine < strippedLines.length && nextDepth > currentDepth) {
-                blockContexts.push({
-                    type,
-                    startLine: lineNumber,
-                    bodyDepth: nextDepth,
-                    caseValues: new Set(),
-                    caseRanges: [],
-                    seenDefault: false
-                });
-                return;
-            }
-
-            singleLineContexts.push({
-                type,
-                startLine: lineNumber,
-                untilLine: nextBodyLine
-            });
+        const pushControlContext = controlContextTracker.pushControlContext;
+        const stripLeadingCloseBracesText = trimmedLine =>
+            String(trimmedLine || '').replace(/^(?:}\s*)+/, '').trimStart();
+        const isUnreachableResetLine = trimmedLine => {
+            const normalizedLine = stripLeadingCloseBracesText(trimmedLine);
+            return /^(?:case\b|default\b|else\b)/.test(normalizedLine) ||
+                /^[A-Za-z_@]\w*\s*:\s*$/.test(normalizedLine);
         };
-        const isUnreachableResetLine = trimmedLine =>
-            /^(?:case\b|default\b|else\b)/.test(trimmedLine) ||
-            /^[A-Za-z_@]\w*\s*:\s*$/.test(trimmedLine);
         const isExecutableStatementForUnreachable = trimmedLine => {
             if (!trimmedLine) return false;
             if (/^[{};]+$/.test(trimmedLine)) return false;
@@ -318,9 +309,46 @@ function createStructuralDiagnostics(deps) {
                     (statement.firstKeyword === 'return' || statement.firstKeyword === 'goto')
             });
         };
-        const isWholeLineTerminalStatement = trimmedLine =>
-            /^return\b/.test(trimmedLine);
+        const getWholeLineTerminalKind = (lineNumber, trimmedLine, currentDepth) => {
+            const directKind = getStatementTerminalKindFromText(trimmedLine);
+            if (directKind && /;\s*$/.test(String(trimmedLine || ''))) return directKind;
+            return getMultilineTerminalKindEndingAt(lineNumber, scanBounds.start, currentDepth);
+        };
         const isSingleStatementControlledBodyLine = lineNumber => {
+            const previousBodyLine = findPreviousNonEmptyLine(lineNumber - 1);
+            if (previousBodyLine >= 0) {
+                const previousTrimmed = String(strippedLines[previousBodyLine] || '').trim();
+                if (
+                    previousTrimmed &&
+                    !/;\s*$/.test(previousTrimmed) &&
+                    !/\{\s*$/.test(previousTrimmed) &&
+                    !/^\}/.test(previousTrimmed)
+                ) {
+                    let previousStatement = classifyPawnStatementLine(previousTrimmed);
+                    let keyword = previousStatement.firstKeyword;
+                    let keywordStart = previousStatement.firstKeywordStart;
+                    if (keyword === 'else') {
+                        const afterElseStart = skipInlineControlHeader(previousTrimmed, keywordStart, 'else');
+                        const afterElse = afterElseStart >= 0 ? previousTrimmed.slice(afterElseStart).trimStart() : '';
+                        if (lineStartsWithKeyword(afterElse, 'if')) {
+                            keyword = 'if';
+                            keywordStart = previousTrimmed.indexOf('if', afterElseStart);
+                        }
+                    }
+                    if (
+                        keyword === 'if' ||
+                        keyword === 'for' ||
+                        (keyword === 'while' && !isDoWhileClosingLine(previousBodyLine)) ||
+                        keyword === 'else' ||
+                        keyword === 'do'
+                    ) {
+                        const bodyStart = skipInlineControlHeader(previousTrimmed, keywordStart, keyword);
+                        if (bodyStart >= 0 && !previousTrimmed.slice(bodyStart).trim()) {
+                            return true;
+                        }
+                    }
+                }
+            }
             let combined = '';
             for (let probeLine = lineNumber - 1, scanned = 0; probeLine >= 0 && scanned < 12; probeLine--, scanned++) {
                 const trimmed = String(strippedLines[probeLine] || '').trim();
@@ -437,14 +465,88 @@ function createStructuralDiagnostics(deps) {
             if (lineStartsWithKeyword(trimmed, 'goto')) return 'goto';
             return '';
         };
+        const getLeadingCloseBraceCount = trimmedLine => {
+            const match = String(trimmedLine || '').match(/^(?:}\s*)+/);
+            return match ? (match[0].match(/}/g) || []).length : 0;
+        };
+        const getCompilerControlLineInfo = lineNumber => {
+            const structuralLine = getStructuralLine(lineNumber);
+            const leadingWhitespace = structuralLine.search(/\S|$/);
+            const visibleStart = Math.max(0, leadingWhitespace);
+            const visibleText = structuralLine.slice(visibleStart);
+            const closeMatch = visibleText.match(/^(?:}\s*)+/);
+            const closeLength = closeMatch ? closeMatch[0].length : 0;
+            return {
+                text: visibleText.slice(closeLength).trimStart(),
+                offset: visibleStart + closeLength,
+                leadingCloseBraces: closeMatch ? (closeMatch[0].match(/}/g) || []).length : 0
+            };
+        };
+        const getCompilerLineEffectiveDepth = lineNumber => {
+            const depth = depths[lineNumber] ?? 0;
+            const trimmed = getTrimmedStructuralLine(lineNumber);
+            return Math.max(0, depth - getLeadingCloseBraceCount(trimmed));
+        };
+        const getMultilineTerminalKindEndingAt = (lineNumber, startLine, baseDepth) => {
+            const currentTrimmed = getTrimmedStructuralLine(lineNumber);
+            const previousLine = findPreviousNonEmptyLine(lineNumber - 1);
+            const previousTrimmed = previousLine >= 0 ? getTrimmedStructuralLine(previousLine) : '';
+            const startsAsContinuation = /^[)\]},]/.test(currentTrimmed) ||
+                /^(?:&&|\|\||[+\-*/%&|^<>=!?:,])/.test(currentTrimmed);
+            const previousContinues = /(?:&&|\|\||[+\-*/%&|^<>=!?:,[({])\s*$/.test(previousTrimmed);
+            if (!startsAsContinuation && !previousContinues) return '';
+
+            let parenNeed = 0;
+            let bracketNeed = 0;
+            let sawUnmatchedCloserOnLastLine = false;
+            for (let line = lineNumber; line >= startLine; line--) {
+                if (getCompilerLineEffectiveDepth(line) !== baseDepth) break;
+                const text = getStructuralLine(line);
+                for (let index = text.length - 1; index >= 0; index--) {
+                    const char = text[index];
+                    if (char === ')') {
+                        parenNeed++;
+                        if (line === lineNumber) sawUnmatchedCloserOnLastLine = true;
+                    } else if (char === '(') {
+                        if (parenNeed > 0) parenNeed--;
+                    } else if (char === ']') {
+                        bracketNeed++;
+                        if (line === lineNumber) sawUnmatchedCloserOnLastLine = true;
+                    } else if (char === '[') {
+                        if (bracketNeed > 0) bracketNeed--;
+                    }
+                }
+
+                if (line === lineNumber && !sawUnmatchedCloserOnLastLine) return '';
+
+                const terminalKind = getStatementTerminalKindFromText(getTrimmedStructuralLine(line));
+                if (terminalKind && parenNeed === 0 && bracketNeed === 0) return terminalKind;
+                if (
+                    line < lineNumber &&
+                    parenNeed === 0 &&
+                    bracketNeed === 0 &&
+                    /;\s*$/.test(getTrimmedStructuralLine(line))
+                ) {
+                    return '';
+                }
+            }
+            return '';
+        };
         const findStructuralBlockEndLine = (startLine, endLine) => {
             let balance = 0;
             let sawOpen = false;
             for (let line = startLine; line <= endLine; line++) {
-                const braceDelta = countStructuralBraces(getStructuralLine(line));
-                if (getStructuralLine(line).includes('{')) sawOpen = true;
-                balance += braceDelta;
-                if (sawOpen && balance <= 0) return line;
+                const structuralLine = getStructuralLine(line);
+                for (const char of structuralLine) {
+                    if (char === '{') {
+                        sawOpen = true;
+                        balance++;
+                    } else if (char === '}') {
+                        if (!sawOpen) continue;
+                        balance--;
+                        if (sawOpen && balance <= 0) return line;
+                    }
+                }
             }
             return -1;
         };
@@ -453,13 +555,16 @@ function createStructuralDiagnostics(deps) {
             for (let line = Math.max(0, startLine); line <= endLine; line++) {
                 const trimmed = getTrimmedStructuralLine(line);
                 if (isCompilerLaststIgnoredLine(trimmed)) continue;
-                if ((depths[line] ?? baseDepth) !== baseDepth) continue;
-                if (lineStartsWithKeyword(trimmed, 'else')) continue;
+                if (getCompilerLineEffectiveDepth(line) !== baseDepth) continue;
+                if (lineStartsWithKeyword(getCompilerControlLineInfo(line).text.trim(), 'else')) continue;
                 if (isSingleStatementControlledBodyLine(line)) continue;
                 lastStatementLine = line;
             }
             return lastStatementLine >= 0
-                ? getCompilerLikeTerminalKindForStatement(lastStatementLine, endLine, baseDepth)
+                ? (
+                    getCompilerLikeTerminalKindForStatement(lastStatementLine, endLine, baseDepth) ||
+                    getMultilineTerminalKindEndingAt(lastStatementLine, startLine, baseDepth)
+                )
                 : '';
         };
         const getCompilerLikeTerminalKindForBranch = (startLine, endLine, parentDepth) => {
@@ -467,7 +572,10 @@ function createStructuralDiagnostics(deps) {
             if (firstLine < 0) return { kind: '', endLine: startLine };
             const trimmed = getTrimmedStructuralLine(firstLine);
             if (trimmed.startsWith('{') || (depths[firstLine] ?? parentDepth) > parentDepth) {
-                const blockStartLine = trimmed.startsWith('{') ? firstLine : Math.max(startLine, firstLine - 1);
+                const previousTrimmed = firstLine > 0 ? getTrimmedStructuralLine(firstLine - 1) : '';
+                const blockStartLine = trimmed.startsWith('{')
+                    ? firstLine
+                    : (previousTrimmed.includes('{') ? firstLine - 1 : firstLine);
                 const blockEndLine = findStructuralBlockEndLine(blockStartLine, endLine);
                 if (blockEndLine < 0) return { kind: '', endLine: firstLine };
                 return {
@@ -489,15 +597,17 @@ function createStructuralDiagnostics(deps) {
             let currentIfLine = ifLine;
             let expectedKind = '';
             for (let guard = 0; guard < 64; guard++) {
-                const currentLine = getStructuralLine(currentIfLine);
+                const currentInfo = getCompilerControlLineInfo(currentIfLine);
+                const currentLine = currentInfo.text;
                 const currentTrimmed = currentLine.trim();
                 const ifKeywordIndex = currentTrimmed.startsWith('else')
                     ? currentLine.indexOf('if', currentLine.indexOf('else') + 4)
                     : currentLine.indexOf('if');
                 if (ifKeywordIndex < 0) return '';
-                const inlineBodyStart = getControlInlineBodyStart(currentIfLine, ifKeywordIndex, 'if');
+                const rawIfKeywordIndex = currentInfo.offset + ifKeywordIndex;
+                const inlineBodyStart = getControlInlineBodyStart(currentIfLine, rawIfKeywordIndex, 'if');
                 const inlineBody = inlineBodyStart >= 0
-                    ? currentLine.slice(inlineBodyStart).trim()
+                    ? getStructuralLine(currentIfLine).slice(inlineBodyStart).trim()
                     : '';
                 const branch = inlineBody && inlineBody !== '{'
                     ? { kind: getStatementTerminalKindFromText(inlineBody), endLine: currentIfLine }
@@ -506,12 +616,16 @@ function createStructuralDiagnostics(deps) {
                 if (!expectedKind) expectedKind = branch.kind;
                 if (branch.kind !== expectedKind) return '';
 
-                const elseLine = findNextCompilerStatementLine(branch.endLine + 1, endLine);
+                const branchEndInfo = getCompilerControlLineInfo(branch.endLine);
+                const elseLine = lineStartsWithKeyword(branchEndInfo.text.trim(), 'else')
+                    ? branch.endLine
+                    : findNextCompilerStatementLine(branch.endLine + 1, endLine);
                 if (elseLine < 0) return '';
-                if ((depths[elseLine] ?? baseDepth) !== baseDepth) return '';
-                const elseText = getTrimmedStructuralLine(elseLine);
+                if (getCompilerLineEffectiveDepth(elseLine) !== baseDepth) return '';
+                const elseInfo = getCompilerControlLineInfo(elseLine);
+                const elseText = elseInfo.text.trim();
                 if (!lineStartsWithKeyword(elseText, 'else')) return '';
-                const elseKeywordStart = getStructuralLine(elseLine).indexOf('else');
+                const elseKeywordStart = elseInfo.offset + elseInfo.text.indexOf('else');
                 const afterElseStart = getControlInlineBodyStart(elseLine, elseKeywordStart, 'else');
                 const afterElse = afterElseStart >= 0
                     ? getStructuralLine(elseLine).slice(afterElseStart).trim()
@@ -570,7 +684,7 @@ function createStructuralDiagnostics(deps) {
                 if (!trimmedLine || isPreprocessorDirectiveOrContinuationLine(rootCtx, lineNumber, trimmedLine)) {
                     return;
                 }
-                const currentDepth = depths[lineNumber] ?? 0;
+                const currentDepth = getCompilerLineEffectiveDepth(lineNumber);
                 for (const depth of [...terminalLineByFunctionDepth.keys()]) {
                     if (depth > currentDepth) terminalLineByFunctionDepth.delete(depth);
                 }
@@ -581,6 +695,7 @@ function createStructuralDiagnostics(deps) {
                 if (
                     terminalLine != null &&
                     terminalLine < lineNumber &&
+                    !isSingleStatementControlledBodyLine(terminalLine) &&
                     isExecutableStatementForUnreachable(trimmedLine) &&
                     shouldIncludeTargetLine(targetLines, lineNumber)
                 ) {
@@ -601,7 +716,7 @@ function createStructuralDiagnostics(deps) {
                         )
                     );
                 }
-                if (isWholeLineTerminalStatement(trimmedLine) && !isSingleStatementControlledBodyLine(lineNumber)) {
+                if (getWholeLineTerminalKind(lineNumber, trimmedLine, currentDepth) && !isSingleStatementControlledBodyLine(lineNumber)) {
                     terminalLineByFunctionDepth.set(currentDepth, lineNumber);
                 } else if (isExecutableStatementForUnreachable(trimmedLine)) {
                     terminalLineByFunctionDepth.delete(currentDepth);
@@ -636,51 +751,14 @@ function createStructuralDiagnostics(deps) {
             if (isPreprocessorDirectiveOrContinuationLine(rootCtx, lineNumber, trimmedLine)) continue;
             const statement = classifyPawnStatementLine(structuralLine);
 
-            while (
-                blockContexts.length &&
-                lineNumber > blockContexts[blockContexts.length - 1].startLine &&
-                blockContexts[blockContexts.length - 1].braceBalance == null &&
-                currentDepth < blockContexts[blockContexts.length - 1].bodyDepth &&
-                !/^\s*\{/.test(trimmedLine)
-            ) {
-                blockContexts.pop();
-            }
-            while (singleLineContexts.length && singleLineContexts[0].untilLine < lineNumber) {
-                singleLineContexts.shift();
-            }
-
-            let activeBlockSwitch = null;
-            let hasBlockLoop = false;
-            for (let contextIndex = blockContexts.length - 1; contextIndex >= 0; contextIndex--) {
-                const context = blockContexts[contextIndex];
-                const type = context?.type || '';
-                if (!activeBlockSwitch && type === 'switch') {
-                    activeBlockSwitch = context;
-                }
-                if (type === 'for' || type === 'while' || type === 'do') {
-                    hasBlockLoop = true;
-                }
-                if (activeBlockSwitch && hasBlockLoop) break;
-            }
-            let activeSingleSwitch = null;
-            let activeSingleStatementContext = null;
-            let hasSingleLineLoop = false;
-            for (const context of singleLineContexts) {
-                const type = context?.type || '';
-                if (!activeSingleSwitch && type === 'switch') {
-                    activeSingleSwitch = context;
-                }
-                if (!activeSingleStatementContext && type !== 'switch') {
-                    activeSingleStatementContext = context;
-                }
-                if (type === 'for' || type === 'while' || type === 'do') {
-                    hasSingleLineLoop = true;
-                }
-                if (activeSingleSwitch && activeSingleStatementContext && hasSingleLineLoop) break;
-            }
-            const activeSwitch = activeBlockSwitch || activeSingleSwitch;
-            const hasActiveLoop = hasBlockLoop || hasSingleLineLoop;
-            const hasActiveBreakContext = hasActiveLoop || !!activeSwitch;
+            controlContextTracker.beginLine(lineNumber, currentDepth, trimmedLine);
+            const {
+                activeBlockSwitch,
+                activeSingleStatementContext,
+                activeSwitch,
+                hasActiveLoop,
+                hasActiveBreakContext
+            } = controlContextTracker.getActiveContext();
             const switchLabel = statement.switchLabel;
             const caseMatch = switchLabel?.kind === 'case' ? switchLabel : null;
             const defaultMatch = switchLabel?.kind === 'default';
@@ -885,7 +963,11 @@ function createStructuralDiagnostics(deps) {
                             )
                         );
                     }
-                    const rawValue = stripTrailingSemicolon(caseMatch.label);
+                    const rawSwitchLabel = classifyPawnStatementLine(String(strippedLines[lineNumber] || '')).switchLabel;
+                    const valueCaseMatch = rawSwitchLabel?.kind === 'case'
+                        ? rawSwitchLabel
+                        : caseMatch;
+                    const rawValue = stripTrailingSemicolon(valueCaseMatch.label);
                     const resolvedCaseValues = resolveSwitchCaseLabelValues(rawValue, rootCtx.allDecls);
                     if (resolvedCaseValues.invalidRange && shouldIncludeTargetLine(targetLines, lineNumber)) {
                         diagnostics.push(
@@ -1079,19 +1161,18 @@ function createStructuralDiagnostics(deps) {
             if (firstControlStartByType.has('do')) {
                 pushControlContext('do', lineNumber, structuralLine, currentDepth, firstControlStartByType.get('do'));
             }
+            const macroProvidedControl = getMacroProvidedControlContext(structuralLine);
+            if (macroProvidedControl) {
+                pushControlContext(
+                    macroProvidedControl.type,
+                    lineNumber,
+                    structuralLine,
+                    currentDepth,
+                    macroProvidedControl.start
+                );
+            }
 
-            for (const context of blockContexts) {
-                if (context.braceBalance == null || lineNumber < (context.braceTrackingStartLine ?? context.startLine)) continue;
-                context.braceBalance += countStructuralBraces(structuralLine);
-            }
-            while (
-                blockContexts.length &&
-                blockContexts[blockContexts.length - 1].braceBalance != null &&
-                lineNumber >= (blockContexts[blockContexts.length - 1].braceTrackingStartLine ?? blockContexts[blockContexts.length - 1].startLine) &&
-                blockContexts[blockContexts.length - 1].braceBalance <= 0
-            ) {
-                blockContexts.pop();
-            }
+            controlContextTracker.finishLine(lineNumber, structuralLine);
         }
 
         if (areWarningDiagnosticsEnabled()) {

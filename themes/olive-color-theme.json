@@ -33,10 +33,40 @@
       "scope": [
         "comment",
         "comment.block.pawn",
+        "comment.block.documentation.pawn",
         "comment.line.double-slash.pawn"
       ],
       "settings": {
         "foreground": "#6E705F",
+        "fontStyle": "italic"
+      }
+    },
+    {
+      "scope": [
+        "keyword.other.todo.comment.pawn"
+      ],
+      "settings": {
+        "foreground": "#FF1F86",
+        "fontStyle": "bold italic"
+      }
+    },
+    {
+      "scope": [
+        "storage.type.annotation.comment.pawn",
+        "variable.parameter.comment.pawn"
+      ],
+      "settings": {
+        "foreground": "#66D9EF",
+        "fontStyle": "italic"
+      }
+    },
+    {
+      "scope": [
+        "string.quoted.double.comment.pawn",
+        "string.quoted.single.comment.pawn"
+      ],
+      "settings": {
+        "foreground": "#E6DB74",
         "fontStyle": "italic"
       }
     },
@@ -52,6 +82,7 @@
     },
     {
       "scope": [
+        "string.quoted.other.include.pawn",
         "include_path.pawn"
       ],
       "settings": {
@@ -60,6 +91,7 @@
     },
     {
       "scope": [
+        "constant.other.preprocessor.pawn",
         "entity.name.constant.preprocessor"
       ],
       "settings": {
@@ -78,6 +110,7 @@
     },
     {
       "scope": [
+        "entity.name.function.definition.pawn",
         "support.function.definition.pawn"
       ],
       "settings": {
@@ -87,6 +120,8 @@
     },
     {
       "scope": [
+        "entity.name.function.preprocessor.pawn",
+        "entity.name.function.call.pawn",
         "support.function.call.pawn",
         "entity.name.function.call.amxxpawn",
         "entity.name.function.call",
@@ -170,9 +205,14 @@
     {
       "scope": [
         "constant.language",
+        "constant.numeric",
+        "constant.numeric.integer.pawn",
         "constant.numeric.int.pawn",
         "constant.numeric.float.pawn",
-        "constant.numeric.hex.pawn"
+        "constant.numeric.hex.pawn",
+        "constant.numeric.symbol.pawn",
+        "constant.numeric.preprocessor.pawn",
+        "constant.numeric.comment.pawn"
       ],
       "settings": {
         "foreground": "#AE81FF"
@@ -215,14 +255,14 @@
     },
     {
       "scope": [
-        "constant.vars.pawn"
-      ],
-      "settings": {
-        "foreground": "#F2F2E8"
-      }
-    },
-    {
-      "scope": [
+        "punctuation.separator.comma.pawn",
+        "punctuation.terminator.statement.pawn",
+        "punctuation.section.block.pawn",
+        "punctuation.section.brackets.pawn",
+        "punctuation.section.parens.pawn",
+        "punctuation.section.parameters.begin.pawn",
+        "punctuation.section.parameters.end.pawn",
+        "punctuation.section.arguments.begin.pawn",
         "keyword.coma.pawn",
         "keyword.brace.pawn",
         "keyword.brackets.pawn",

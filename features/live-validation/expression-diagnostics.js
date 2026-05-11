@@ -1,3 +1,5 @@
+const { isPreprocessorDirectiveLine } = require('../../core/syntax/preprocessor-lines');
+
 function createExpressionDiagnostics(deps) {
     const {
         createLiveValidationDiagnostic,
@@ -14,7 +16,7 @@ function createExpressionDiagnostics(deps) {
         if (isIncludeDocument(document) && !isStrictIncludeValidationEnabled()) return diagnostics;
         const source = String(strippedLineText || lineText || '');
         const trimmed = source.trim();
-        if (!trimmed || trimmed.startsWith('#')) return diagnostics;
+        if (!trimmed || isPreprocessorDirectiveLine(trimmed)) return diagnostics;
 
         for (const issue of findSizeofOperatorIssues(source, ctx)) {
             const message = issue.kind === 'indeterminateArraySize'

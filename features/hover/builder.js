@@ -53,7 +53,8 @@ function createHoverBuilderFeature(deps) {
         expandObjectLikeDefineTupleCallArgs,
         isMeaningfulCallCursorPosition,
         isMeaningfulCallPosition,
-        getHoverCacheSignature
+        getHoverCacheSignature,
+        logHover = null
     } = deps;
     const { createHoverSession } = createHoverSessionFactory({
         t,
@@ -70,6 +71,16 @@ function createHoverBuilderFeature(deps) {
     } = createHoverSemanticCache({ limit: 128 });
 
     function buildHoverAtPosition(document, position) {
+        const startedAt = Date.now();
+        const fileName = String(document?.fileName || '');
+        const line = Number.isInteger(position?.line) ? position.line : -1;
+        const character = Number.isInteger(position?.character) ? position.character : -1;
+        try {
+            logHover?.(`start file=${fileName} pos=${line}:${character} version=${document?.version ?? ''}`);
+        } catch {
+            // Debug logging must not affect hover.
+        }
+        try {
         const createHoverRangeFromOffsets = (startOffset, endOffset) => {
             if (!Number.isInteger(startOffset) || !Number.isInteger(endOffset) || endOffset < startOffset) {
                 return null;
@@ -115,6 +126,11 @@ function createHoverBuilderFeature(deps) {
         };
         const hoverSession = createHoverSession(document, position);
         if (!hoverSession) return null;
+        try {
+            logHover?.(`context-ready file=${fileName} pos=${line}:${character} ms=${Date.now() - startedAt}`);
+        } catch {
+            // Debug logging must not affect hover.
+        }
         const {
             ctx,
             fp,
@@ -1011,6 +1027,13 @@ function createHoverBuilderFeature(deps) {
                 semanticHoverRange || undefined
             )
         );
+        } finally {
+            try {
+                logHover?.(`done file=${fileName} pos=${line}:${character} ms=${Date.now() - startedAt}`);
+            } catch {
+                // Debug logging must not affect hover.
+            }
+        }
     }
 
     return {

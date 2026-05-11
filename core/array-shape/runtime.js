@@ -1,3 +1,5 @@
+const { normalizePawnTagName } = require('../syntax/tags');
+
 function createArrayShapeCore(deps = {}) {
     const {
         measurePawnStringLiteral,
@@ -76,7 +78,7 @@ function createArrayShapeCore(deps = {}) {
         if (!source) return null;
         if (/^-?\d+$/.test(source)) return Number.parseInt(source, 10);
 
-        const normalized = source.replace(/^_?\s*:\s*/, '').trim();
+        const normalized = normalizePawnTagName(source);
         const getDeclSize = decl => {
             const value = Number.parseInt(String(decl?.value || ''), 10);
             return Number.isInteger(value) ? value : null;
@@ -86,8 +88,8 @@ function createArrayShapeCore(deps = {}) {
             decl?.type === 'enum' ||
             decl?.type === 'enum-item' ||
             decl?.type === 'define' ||
-            String(decl?.name || '').replace(/^_?\s*:\s*/, '').trim() === normalized ||
-            String(decl?.enumDisplayName || '').replace(/^_?\s*:\s*/, '').trim() === normalized
+            normalizePawnTagName(decl?.name) === normalized ||
+            normalizePawnTagName(decl?.enumDisplayName) === normalized
         ) || null;
         const lookupSize = getDeclSize(lookupDecl);
         if (lookupSize != null) return lookupSize;
@@ -98,8 +100,8 @@ function createArrayShapeCore(deps = {}) {
             (
                 decl.name === source ||
                 decl.enumDisplayName === source ||
-                String(decl.name || '').replace(/^_?\s*:\s*/, '').trim() === normalized ||
-                String(decl.enumDisplayName || '').replace(/^_?\s*:\s*/, '').trim() === normalized
+                normalizePawnTagName(decl.name) === normalized ||
+                normalizePawnTagName(decl.enumDisplayName) === normalized
             )
         );
         const enumSize = getDeclSize(enumDecl);

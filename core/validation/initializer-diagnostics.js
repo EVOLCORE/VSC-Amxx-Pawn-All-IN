@@ -1,3 +1,10 @@
+const {
+    getPawnIdentifierName,
+    isPawnIdentifierContinueChar,
+    isPawnIdentifierStartChar
+} = require('../syntax/identifiers');
+const { skipPawnWhitespace } = require('../syntax/whitespace');
+
 function createInitializerDiagnostics(deps) {
     const {
         maxPawnArrayDimensions = 4,
@@ -24,14 +31,13 @@ function createInitializerDiagnostics(deps) {
 
     function readLeadingInitializerTokenIssue(source, rangeStart = 0, escapeChar = '') {
         const text = String(source || '');
-        let cursor = 0;
-        while (cursor < text.length && /\s/.test(text[cursor] || '')) cursor++;
+        let cursor = skipPawnWhitespace(text, 0);
         if (cursor >= text.length) return { kind: 'partial' };
 
         let end = cursor + 1;
         const first = text[cursor] || '';
-        if (/[A-Za-z_@]/.test(first)) {
-            while (end < text.length && /[A-Za-z0-9_@]/.test(text[end] || '')) end++;
+        if (isPawnIdentifierStartChar(first)) {
+            while (end < text.length && isPawnIdentifierContinueChar(text[end] || '')) end++;
         } else if (/[0-9]/.test(first)) {
             while (end < text.length && /[0-9_]/.test(text[end] || '')) end++;
             if (text[end] === '.') {
@@ -143,7 +149,7 @@ function createInitializerDiagnostics(deps) {
         const expr = unwrapExpressionForValidation(source);
         if (!expr) return '';
         if (expr.startsWith('"')) return expr;
-        const identifierName = expr.match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+        const identifierName = getPawnIdentifierName(expr);
         if (!identifierName || seen.has(identifierName)) return '';
         const decl = findInitializerConstantDecl(identifierName, allDecls, analysisCache);
         if (decl?.type !== 'define' || decl.args) return '';
@@ -169,7 +175,7 @@ function createInitializerDiagnostics(deps) {
         if (expr === 'true' || expr === 'false' || expr === 'cellmin' || expr === 'cellmax') return true;
         if (evaluatePawnNumericExpr(expr, allDecls, new Set(), analysisCache) != null) return true;
 
-        const identifierName = expr.match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+        const identifierName = getPawnIdentifierName(expr);
         if (identifierName) {
             const decl = findInitializerConstantDecl(identifierName, allDecls, analysisCache);
             if (decl?.type === 'define' && !decl.args) {
@@ -455,7 +461,7 @@ function createInitializerDiagnostics(deps) {
         let blockComment = false;
         let braceDepth = 0;
         let sawBrace = false;
-        const isIdentifierChar = char => /[A-Za-z0-9_@]/.test(char || '');
+        const isIdentifierChar = isPawnIdentifierContinueChar;
 
         for (let offset = valueStartOffset; offset < sourceText.length; offset++) {
             const char = sourceText[offset];

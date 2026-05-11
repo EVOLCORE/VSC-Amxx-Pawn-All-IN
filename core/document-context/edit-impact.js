@@ -1,3 +1,5 @@
+const { countTextLines, splitPawnLines } = require('../syntax/lines');
+
 const SEMANTIC_EQUIVALENT_NARROW_LINE_THRESHOLD = 128;
 const BODY_ONLY_LOCAL_MAX_BASE_LINES = 12;
 const editedFunctionBodyRangesByBase = new WeakMap();
@@ -102,7 +104,7 @@ function shouldEscalateEditedValidation(document, contentChanges = [], baseLines
         const startLine = change?.range?.start?.line ?? 0;
         const endLine = change?.range?.end?.line ?? startLine;
         const replacedLineSpan = Math.max(1, endLine - startLine + 1);
-        const insertedLineSpan = Math.max(1, String(change?.text || '').split(/\r?\n/).length);
+        const insertedLineSpan = countTextLines(change?.text || '');
         if (replacedLineSpan !== insertedLineSpan) {
             return true;
         }
@@ -150,7 +152,7 @@ function canUseLocalBodyEditedValidation(rootCtx, baseLineNumbers, editImpact) {
         const startLine = Math.max(0, range?.startLine ?? 0);
         const endLine = Math.max(startLine, range?.endLine ?? startLine);
         const replacedLineSpan = Math.max(1, endLine - startLine + 1);
-        const insertedLineSpan = Math.max(1, String(range?.changeText || '').split(/\r?\n/).length);
+        const insertedLineSpan = countTextLines(range?.changeText || '');
         if (replacedLineSpan !== insertedLineSpan) return false;
         for (let line = startLine; line <= endLine; line++) {
             changedLines.add(line);
@@ -228,7 +230,7 @@ function createEditImpactResolver(deps) {
         const getNextDocumentLines = () => {
             if (nextDocumentLines) return nextDocumentLines;
             if (typeof document.getText === 'function') {
-                nextDocumentLines = String(document.getText() || '').split(/\r?\n/);
+                nextDocumentLines = splitPawnLines(document.getText() || '');
                 return nextDocumentLines;
             }
             nextDocumentLines = [];
@@ -254,7 +256,7 @@ function createEditImpactResolver(deps) {
             const startLine = Math.max(0, change?.range?.start?.line ?? 0);
             const endLine = Math.max(startLine, change?.range?.end?.line ?? startLine);
             const replacedLineSpan = Math.max(1, endLine - startLine + 1);
-            const insertedLineSpan = Math.max(1, String(change?.text || '').split(/\r?\n/).length);
+            const insertedLineSpan = countTextLines(change?.text || '');
             if (Math.max(replacedLineSpan, insertedLineSpan) >= 24) {
                 return withDecision(document, contentChanges, { kind: 'structural' });
             }
@@ -295,7 +297,7 @@ function createEditImpactResolver(deps) {
 
         const nextLines = getNextDocumentLines();
         for (const { startLine, endLine, changeText } of ranges) {
-            const changedLineCount = Math.max(1, String(changeText || '').split(/\r?\n/).length);
+            const changedLineCount = countTextLines(changeText || '');
             const lastLine = Math.max(endLine, startLine + changedLineCount - 1);
             for (let lineNumber = startLine; lineNumber <= lastLine; lineNumber++) {
                 const previousLine = previousBase.rawLines[lineNumber] || '';

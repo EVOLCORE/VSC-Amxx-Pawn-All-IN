@@ -273,6 +273,19 @@ function createEditorLifecycleFeature(deps) {
         !!document && (vscode.window.visibleTextEditors || []).some(editor =>
             isSameLifecycleDocument(editor?.document || null, document)
         );
+    const isHiddenIncludeDocument = document => {
+        const docExt = getFileExtension(document?.fileName || '');
+        return !!document &&
+            !isDocumentActive(document) &&
+            !isDocumentVisible(document) &&
+            getPawnIncludeExtensions().includes(docExt);
+    };
+    const isWarmupOnlyIncludeDocument = document => {
+        const normalized = normalizeLifecyclePath(document?.fileName || '');
+        return !!normalized &&
+            isHiddenIncludeDocument(document) &&
+            includeDocumentModelWarmCache?.has(normalized);
+    };
     const idleVisibleWarmupState = {
         timer: null,
         queue: [],
@@ -520,12 +533,7 @@ function createEditorLifecycleFeature(deps) {
         if (getLiveValidationMode() === 'off') return;
         const scheduledDocumentPaths = new Set();
         for (const doc of vscode.workspace.textDocuments || []) {
-            const docExt = getFileExtension(doc?.fileName || '');
-            const isHiddenIncludeDocument =
-                !isDocumentActive(doc) &&
-                !isDocumentVisible(doc) &&
-                getPawnIncludeExtensions().includes(docExt);
-            if (isHiddenIncludeDocument) {
+            if (isHiddenIncludeDocument(doc)) {
                 continue;
             }
             if (!isDocumentAffectedByIncludePath(doc, changedFilePath, options)) continue;
@@ -685,6 +693,7 @@ function createEditorLifecycleFeature(deps) {
 
         if (watchMode === 'tracked-resolved-includes') {
             for (const doc of vscode.workspace.textDocuments || []) {
+                if (isHiddenIncludeDocument(doc)) continue;
                 if (!isLiveLifecyclePawnDocument(doc)) continue;
                 try {
                     const ctx = getPawnDocumentContext(doc, undefined);
@@ -774,7 +783,9 @@ function createEditorLifecycleFeature(deps) {
 
     async function handleDidOpenTextDocument(doc) {
         if (!isFileBackedLifecycleDocument(doc)) return;
+        if (isWarmupOnlyIncludeDocument(doc)) return;
         const pawnDoc = await ensureConfiguredPawnLanguage(doc) || doc;
+        if (isWarmupOnlyIncludeDocument(pawnDoc)) return;
         const pawnPath = pawnDoc?.fileName || doc?.fileName || '';
         if (isLiveLifecyclePawnDocument(pawnDoc)) {
             invalidateDocumentCaches(pawnPath);

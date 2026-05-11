@@ -1,6 +1,8 @@
 const { makeLiveValidationDiagnosticKey } = require('./diagnostic-key');
 const { LIVE_INVALID_CODE_CHARACTER_DIAGNOSTIC_CODE } = require('./diagnostic-codes');
 const { createTextSyntaxDiagnosticsCore } = require('../../core/syntax');
+const { splitPawnLines } = require('../../core/syntax/lines');
+const { isPreprocessorDirectiveLine } = require('../../core/syntax/preprocessor-lines');
 
 function createSharedTextDiagnostics(deps) {
     const {
@@ -31,7 +33,7 @@ function createSharedTextDiagnostics(deps) {
     function collectInvalidPawnCodeCharacterDiagnosticsForLine(document, lineNumber, lineText, strippedLineText, lineStartOffset, docLength, escapeChar = '', options = null) {
         const source = String(strippedLineText ?? lineText ?? '');
         const runs = collectInvalidPawnCodeCharacterRuns(source, escapeChar, options);
-        const literalIssues = source.trimStart().startsWith('#')
+        const literalIssues = isPreprocessorDirectiveLine(source)
             ? []
             : collectPawnLiteralIssues(source, escapeChar, options);
         const lineTooLongIssue = getInputLineTooLongIssue(source);
@@ -85,7 +87,7 @@ function createSharedTextDiagnostics(deps) {
     function collectMultilinePawnStringLiteralDiagnostics(document, rootCtx, docLength, options = {}) {
         const lineStartOffsets = rootCtx.lineStartOffsets || null;
         const issues = collectPawnMultilineStringLiteralIssues(
-            rootCtx.strippedLines || rootCtx.rawLines || String(rootCtx.text || '').split(/\r?\n/),
+            rootCtx.strippedLines || rootCtx.rawLines || splitPawnLines(rootCtx.text || ''),
             {
                 lineCtrlChars: rootCtx.lineCtrlChars || options.lineCtrlChars || [],
                 packedStringDefaultLineFlags: options.packedStringDefaultLineFlags || [],

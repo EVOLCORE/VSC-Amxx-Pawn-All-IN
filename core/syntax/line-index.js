@@ -1,41 +1,30 @@
-const isWordBoundaryChar = char => {
-    if (!char) return true;
-    const code = char.charCodeAt(0);
-    return !(
-        (code >= 65 && code <= 90) ||
-        (code >= 97 && code <= 122) ||
-        (code >= 48 && code <= 57) ||
-        code === 95 ||
-        code === 64
-    );
-};
-const startsWithKeyword = (source, startIndex, keyword) => {
-    if (source.slice(startIndex, startIndex + keyword.length) !== keyword) return false;
-    return isWordBoundaryChar(source[startIndex + keyword.length] || '');
-};
+const {
+    containsPawnIdentifierStartChar
+} = require('./identifiers');
+const {
+    PAWN_LOCAL_DECLARATION_KEYWORD_RE,
+    PAWN_STRUCTURAL_KEYWORD_RE,
+    startsWithBlockControlKeyword,
+    startsWithControlKeyword: startsWithPawnControlKeyword,
+    startsWithDeclarationKeyword,
+    startsWithDeclarationOrControlKeyword,
+    startsWithLocalDeclarationKeyword,
+    startsWithPawnKeyword
+} = require('./keywords');
+const { isPreprocessorDirectiveLine } = require('./preprocessor-lines');
+const { hasTrailingBackslashContinuation } = require('./continuation');
+const { getPawnLineTrimBounds } = require('./whitespace');
 
 function isBodyDeclarationContextChangeLine(source) {
     const trimmed = String(source || '').trimStart();
     if (!trimmed) return false;
-    if (trimmed[0] === '#') {
-        return startsWithKeyword(trimmed, 1, 'define') ||
-            startsWithKeyword(trimmed, 1, 'undef');
+    if (isPreprocessorDirectiveLine(trimmed)) {
+        return startsWithPawnKeyword(trimmed, 1, 'define') ||
+            startsWithPawnKeyword(trimmed, 1, 'undef');
     }
-    const startsWithControlKeyword = (
-        startsWithKeyword(trimmed, 0, 'for') ||
-        startsWithKeyword(trimmed, 0, 'if') ||
-        startsWithKeyword(trimmed, 0, 'else') ||
-        startsWithKeyword(trimmed, 0, 'while') ||
-        startsWithKeyword(trimmed, 0, 'do') ||
-        startsWithKeyword(trimmed, 0, 'switch')
-    );
-    return (
-        startsWithKeyword(trimmed, 0, 'new') ||
-        startsWithKeyword(trimmed, 0, 'static') ||
-        startsWithKeyword(trimmed, 0, 'const') ||
-        startsWithKeyword(trimmed, 0, 'enum') ||
-        (startsWithControlKeyword && /\b(?:new|static|const|enum)\b/.test(trimmed))
-    );
+    const startsWithControl = startsWithBlockControlKeyword(trimmed);
+    return startsWithLocalDeclarationKeyword(trimmed) ||
+        (startsWithControl && PAWN_LOCAL_DECLARATION_KEYWORD_RE.test(trimmed));
 }
 
 function createLineIndexCore() {
@@ -48,15 +37,12 @@ function createLineIndexCore() {
     const LINE_FLAG_HAS_BRACKET_SIG = 1 << 6;
     const LINE_FLAG_POTENTIAL_TOP_LEVEL_CONTEXT_CHANGE = 1 << 7;
     const LINE_FLAG_POTENTIAL_BODY_CONTEXT_CHANGE = 1 << 8;
-    const BODY_DECL_KEYWORD_RE = /\b(?:new|static|const|enum)\b/;
     const PUNCTUATION_ONLY_LINE_RE = /^[\[\]{}(),;:]+$/;
-    const DECL_OR_CONTROL_START_RE = /^(?:new|static|stock|public|private|const|native|forward|enum|if|for|while|switch|return|case|default|else|do|state|goto|assert|sleep|exit)\b/;
+    const AT_PUBLIC_FUNCTION_START_RE = /^@[A-Za-z_]\w*\s*\(/;
     const BITWISE_AND_OR_CANDIDATE_RE = /(?:^|[^&])&(?:[^&=]|$)|(?:^|[^|])\|(?:[^|=]|$)/;
     const COMPARISON_OR_LOGICAL_CANDIDATE_RE = /&&|\|\||==|!=|<=|>=|[<>]/;
     const SIZEOF_KEYWORD_RE = /\bsizeof\b/;
     const RATIONAL_LITERAL_CANDIDATE_RE = /\b\d[\d_]*\.\d/;
-    const STRUCTURAL_KEYWORD_RE = /\b(?:if|for|while|switch|do|else|case|default|return|break|continue|state|goto|assert|sleep|exit|new|static|const|enum|stock|public|private|native|forward)\b/;
-    const ASCII_IDENTIFIER_CONTENT_RE = /[A-Za-z_@]/;
     const NON_ASCII_CONTENT_RE = /[^\x00-\x7F]/;
     const BRACE_ONLY_OPTIONAL_SEMI_RE = /^[{}]+;?$/;
     const GOTO_KEYWORD_RE = /\bgoto\b/;
@@ -154,21 +140,9 @@ function createLineIndexCore() {
                 expressionCandidateLines.push(lineNo);
             }
 
-            let start = 0;
-            while (start < source.length) {
-                const code = source.charCodeAt(start);
-                if (code !== 32 && code !== 9) break;
-                start++;
-            }
-
-            let end = source.length;
-            while (end > start) {
-                const code = source.charCodeAt(end - 1);
-                if (code !== 32 && code !== 9) break;
-                end--;
-            }
+            const { start, end } = getPawnLineTrimBounds(source);
             if (start < end) {
-                previousNonEmptyLineHadTrailingBackslash = source.charCodeAt(end - 1) === 92;
+                previousNonEmptyLineHadTrailingBackslash = hasTrailingBackslashContinuation(source);
                 let isBraceOnlyLine = true;
                 for (let index = start; index < end; index++) {
                     const code = source.charCodeAt(index);
@@ -184,16 +158,16 @@ function createLineIndexCore() {
 
             const trimmed = (lineCommentIndex >= 0 ? source.slice(start, lineCommentIndex) : source.slice(start)).trim();
             if (trimmed) {
-                const firstChar = trimmed[0];
+                const isPreprocessorLine = isPreprocessorDirectiveLine(trimmed);
                 let isTopLevelCandidate = false;
                 let isBodyCandidate = false;
                 let isBodyDeclarationCandidate = false;
                 let startsWithControlKeyword = false;
 
-                if (firstChar === '#') {
+                if (isPreprocessorLine) {
                     isTopLevelCandidate = (
-                        startsWithKeyword(trimmed, 1, 'define') ||
-                        startsWithKeyword(trimmed, 1, 'undef')
+                        startsWithPawnKeyword(trimmed, 1, 'define') ||
+                        startsWithPawnKeyword(trimmed, 1, 'undef')
                     );
                     isBodyCandidate = isTopLevelCandidate;
                     isBodyDeclarationCandidate = isTopLevelCandidate;
@@ -203,24 +177,10 @@ function createLineIndexCore() {
                     }
                 } else {
                     isTopLevelCandidate = (
-                        startsWithKeyword(trimmed, 0, 'enum') ||
-                        startsWithKeyword(trimmed, 0, 'new') ||
-                        startsWithKeyword(trimmed, 0, 'static') ||
-                        startsWithKeyword(trimmed, 0, 'stock') ||
-                        startsWithKeyword(trimmed, 0, 'public') ||
-                        startsWithKeyword(trimmed, 0, 'private') ||
-                        startsWithKeyword(trimmed, 0, 'const') ||
-                        startsWithKeyword(trimmed, 0, 'forward') ||
-                        startsWithKeyword(trimmed, 0, 'native')
+                        AT_PUBLIC_FUNCTION_START_RE.test(trimmed) ||
+                        startsWithDeclarationKeyword(trimmed)
                     );
-                    startsWithControlKeyword = (
-                        startsWithKeyword(trimmed, 0, 'for') ||
-                        startsWithKeyword(trimmed, 0, 'if') ||
-                        startsWithKeyword(trimmed, 0, 'else') ||
-                        startsWithKeyword(trimmed, 0, 'while') ||
-                        startsWithKeyword(trimmed, 0, 'do') ||
-                        startsWithKeyword(trimmed, 0, 'switch')
-                    );
+                    startsWithControlKeyword = startsWithPawnControlKeyword(trimmed);
                     isBodyCandidate = isTopLevelCandidate || startsWithControlKeyword;
                     isBodyDeclarationCandidate = (
                         isBodyDeclarationContextChangeLine(trimmed)
@@ -245,7 +205,7 @@ function createLineIndexCore() {
                     bodyDeclarationCandidateLines.push(lineNo);
                 }
 
-                const hasAsciiIdentifierContent = ASCII_IDENTIFIER_CONTENT_RE.test(source);
+                const hasAsciiIdentifierContent = containsPawnIdentifierStartChar(source);
                 const hasNonAsciiContent = NON_ASCII_CONTENT_RE.test(source);
                 const hasInvalidAsciiCodeCharacterCandidate = /[$`]/.test(source);
                 const hasLineTooLongCandidate = source.length > 4095;
@@ -256,11 +216,8 @@ function createLineIndexCore() {
                 const hasPotentialAssignment = hasAssignmentChar && hasPotentialAssignmentOperator(source);
                 const hasMutationOperator = source.indexOf('++') >= 0 || source.indexOf('--') >= 0;
                 const mayStartDeclarationValidation =
-                    startsWithKeyword(trimmed, 0, 'new') ||
-                    startsWithKeyword(trimmed, 0, 'static') ||
-                    startsWithKeyword(trimmed, 0, 'const') ||
-                    startsWithKeyword(trimmed, 0, 'enum') ||
-                    (startsWithControlKeyword && BODY_DECL_KEYWORD_RE.test(trimmed));
+                    startsWithLocalDeclarationKeyword(trimmed) ||
+                    (startsWithControlKeyword && PAWN_LOCAL_DECLARATION_KEYWORD_RE.test(trimmed));
                 if (hasIdentifierContent || hasAssignmentChar || !isPunctuationOnlyLine) {
                     generalDiagnosticCandidateLines.push(lineNo);
                 }
@@ -290,9 +247,10 @@ function createLineIndexCore() {
                 const hasRationalLiteralCandidate = RATIONAL_LITERAL_CANDIDATE_RE.test(trimmed);
 
                 const startsWithKnownDeclarationOrControl =
-                    DECL_OR_CONTROL_START_RE.test(trimmed);
+                    AT_PUBLIC_FUNCTION_START_RE.test(trimmed) ||
+                    startsWithDeclarationOrControlKeyword(trimmed);
                 const mayNeedStrayTokenValidation =
-                    firstChar !== '#' &&
+                    !isPreprocessorLine &&
                     !BRACE_ONLY_OPTIONAL_SEMI_RE.test(trimmed) &&
                     !startsWithKnownDeclarationOrControl &&
                     !STRAY_TOKEN_ALLOWED_CONTEXT_CHAR_RE.test(trimmed) &&
@@ -306,7 +264,7 @@ function createLineIndexCore() {
                     preprocessorAndLabelCandidateLines.push(lineNo);
                 }
 
-                const hasStructuralKeyword = STRUCTURAL_KEYWORD_RE.test(trimmed);
+                const hasStructuralKeyword = PAWN_STRUCTURAL_KEYWORD_RE.test(trimmed);
                 const hasNumericNoEffectCandidate = !hasAsciiIdentifierContent &&
                     DIGIT_RE.test(trimmed) &&
                     trimmed.indexOf('=') < 0 &&

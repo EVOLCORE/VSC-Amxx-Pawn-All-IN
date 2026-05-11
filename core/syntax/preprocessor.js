@@ -4,6 +4,13 @@ const { createRationalPolicySyntaxCore } = require('./rational-policy');
 
 // Shared Pawn preprocessor helpers. These are language/runtime mechanics used
 // by document context, include scanning, and declaration parsing.
+const { splitPawnLines } = require('./lines');
+const { skipPawnHorizontalWhitespace } = require('./whitespace');
+const {
+    hasTrailingBackslashContinuation,
+    removeTrailingBackslashContinuation
+} = require('./continuation');
+
 function createPreprocessorSyntaxCore(deps) {
     const {
         evaluatePawnNumericExpr,
@@ -22,6 +29,7 @@ function createPreprocessorSyntaxCore(deps) {
         getCachedCommentAnalysis,
         setCachedCommentAnalysis,
         buildCommentAnalysis,
+        getCtrlCharStateForContent = null,
         readCachedIncludePreprocessedState,
         writeCachedIncludePreprocessedState
     } = deps;
@@ -139,47 +147,47 @@ function createPreprocessorSyntaxCore(deps) {
         };
     }
 
-    function hasTrailingPreprocessorContinuation(rawLine) {
-        return String(rawLine || '').trimEnd().endsWith('\\');
-    }
-
-    function collectPreprocessorDirectiveText(rawLines, startLine, preparedLines = null) {
+    function collectPreprocessorDirectiveText(rawLines, startLine, preparedLines = null, includeRangeMap = true) {
         const sourceRawLines = Array.isArray(rawLines) ? rawLines : [];
         const sourcePreparedLines = Array.isArray(preparedLines) ? preparedLines : sourceRawLines;
         const firstLine = Math.max(0, startLine | 0);
         let lineNumber = firstLine;
         let text = '';
         let joinedCursor = 0;
-        const segments = [];
+        const segments = includeRangeMap ? [] : null;
 
         while (lineNumber < sourceRawLines.length) {
             const rawLine = String(sourceRawLines[lineNumber] || '');
             const preparedLine = String(sourcePreparedLines[lineNumber] || '');
-            const continued = hasTrailingPreprocessorContinuation(rawLine);
+            const continued = hasTrailingBackslashContinuation(rawLine);
             const segmentText = continued
-                ? preparedLine.trimEnd().replace(/\\\s*$/, '')
+                ? removeTrailingBackslashContinuation(preparedLine).trimEnd()
                 : preparedLine;
             const prefix = lineNumber === firstLine ? '' : ' ';
-            const mappedStart = lineNumber === firstLine
-                ? 0
-                : (segmentText.length - segmentText.trimStart().length);
             const mappedText = lineNumber === firstLine ? segmentText : segmentText.trim();
-            const joinedStart = joinedCursor + prefix.length;
-
+            if (includeRangeMap) {
+                const mappedStart = lineNumber === firstLine
+                    ? 0
+                    : (segmentText.length - segmentText.trimStart().length);
+                const joinedStart = joinedCursor + prefix.length;
+                segments.push({
+                    lineNumber,
+                    sourceStart: mappedStart,
+                    sourceEnd: mappedStart + mappedText.length,
+                    joinedStart,
+                    joinedEnd: joinedStart + mappedText.length
+                });
+            }
             text += prefix + mappedText;
-            segments.push({
-                lineNumber,
-                sourceStart: mappedStart,
-                sourceEnd: mappedStart + mappedText.length,
-                joinedStart,
-                joinedEnd: joinedStart + mappedText.length
-            });
             joinedCursor = text.length;
             lineNumber++;
             if (!continued) break;
         }
 
         const mapRange = (start, length = 1) => {
+            if (!segments) {
+                return { lineNumber: firstLine, start: Math.max(0, start | 0), length: Math.max(1, length | 0) };
+            }
             const rangeStart = Math.max(0, start | 0);
             const rangeEnd = Math.max(rangeStart + 1, rangeStart + Math.max(1, length | 0));
             const segment = segments.find(item =>
@@ -205,7 +213,7 @@ function createPreprocessorSyntaxCore(deps) {
             text,
             nextLine: Math.max(firstLine + 1, lineNumber),
             continued: lineNumber > firstLine + 1,
-            segments,
+            segments: segments || [],
             mapRange
         };
     }
@@ -408,10 +416,13 @@ function createPreprocessorSyntaxCore(deps) {
                     const payload = line.slice(payloadRange.start, payloadRange.start + payloadRange.length);
                     const bareMatch = payload.match(/^[A-Za-z0-9_./\\-]+/);
                     if (bareMatch) {
-                        pushIssue('validation.extraCharactersOnLine', getRestRangeFrom(
-                            payloadRange.start + bareMatch[0].length,
-                            directive.payloadEnd
-                        ));
+                        const restStart = payloadRange.start + bareMatch[0].length;
+                        if (line.slice(restStart, directive.payloadEnd).trim()) {
+                            pushIssue('validation.extraCharactersOnLine', getRestRangeFrom(
+                                restStart,
+                                directive.payloadEnd
+                            ));
+                        }
                         return issues;
                     }
                     pushIssue('validation.invalidString', getPayloadRange() || {
@@ -612,7 +623,7 @@ function createPreprocessorSyntaxCore(deps) {
         const hasDirectiveMarker = contentText.indexOf('#') >= 0;
         const rawLines = Array.isArray(options.rawLines)
             ? options.rawLines
-            : contentText.split(/\r?\n/);
+            : splitPawnLines(contentText);
         let defineDecls = Array.isArray(options.defineDecls)
             ? options.defineDecls.slice()
             : [];
@@ -636,6 +647,9 @@ function createPreprocessorSyntaxCore(deps) {
                 const state = {
                     content: contentText,
                     rawLines,
+                    strippedLines: Array.isArray(options.strippedLines) ? options.strippedLines : rawLines,
+                    lineCtrlChars: Array.isArray(options.lineCtrlChars) ? options.lineCtrlChars : [],
+                    finalCtrlChar: options.finalCtrlChar || '^',
                     defineDecls,
                     rationalState,
                     defineStateKey: ensureDefineStateKey(),
@@ -650,14 +664,31 @@ function createPreprocessorSyntaxCore(deps) {
             }
             return contentText;
         }
-        const buildDefineDeclMap = () => new Map(defineDecls.map(decl => [decl.name, decl]));
-        const buildDefineDeclIndexMap = () => new Map(defineDecls.map((decl, index) => [decl.name, index]));
+        const buildDefineDeclMap = () => {
+            const map = new Map();
+            for (const decl of defineDecls) {
+                map.set(decl.name, decl);
+            }
+            return map;
+        };
+        const buildDefineDeclIndexMap = () => {
+            const map = new Map();
+            for (let index = 0; index < defineDecls.length; index++) {
+                const decl = defineDecls[index];
+                map.set(decl.name, index);
+            }
+            return map;
+        };
         const createReturnedState = (contentValue, includeEntriesValue, processedRawLinesValue) => {
             let returnedDefineDeclMap = null;
             let returnedDefineDeclIndexMap = null;
+            const returnedRawLines = Array.isArray(processedRawLinesValue) ? processedRawLinesValue : rawLines;
             const state = {
                 content: contentValue,
-                rawLines: Array.isArray(processedRawLinesValue) ? processedRawLinesValue : rawLines,
+                rawLines: returnedRawLines,
+                strippedLines: Array.isArray(outStrippedLines) ? outStrippedLines : strippedLines,
+                lineCtrlChars: Array.isArray(options.lineCtrlChars) ? options.lineCtrlChars : [],
+                finalCtrlChar: options.finalCtrlChar || '^',
                 defineDecls,
                 rationalState,
                 defineStateKey: ensureDefineStateKey(),
@@ -695,7 +726,9 @@ function createPreprocessorSyntaxCore(deps) {
                 return analysis.strippedLines;
             })()
             : rawLines;
-        const outLines = [];
+        let outLines = null;
+        let outStrippedLines = null;
+        let emittedLineCount = 0;
         let contentChanged = false;
         let defineDeclMap = null;
         let defineDeclIndexMap = null;
@@ -728,12 +761,7 @@ function createPreprocessorSyntaxCore(deps) {
                 for (let lineNumber = 0; lineNumber < rawLines.length; lineNumber++) {
                     const source = String(rawLines[lineNumber] || '');
                     if (source.indexOf('#') < 0) continue;
-                    let cursor = 0;
-                    while (cursor < source.length) {
-                        const code = source.charCodeAt(cursor);
-                        if (code !== 32 && code !== 9) break;
-                        cursor++;
-                    }
+                    const cursor = skipPawnHorizontalWhitespace(source, 0);
                     if (cursor < source.length && source.charCodeAt(cursor) === 35) {
                         candidates.push(lineNumber);
                     }
@@ -778,45 +806,87 @@ function createPreprocessorSyntaxCore(deps) {
             }
             return collectDeclarationText(rawLines, lineNumber, [], directiveLines);
         };
+        const ensureOutLines = () => {
+            if (!outLines) {
+                outLines = rawLines.slice(0, emittedLineCount);
+                outStrippedLines = strippedLines.slice(0, emittedLineCount);
+            }
+            return outLines;
+        };
+        const emitRawLine = (rawLine, strippedLine = rawLine) => {
+            if (outLines) {
+                outLines.push(rawLine);
+                outStrippedLines.push(strippedLine);
+            }
+            emittedLineCount++;
+        };
+        const emitChangedLine = (line, strippedLine = line) => {
+            ensureOutLines().push(line);
+            outStrippedLines.push(strippedLine);
+            emittedLineCount++;
+            contentChanged = true;
+        };
         const appendContentLine = lineNumber => {
             const rawLine = rawLines[lineNumber];
             if (isActive()) {
-                outLines.push(rawLine);
+                emitRawLine(rawLine, strippedLines[lineNumber] || rawLine);
             } else {
                 const maskedLine = maskPreprocessorLine(rawLine);
-                if (maskedLine !== rawLine) contentChanged = true;
-                outLines.push(maskedLine);
+                if (maskedLine !== rawLine) emitChangedLine(maskedLine, maskedLine);
+                else emitRawLine(maskedLine, strippedLines[lineNumber] || maskedLine);
             }
         };
-        const appendMaskedLine = rawLine => {
+        const appendMaskedLine = (rawLine, strippedLine = rawLine) => {
             const maskedLine = maskPreprocessorLine(rawLine);
-            if (maskedLine !== rawLine) contentChanged = true;
-            outLines.push(maskedLine);
+            if (maskedLine !== rawLine) emitChangedLine(maskedLine, maskedLine);
+            else emitRawLine(maskedLine, strippedLine);
         };
         const appendContentRange = (startLine, endLineExclusive) => {
-            for (let lineNumber = Math.max(0, startLine); lineNumber < endLineExclusive; lineNumber++) {
+            const start = Math.max(0, startLine);
+            if (isActive() && !outLines) {
+                emittedLineCount += Math.max(0, endLineExclusive - start);
+                return;
+            }
+            for (let lineNumber = start; lineNumber < endLineExclusive; lineNumber++) {
                 appendContentLine(lineNumber);
+            }
+        };
+        const appendMaskedRange = (startLine, endLineExclusive) => {
+            for (let lineNumber = Math.max(0, startLine); lineNumber < endLineExclusive; lineNumber++) {
+                appendMaskedLine(rawLines[lineNumber], strippedLines[lineNumber] || rawLines[lineNumber]);
             }
         };
 
         const processDirectiveLine = lineNumber => {
             const rawLine = rawLines[lineNumber];
-            const directiveSource = collectPreprocessorDirectiveText(rawLines, lineNumber, strippedLines);
-            const directive = parsePreprocessorDirectiveLine(directiveSource.text);
+            const hasContinuation = hasTrailingBackslashContinuation(rawLine);
+            const directiveSource = hasContinuation
+                ? collectPreprocessorDirectiveText(rawLines, lineNumber, strippedLines, false)
+                : null;
+            const directiveText = directiveSource
+                ? directiveSource.text
+                : String(strippedLines[lineNumber] || rawLine || '');
+            const directive = parsePreprocessorDirectiveLine(directiveText);
             const trimmed = directive?.trimmed || '';
             const keyword = directive?.keyword || '';
             const rest = directive?.rest || '';
-            const nextDirectiveLine = directiveSource.nextLine;
+            const nextDirectiveLine = directiveSource?.nextLine ?? (lineNumber + 1);
             const appendMaskedDirectiveLines = () => {
-                appendMaskedLine(rawLine);
+                appendMaskedLine(rawLine, strippedLines[lineNumber] || rawLine);
                 for (let continuationLine = lineNumber + 1; continuationLine < nextDirectiveLine; continuationLine++) {
-                    appendMaskedLine(rawLines[continuationLine]);
+                    appendMaskedLine(
+                        rawLines[continuationLine],
+                        strippedLines[continuationLine] || rawLines[continuationLine]
+                    );
                 }
             };
             const appendRawDirectiveLines = () => {
-                outLines.push(rawLine);
+                emitRawLine(rawLine, strippedLines[lineNumber] || rawLine);
                 for (let continuationLine = lineNumber + 1; continuationLine < nextDirectiveLine; continuationLine++) {
-                    appendMaskedLine(rawLines[continuationLine]);
+                    appendMaskedLine(
+                        rawLines[continuationLine],
+                        strippedLines[continuationLine] || rawLines[continuationLine]
+                    );
                 }
             };
 
@@ -880,7 +950,7 @@ function createPreprocessorSyntaxCore(deps) {
             if (keyword === 'endinput') {
                 appendMaskedDirectiveLines();
                 if (isActive()) {
-                    appendContentRange(nextDirectiveLine, rawLines.length);
+                    appendMaskedRange(nextDirectiveLine, rawLines.length);
                     return rawLines.length;
                 }
                 return nextDirectiveLine;
@@ -922,9 +992,12 @@ function createPreprocessorSyntaxCore(deps) {
                 }
                 defineMap.set(name, defineDecl);
                 defineStateKeyDirty = true;
-                outLines.push(rawLine);
+                emitRawLine(rawLine, strippedLines[lineNumber] || rawLine);
                 for (let continuationLine = lineNumber + 1; continuationLine < nextLine; continuationLine++) {
-                    appendMaskedLine(rawLines[continuationLine]);
+                    appendMaskedLine(
+                        rawLines[continuationLine],
+                        strippedLines[continuationLine] || rawLines[continuationLine]
+                    );
                 }
                 return nextLine;
             }
@@ -995,12 +1068,20 @@ function createPreprocessorSyntaxCore(deps) {
                                 appendRawDirectiveLines();
                                 return nextDirectiveLine;
                             }
+                            const includeCtrlCharState = typeof getCtrlCharStateForContent === 'function'
+                                ? getCtrlCharStateForContent(includeContent, includePath)
+                                : null;
                             try {
                                 nestedState = preprocessPawnContentRef()(includeContent, {
                                     defineDecls,
                                     precomputedDefineStateKey: activeDefineStateKey,
                                     fromFilePath: includePath,
                                     searchPaths: nestedSearchPaths,
+                                    rawLines: includeCtrlCharState?.rawLines,
+                                    strippedLines: includeCtrlCharState?.strippedLines,
+                                    lineCtrlChars: includeCtrlCharState?.lineCtrlChars || [],
+                                    finalCtrlChar: includeCtrlCharState?.finalCtrlChar,
+                                    directiveCandidateLines: includeCtrlCharState?.directiveCandidateLines,
                                     includeDepth: nestedIncludeDepth,
                                     activeFiles,
                                     rationalState,
@@ -1043,6 +1124,9 @@ function createPreprocessorSyntaxCore(deps) {
                                     {
                                         content: nestedState.content,
                                         rawLines: nestedState.rawLines,
+                                        strippedLines: nestedState.strippedLines,
+                                        lineCtrlChars: nestedState.lineCtrlChars,
+                                        finalCtrlChar: nestedState.finalCtrlChar,
                                         rationalState: nestedState.rationalState || null,
                                         directiveCandidateLines: nestedState.directiveCandidateLines,
                                         includeEntries: nestedState.includeEntries || [],
@@ -1053,8 +1137,8 @@ function createPreprocessorSyntaxCore(deps) {
                             defineDecls = nestedState.defineDecls || [];
                             defineStateKey = String(nestedState.defineStateKey || '');
                             defineStateKeyDirty = !defineStateKey;
-                            defineDeclMap = nestedState.defineDeclMap || buildDefineDeclMap();
-                            defineDeclIndexMap = nestedState.defineDeclIndexMap || buildDefineDeclIndexMap();
+                            defineDeclMap = null;
+                            defineDeclIndexMap = null;
                             includeEntries.push(...nestedState.includeEntries);
                         }
                     }
@@ -1097,11 +1181,12 @@ function createPreprocessorSyntaxCore(deps) {
             if (ownsActiveFile) activeFiles.delete(currentPath);
         }
 
+        const processedRawLines = outLines || rawLines;
         const processedContent = !contentChanged && contentText.indexOf('\r') < 0
             ? contentText
-            : outLines.join('\n');
+            : processedRawLines.join('\n');
         if (options.returnState) {
-            return createReturnedState(processedContent, includeEntries, outLines);
+            return createReturnedState(processedContent, includeEntries, processedRawLines);
         }
         return processedContent;
     }

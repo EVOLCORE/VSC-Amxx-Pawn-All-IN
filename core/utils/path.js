@@ -1,5 +1,9 @@
 const path = require('path');
 
+function normalizePathKey(value = '') {
+    return String(value || '').replace(/\\/g, '/').toLowerCase();
+}
+
 function createPathUtilityCore() {
     const normalizedPathCache = new Map();
     const MAX_NORMALIZED_PATH_CACHE_SIZE = 4096;
@@ -28,4 +32,7 @@ function createPathUtilityCore() {
     };
 }
 
-module.exports = { createPathUtilityCore };
+module.exports = {
+    createPathUtilityCore,
+    normalizePathKey
+};

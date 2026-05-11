@@ -13,11 +13,64 @@ const { createWarningPolicySyntaxCore } = require('./warning-policy');
 const { createRationalPolicySyntaxCore } = require('./rational-policy');
 const { createTagOverridePolicySyntaxCore } = require('./tag-override-policy');
 const { createStatementClassifier } = require('./statement-classifier');
+const {
+    createControlContextTracker,
+    getCompletionIntent,
+    getCompletionControlContext
+} = require('./control-context');
 const { createDelimiterSyntaxCore } = require('./delimiters');
 const { createPreprocessorLabelSyntaxCore } = require('./preprocessor-label');
 const { createTextSyntaxDiagnosticsCore } = require('./text-diagnostics');
 const { createSemanticSyntaxCore } = require('./semantic-classifier');
 const { createMacroExpansionSyntaxCore } = require('./macro-expander');
+const { createVirtualExpandedLineContextCore } = require('./virtual-expanded-line-context');
+const { createFastFunctionRangeCore } = require('./function-ranges');
+const { findBalancedGroupEnd } = require('./balanced');
+const {
+    FIXED_PAWN_TAG_NAMES,
+    isAnyPawnTagName,
+    isFixedPawnTagName,
+    normalizeDeclaredPawnTagName,
+    normalizePawnTagName
+} = require('./tags');
+const {
+    COMPOUND_PAWN_ASSIGNMENT_OPERATORS,
+    isPawnAssignmentCompareNeighbor,
+    readPawnAssignmentOperatorAt
+} = require('./operators');
+const {
+    getPreprocessorDirectiveStartIndex,
+    isPreprocessorDirectiveLine
+} = require('./preprocessor-lines');
+const {
+    containsPawnIdentifierStartChar,
+    getPawnIdentifierName,
+    isPawnIdentifierBoundaryChar,
+    isPawnIdentifierContinueChar,
+    isPawnIdentifierContinueCode,
+    isPawnIdentifierName,
+    isPawnIdentifierStartChar,
+    isPawnIdentifierStartCode,
+    readPawnIdentifierAt
+} = require('./identifiers');
+const {
+    findPawnLineTrimEndIndex,
+    findNextNonWhitespaceIndex,
+    findPreviousNonWhitespaceIndex,
+    getPawnLineTrimBounds,
+    isPawnHorizontalWhitespaceChar,
+    isPawnHorizontalWhitespaceCode,
+    isPawnWhitespaceChar,
+    isPawnWhitespaceCode,
+    skipPawnHorizontalWhitespace,
+    skipPawnWhitespace
+} = require('./whitespace');
+const {
+    countLineBreaks,
+    countTextLines,
+    splitPawnLines
+} = require('./lines');
+const pawnKeywords = require('./keywords');
 
 module.exports = {
     createCommentAnalysisCore,
@@ -35,9 +88,48 @@ module.exports = {
     createRationalPolicySyntaxCore,
     createTagOverridePolicySyntaxCore,
     createStatementClassifier,
+    createControlContextTracker,
+    getCompletionIntent,
+    getCompletionControlContext,
     createDelimiterSyntaxCore,
     createPreprocessorLabelSyntaxCore,
     createTextSyntaxDiagnosticsCore,
     createSemanticSyntaxCore,
-    createMacroExpansionSyntaxCore
+    createMacroExpansionSyntaxCore,
+    createVirtualExpandedLineContextCore,
+    createFastFunctionRangeCore,
+    findBalancedGroupEnd,
+    FIXED_PAWN_TAG_NAMES,
+    isAnyPawnTagName,
+    isFixedPawnTagName,
+    normalizeDeclaredPawnTagName,
+    normalizePawnTagName,
+    COMPOUND_PAWN_ASSIGNMENT_OPERATORS,
+    isPawnAssignmentCompareNeighbor,
+    readPawnAssignmentOperatorAt,
+    getPreprocessorDirectiveStartIndex,
+    isPreprocessorDirectiveLine,
+    containsPawnIdentifierStartChar,
+    getPawnIdentifierName,
+    isPawnIdentifierBoundaryChar,
+    isPawnIdentifierContinueChar,
+    isPawnIdentifierContinueCode,
+    isPawnIdentifierName,
+    isPawnIdentifierStartChar,
+    isPawnIdentifierStartCode,
+    readPawnIdentifierAt,
+    findPawnLineTrimEndIndex,
+    findNextNonWhitespaceIndex,
+    findPreviousNonWhitespaceIndex,
+    getPawnLineTrimBounds,
+    isPawnHorizontalWhitespaceChar,
+    isPawnHorizontalWhitespaceCode,
+    isPawnWhitespaceChar,
+    isPawnWhitespaceCode,
+    skipPawnHorizontalWhitespace,
+    skipPawnWhitespace,
+    countLineBreaks,
+    countTextLines,
+    splitPawnLines,
+    ...pawnKeywords
 };

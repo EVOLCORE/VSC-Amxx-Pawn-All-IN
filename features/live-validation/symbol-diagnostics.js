@@ -1,3 +1,13 @@
+const {
+    containsPawnIdentifierStartChar,
+    getPawnIdentifierName
+} = require('../../core/syntax/identifiers');
+const {
+    startsWithControlKeyword,
+    startsWithDeclarationKeyword
+} = require('../../core/syntax/keywords');
+const { isPreprocessorDirectiveLine } = require('../../core/syntax/preprocessor-lines');
+
 function createSymbolDiagnostics(deps) {
     const {
         areWarningDiagnosticsEnabled,
@@ -31,7 +41,7 @@ function createSymbolDiagnostics(deps) {
     function collectUnknownSymbolLiveDiagnosticsForLine(document, lineNumber, ctx, analysisCacheOrFactory, lineText, strippedLineText, lineStartOffset, docLength, declarationSourceState = null, lookupState = null) {
         const diagnostics = [];
         if (isIncludeDocument(document) && !isStrictIncludeValidationEnabled()) return diagnostics;
-        if (!/[A-Za-z_@]/.test(lineText) && !nonAsciiCharRe.test(lineText)) return diagnostics;
+        if (!containsPawnIdentifierStartChar(lineText) && !nonAsciiCharRe.test(lineText)) return diagnostics;
         const multilineStringLineFlags = getMultilineStringLineFlags(ctx);
         if (multilineStringLineFlags[lineNumber]) return diagnostics;
         const getAnalysisCache = () => (
@@ -41,14 +51,15 @@ function createSymbolDiagnostics(deps) {
         );
 
         const trimmedLine = String(strippedLineText || lineText || '').trim();
-        if (!trimmedLine || trimmedLine.startsWith('#')) return diagnostics;
+        if (!trimmedLine || isPreprocessorDirectiveLine(trimmedLine)) return diagnostics;
 
         if (isFunctionHeaderLine(ctx, lineNumber)) return diagnostics;
         if (isEnumMemberDeclarationLine(ctx, lineNumber)) return diagnostics;
 
         const getLookupScopedCaches = () => {
             if (!lookupState || !ctx?.lookup) return null;
-            let scoped = lookupState.byLookup?.get(ctx.lookup);
+            const scopeKey = ctx.parsedDecls || ctx.lookup;
+            let scoped = lookupState.byLookup?.get(scopeKey);
             if (!scoped) {
                 scoped = {
                     anyDeclByNameCache: new Map(),
@@ -56,7 +67,7 @@ function createSymbolDiagnostics(deps) {
                     objectAliasDefineByNameCache: new Map()
                 };
                 if (!lookupState.byLookup) lookupState.byLookup = new WeakMap();
-                lookupState.byLookup.set(ctx.lookup, scoped);
+                lookupState.byLookup.set(scopeKey, scoped);
             }
             return scoped;
         };
@@ -231,7 +242,7 @@ function createSymbolDiagnostics(deps) {
                 const aliasDefine = isKnownFunction
                     ? null
                     : findObjectAliasDefineByName(name);
-                const aliasTargetName = String(aliasDefine?.value || '').trim().match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+                const aliasTargetName = getPawnIdentifierName(aliasDefine?.value);
                 const isKnownFunctionAlias = !!(
                     aliasTargetName &&
                     findFunctionLikeDeclByName(aliasTargetName)
@@ -247,7 +258,7 @@ function createSymbolDiagnostics(deps) {
             if (knownDecl) continue;
             const absoluteStart = lineStartOffset + start;
             const absoluteEnd = lineStartOffset + end;
-            const declarationVariableDecl = findDocumentVariableDeclByName(ctx, name, lineNumber);
+            const declarationVariableDecl = findDocumentVariableDeclByName(ctx, name, lineNumber, { sameLineOnly: true });
             if (declarationVariableDecl && findVariableDeclarationSpanInRange(
                 document,
                 absoluteStart,
@@ -288,7 +299,7 @@ function createSymbolDiagnostics(deps) {
     function collectStrayTokenLiveDiagnosticsForLine(document, lineNumber, ctx, lineText, strippedLineText, allStrippedLines, lineStartOffset, docLength) {
         const diagnostics = [];
         const trimmedLine = String(strippedLineText || lineText || '').trim();
-        if (!trimmedLine || trimmedLine.startsWith('#')) return diagnostics;
+        if (!trimmedLine || isPreprocessorDirectiveLine(trimmedLine)) return diagnostics;
         const escapeChar = ctx?.resolver?.ctrlCharAtLine?.(lineNumber) || '';
         const looksLikeExpressionFragment = source => {
             const trimmed = String(source || '').trim();
@@ -324,8 +335,8 @@ function createSymbolDiagnostics(deps) {
         }
 
         if (/^[{}]+;?$/.test(trimmedLine)) return diagnostics;
-        if (/^(?:new|static|stock|public|private|const|native|forward|enum)\b/.test(trimmedLine)) return diagnostics;
-        if (/^(?:if|for|while|switch|return|case|default|else|do)\b/.test(trimmedLine)) return diagnostics;
+        if (startsWithDeclarationKeyword(trimmedLine)) return diagnostics;
+        if (startsWithControlKeyword(trimmedLine)) return diagnostics;
         if (/[=([{,:?]/.test(trimmedLine)) return diagnostics;
         if (trimmedLine.endsWith(';')) return diagnostics;
         if (looksLikeExpressionFragment(trimmedLine)) return diagnostics;

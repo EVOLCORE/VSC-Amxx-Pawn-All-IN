@@ -17,7 +17,8 @@ function buildCoreActivationRuntime(deps) {
         context,
         t,
         settingsService,
-        state
+        state,
+        liveValidationOutputChannel = null
     } = deps;
     const {
         includeFileDecls,
@@ -126,6 +127,7 @@ function buildCoreActivationRuntime(deps) {
     let parseDimSpec = null;
     let evaluatePawnNumericExpr = null;
     let collectActiveDefineDecls = null;
+    let filterEnumEvalOuterDecls = null;
     let parseFileDecls = null;
     let preprocessPawnContent = null;
     let parsePreprocessorDirectiveLine = null;
@@ -224,6 +226,7 @@ function buildCoreActivationRuntime(deps) {
         findForScopeEndLine,
         parseSingleStatementBodyDecls,
         collectDeclarationText,
+        collectForHeaderText,
         extractEnumSymbolName,
         formatResolvedEnumValueDisplay,
         formatAutoEnumValueDisplay,
@@ -257,6 +260,7 @@ function buildCoreActivationRuntime(deps) {
         getCachedCommentAnalysis,
         setCachedCommentAnalysis,
         buildCommentAnalysis,
+        getCtrlCharStateForContent,
         readCachedIncludePreprocessedState: (...args) => readPersistentIncludePreprocessedState
             ? readPersistentIncludePreprocessedState(...args)
             : null,
@@ -299,6 +303,7 @@ function buildCoreActivationRuntime(deps) {
         VAR_MODS,
         getLookupTokenAtPosition,
         collectDeclarationText,
+        collectForHeaderText,
         getCtrlCharStateForContent,
         withCtrlCharForContent,
         stripLineComment,
@@ -346,6 +351,7 @@ function buildCoreActivationRuntime(deps) {
         parseDimSpec,
         evaluatePawnNumericExpr,
         collectActiveDefineDecls,
+        filterEnumEvalOuterDecls,
         parseFileDecls
     } = analysisRuntime);
 
@@ -393,6 +399,7 @@ function buildCoreActivationRuntime(deps) {
         normalizeExtensionList,
         createCtrlCharResolver,
         parseFileDecls,
+        filterEnumEvalOuterDecls,
         buildDocumentDeclLookup,
         getDocumentContextCacheKey,
         getSharedDocumentContextCacheKey,
@@ -423,7 +430,8 @@ function buildCoreActivationRuntime(deps) {
         clearIncludeFileTextCacheForFile,
         clearFileSnapshotCacheForFile,
         parsePreprocessorDirectiveLine,
-        isExplicitDeclarationStartLine
+        isExplicitDeclarationStartLine,
+        liveValidationOutputChannel
     });
     ({
         getSearchPaths,

@@ -1,3 +1,9 @@
+const {
+    isPawnIdentifierName,
+    readPawnIdentifierAt
+} = require('./identifiers');
+const { findBalancedGroupEnd } = require('./balanced');
+
 function createMacroExpansionSyntaxCore(deps = {}) {
     const {
         isEscapedQuote,
@@ -15,99 +21,30 @@ function createMacroExpansionSyntaxCore(deps = {}) {
     const isIdentifierContinue = char => isIdentifierContinueChar(char || '');
     const isQuoteEscaped = (source, index, escapeChar) => isEscapedQuote(source, index, escapeChar);
     const isWhitespace = char => /\s/.test(char || '');
-    const isIdentifierName = value => /^[A-Za-z_@][A-Za-z0-9_@]*$/.test(String(value || ''));
 
     function readIdentifierAt(source, index) {
-        const text = String(source || '');
-        if (!isIdentifierStart(text[index])) return null;
-        let end = index + 1;
-        while (end < text.length && isIdentifierContinue(text[end])) end++;
-        return {
-            name: text.slice(index, end),
-            start: index,
-            end
-        };
+        return readPawnIdentifierAt(source, index, {
+            isIdentifierStartChar: isIdentifierStart,
+            isIdentifierContinueChar: isIdentifierContinue
+        });
     }
 
     function findMatchingParenIndex(source, openIndex, escapeChar = '') {
-        const text = String(source || '');
-        if (text[openIndex] !== '(') return -1;
-        let depth = 0;
-        let inString = false;
-        let stringChar = '';
-        for (let index = openIndex; index < text.length; index++) {
-            const char = text[index];
-            if (inString) {
-                if (char === stringChar && !isQuoteEscaped(text, index, escapeChar)) {
-                    inString = false;
-                }
-                continue;
-            }
-            if (char === '"' || char === "'") {
-                inString = true;
-                stringChar = char;
-                continue;
-            }
-            if (char === '(') {
-                depth++;
-                continue;
-            }
-            if (char === ')') {
-                depth--;
-                if (depth === 0) return index;
-            }
-        }
-        return -1;
+        return findBalancedGroupEnd(source, openIndex, '(', ')', {
+            escapeChar,
+            isEscapedQuote: isQuoteEscaped
+        });
     }
 
     function findMatchingBracketIndex(source, openIndex, escapeChar = '') {
-        const text = String(source || '');
-        if (text[openIndex] !== '[') return -1;
-        let depth = 0;
-        let parenDepth = 0;
-        let braceDepth = 0;
-        let inString = false;
-        let stringChar = '';
-        for (let index = openIndex; index < text.length; index++) {
-            const char = text[index];
-            if (inString) {
-                if (char === stringChar && !isQuoteEscaped(text, index, escapeChar)) {
-                    inString = false;
-                }
-                continue;
-            }
-            if (char === '"' || char === "'") {
-                inString = true;
-                stringChar = char;
-                continue;
-            }
-            if (char === '[') {
-                depth++;
-                continue;
-            }
-            if (char === '(') {
-                parenDepth++;
-                continue;
-            }
-            if (char === ')') {
-                parenDepth = Math.max(0, parenDepth - 1);
-                continue;
-            }
-            if (char === '{') {
-                braceDepth++;
-                continue;
-            }
-            if (char === '}') {
-                braceDepth = Math.max(0, braceDepth - 1);
-                continue;
-            }
-            if (char === ']') {
-                if (parenDepth || braceDepth) continue;
-                depth--;
-                if (depth === 0) return index;
-            }
-        }
-        return -1;
+        return findBalancedGroupEnd(source, openIndex, '[', ']', {
+            escapeChar,
+            isEscapedQuote: isQuoteEscaped,
+            shieldGroups: [
+                ['(', ')'],
+                ['{', '}']
+            ]
+        });
     }
 
     function splitMacroArguments(source, escapeChar = '') {
@@ -122,15 +59,76 @@ function createMacroExpansionSyntaxCore(deps = {}) {
         const cached = macroArgInfoCache.get(decl);
         if (cached) return cached;
 
-        const infos = splitMacroArguments(argSource, '')
-            .map(part => String(part || '').trim())
-            .filter(Boolean)
-            .map(name => ({
-                name,
-                identifier: isIdentifierName(name)
-            }));
+        const placeholderMatches = [...String(argSource || '').matchAll(/%\d+/g)];
+        const infos = placeholderMatches.length
+            ? placeholderMatches
+                .map(match => match[0])
+                .filter((name, index, names) => names.indexOf(name) === index)
+                .map(name => ({
+                    name,
+                    identifier: false
+                }))
+            : splitMacroArguments(argSource, '')
+                .map(part => String(part || '').trim())
+                .filter(Boolean)
+                .map(name => ({
+                    name,
+                    identifier: isPawnIdentifierName(name)
+                }));
         macroArgInfoCache.set(decl, infos);
         return infos;
+    }
+
+    function escapeRegexLiteral(source = '') {
+        let output = '';
+        for (const char of String(source || '')) {
+            if (/\s/.test(char)) {
+                output += '\\s*';
+            } else {
+                output += `\\s*${char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*`;
+            }
+        }
+        return output;
+    }
+
+    function getStructuredMacroActualArgs(decl, argsText = '') {
+        const argSource = decl?.macroStyle === 'bracket'
+            ? decl.macroIndexer
+            : decl?.args;
+        const patternSource = String(argSource || '').trim();
+        if (!patternSource || !/%\d+/.test(patternSource)) return null;
+        if (/^%\d+(?:\s*,\s*%\d+)*$/.test(patternSource)) return null;
+
+        const captures = [];
+        let regexSource = '^\\s*';
+        let cursor = 0;
+        const matches = [...patternSource.matchAll(/%\d+/g)];
+        for (let index = 0; index < matches.length; index++) {
+            const match = matches[index];
+            const literal = patternSource.slice(cursor, match.index);
+            regexSource += escapeRegexLiteral(literal);
+            captures.push(match[0]);
+            regexSource += '([\\s\\S]*?)';
+            cursor = match.index + match[0].length;
+        }
+        regexSource += escapeRegexLiteral(patternSource.slice(cursor)) + '\\s*$';
+
+        let match = null;
+        try {
+            match = new RegExp(regexSource).exec(String(argsText || ''));
+        } catch {
+            return null;
+        }
+        if (!match) return null;
+
+        const valuesByName = new Map();
+        for (let index = 0; index < captures.length; index++) {
+            const name = captures[index];
+            if (!valuesByName.has(name)) {
+                valuesByName.set(name, String(match[index + 1] || '').trim());
+            }
+        }
+        return valuesByName;
     }
 
     function getDefineLookup(defineDecls = []) {
@@ -164,7 +162,7 @@ function createMacroExpansionSyntaxCore(deps = {}) {
         const text = String(source || '');
         if (!replacements?.size || !text) return text;
         const literalReplacements = [...replacements]
-            .filter(([name]) => name && !isIdentifierName(name))
+            .filter(([name]) => name && !isPawnIdentifierName(name))
             .sort((left, right) => String(right[0]).length - String(left[0]).length);
         let output = '';
         let cursor = 0;
@@ -224,7 +222,8 @@ function createMacroExpansionSyntaxCore(deps = {}) {
         }
         const escapeChar = options.escapeChar || '';
         const argInfos = getParameterizedDefineArgInfos(decl);
-        const actualArgs = splitMacroArguments(argsText, escapeChar);
+        const structuredActualArgs = getStructuredMacroActualArgs(decl, argsText);
+        const splitActualArgs = structuredActualArgs ? null : splitMacroArguments(argsText, escapeChar);
         let expanded = String(decl.value || '');
         if (!argInfos.length) return expanded.trim();
 
@@ -232,7 +231,7 @@ function createMacroExpansionSyntaxCore(deps = {}) {
         for (let index = 0; index < argInfos.length; index++) {
             const argInfo = argInfos[index];
             if (!argInfo?.name) continue;
-            const rawArg = String(actualArgs[index] || '').trim();
+            const rawArg = String(structuredActualArgs?.get(argInfo.name) ?? splitActualArgs?.[index] ?? '').trim();
             const expandedArg = options.expandActualArgs === false
                 ? rawArg
                 : expandMacros(rawArg, options.defineDecls || [], {

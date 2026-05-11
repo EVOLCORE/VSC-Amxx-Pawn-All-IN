@@ -1,6 +1,8 @@
 // Hover content rendering lives separately from hover-provider orchestration so
 // we can later optimize or move buildHoverAtPosition without dragging along the
 // large markdown/signature formatting layer.
+const { normalizePawnTagName } = require('../../core/syntax/tags');
+
 function createHoverContentFeature(deps) {
     const {
         vscode,
@@ -40,7 +42,7 @@ function createHoverContentFeature(deps) {
     }
 
     function normalizeEnumInfoName(name) {
-        return String(name || '').replace(/^_?\s*:\s*/, '').trim();
+        return normalizePawnTagName(name);
     }
 
     function buildArgHoverInfo(matches, currentFilePath = '', includeDocs = true, options = {}) {

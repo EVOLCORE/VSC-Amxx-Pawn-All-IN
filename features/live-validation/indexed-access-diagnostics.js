@@ -56,7 +56,7 @@ function createIndexedAccessDiagnostics(deps) {
             };
         })();
         for (const expr of expressions) {
-            const declarationVariableDecl = findDocumentVariableDeclByName(ctx, expr.baseName, lineNumber);
+            const declarationVariableDecl = findDocumentVariableDeclByName(ctx, expr.baseName, lineNumber, { sameLineOnly: true });
             if (declarationVariableDecl && findVariableDeclarationSpanInRange(
                 document,
                 lineStartOffset + expr.baseStart,

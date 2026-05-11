@@ -166,7 +166,12 @@
             "0": {
               "name": "punctuation.definition.comment.pawn"
             }
-          }
+          },
+          "patterns": [
+            {
+              "include": "#comment-highlights"
+            }
+          ]
         },
         {
           "name": "comment.block.pawn",
@@ -181,7 +186,12 @@
             "0": {
               "name": "punctuation.definition.comment.pawn"
             }
-          }
+          },
+          "patterns": [
+            {
+              "include": "#comment-highlights"
+            }
+          ]
         },
         {
           "name": "invalid.illegal.stray-comment-end.pawn",
@@ -195,7 +205,40 @@
               "name": "punctuation.definition.comment.pawn"
             }
           },
-          "end": "$"
+          "end": "$",
+          "patterns": [
+            {
+              "include": "#comment-highlights"
+            }
+          ]
+        }
+      ]
+    },
+    "comment-highlights": {
+      "patterns": [
+        {
+          "name": "keyword.other.todo.comment.pawn",
+          "match": "\\b(?:TODO|FIXME|NOTE|HACK|WARNING|WARN|BUG|DEPRECATED)\\b"
+        },
+        {
+          "name": "storage.type.annotation.comment.pawn",
+          "match": "@(?:param|return|returns|note|error|deprecated|warning|warn|throws?)\\b"
+        },
+        {
+          "name": "variable.parameter.comment.pawn",
+          "match": "(?<=@param\\s)[A-Za-z_][A-Za-z0-9_@]*"
+        },
+        {
+          "name": "constant.numeric.comment.pawn",
+          "match": "(?<![\\w.])-?(?:0[xX][0-9A-Fa-f]+|\\d+\\.\\d+(?:[eE][+-]?\\d+)?|\\d+)\\b"
+        },
+        {
+          "name": "string.quoted.double.comment.pawn",
+          "match": "\"[^\"\\n]*\""
+        },
+        {
+          "name": "string.quoted.single.comment.pawn",
+          "match": "'[^'\\n]*'"
         }
       ]
     },
@@ -215,7 +258,7 @@
           "end": "$",
           "patterns": [
             {
-              "name": "include_path.pawn",
+              "name": "string.quoted.other.include.pawn",
               "match": "(?:\"[^\"\\n]*\"|<[^>\\n]*>|\\S+)"
             },
             {
@@ -234,7 +277,7 @@
               "name": "keyword.other.preprocessor.define.pawn"
             },
             "4": {
-              "name": "support.function.call.pawn"
+              "name": "entity.name.function.preprocessor.pawn"
             }
           },
           "end": "(?<!\\\\)$",
@@ -244,13 +287,13 @@
               "begin": "\\G\\(",
               "beginCaptures": {
                 "0": {
-                  "name": "function.parens.begin.pawn"
+                  "name": "punctuation.section.parameters.begin.pawn"
                 }
               },
               "end": "\\)",
               "endCaptures": {
                 "0": {
-                  "name": "function.parens.end.pawn"
+                  "name": "punctuation.section.parameters.end.pawn"
                 }
               },
               "patterns": [
@@ -258,7 +301,7 @@
                   "include": "#preprocessor-macro-parameters"
                 },
                 {
-                  "name": "keyword.coma.pawn",
+                  "name": "punctuation.separator.comma.pawn",
                   "match": ","
                 }
               ]
@@ -284,6 +327,39 @@
           ]
         },
         {
+          "name": "meta.preprocessor.define.numeric.pawn",
+          "begin": "^(\\s*)(#)\\s*(define)\\s+([A-Za-z_][A-Za-z0-9_@]*)(?=\\s+-?(?:0[xX][0-9A-Fa-f]+|\\d+\\.\\d+(?:[eE][+-]?\\d+)?|\\d+)\\b)",
+          "beginCaptures": {
+            "2": {
+              "name": "keyword.other.preprocessor.pawn"
+            },
+            "3": {
+              "name": "keyword.other.preprocessor.define.pawn"
+            },
+            "4": {
+              "name": "constant.numeric.preprocessor.pawn"
+            }
+          },
+          "end": "(?<!\\\\)$",
+          "patterns": [
+            {
+              "include": "#strings"
+            },
+            {
+              "include": "#numbers"
+            },
+            {
+              "include": "#comments"
+            },
+            {
+              "include": "#preprocessor-macro-parameters"
+            },
+            {
+              "include": "#operators"
+            }
+          ]
+        },
+        {
           "name": "meta.preprocessor.define.pawn",
           "begin": "^(\\s*)(#)\\s*(define)\\s+(([A-Za-z_][^\\s]*)|(\\S+))",
           "beginCaptures": {
@@ -294,7 +370,7 @@
               "name": "keyword.other.preprocessor.define.pawn"
             },
             "4": {
-              "name": "entity.name.constant.preprocessor"
+              "name": "constant.other.preprocessor.pawn"
             },
             "6": {
               "name": "invalid.illegal.invalid-usage-of-preprocessor-directive.pawn"
@@ -354,7 +430,7 @@
     "preprocessor-macro-parameters": {
       "patterns": [
         {
-          "name": "keyword.other.preprocessor.group.pawn",
+          "name": "variable.parameter.macro.pawn",
           "match": "%\\d+"
         }
       ]
@@ -425,13 +501,13 @@
           "match": "(\\d+)(\\.\\.)(\\d+)",
           "captures": {
             "1": {
-              "name": "constant.numeric.int.pawn"
+              "name": "constant.numeric.integer.pawn"
             },
             "2": {
               "name": "keyword.operator.switch-range.pawn"
             },
             "3": {
-              "name": "constant.numeric.int.pawn"
+              "name": "constant.numeric.integer.pawn"
             }
           }
         },
@@ -444,7 +520,7 @@
           "match": "(?<![\\w.])-?\\d+\\.\\d+(?:[eE][+-]?\\d+)?\\b"
         },
         {
-          "name": "constant.numeric.int.pawn",
+          "name": "constant.numeric.integer.pawn",
           "match": "(?<![\\w.])-?\\d+\\b"
         }
       ]
@@ -462,10 +538,10 @@
               "name": "storage.modifier.tag.pawn"
             },
             "3": {
-              "name": "support.function.definition.pawn"
+              "name": "entity.name.function.definition.pawn"
             },
             "4": {
-              "name": "function.parens.begin.pawn"
+              "name": "punctuation.section.parameters.begin.pawn"
             }
           }
         }
@@ -478,10 +554,10 @@
           "match": "\\b(?!if\\b|for\\b|while\\b|switch\\b|return\\b|sizeof\\b|charsmax\\b|assert\\b)([A-Za-z_@][A-Za-z0-9_@]*)\\s*(\\()",
           "captures": {
             "1": {
-              "name": "support.function.call.pawn"
+              "name": "entity.name.function.call.pawn"
             },
             "2": {
-              "name": "function.parens.begin.pawn"
+              "name": "punctuation.section.arguments.begin.pawn"
             }
           }
         }
@@ -549,7 +625,7 @@
     "constants": {
       "patterns": [
         {
-          "name": "constant.vars.pawn",
+          "name": "constant.numeric.symbol.pawn",
           "match": "\\b[A-Z_][A-Z0-9_]*\\b"
         }
       ]
@@ -565,20 +641,24 @@
     "operators": {
       "patterns": [
         {
-          "name": "keyword.brackets.pawn",
+          "name": "punctuation.section.brackets.pawn",
           "match": "[\\[\\]]"
         },
         {
-          "name": "parens.pawn",
+          "name": "punctuation.section.parens.pawn",
           "match": "[()]"
         },
         {
-          "name": "keyword.brace.pawn",
+          "name": "punctuation.section.block.pawn",
           "match": "[{}]"
         },
         {
-          "name": "keyword.coma.pawn",
-          "match": "[,;]"
+          "name": "punctuation.separator.comma.pawn",
+          "match": ","
+        },
+        {
+          "name": "punctuation.terminator.statement.pawn",
+          "match": ";"
         },
         {
           "name": "keyword.operator.assignment.pawn",

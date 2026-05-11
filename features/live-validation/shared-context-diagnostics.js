@@ -1,5 +1,9 @@
 const { createLineMembership } = require('../../core/utils/line-membership');
+const { normalizePathKey } = require('../../core/utils/path');
 const { getEffectiveIncludeFileExtensions } = require('../../core/include-extensions');
+const { getPawnIdentifierName } = require('../../core/syntax/identifiers');
+const { splitPawnLines } = require('../../core/syntax/lines');
+const { hasTrailingBackslashContinuation } = require('../../core/syntax/continuation');
 
 function createSharedContextDiagnostics(deps) {
     const {
@@ -69,6 +73,12 @@ function createSharedContextDiagnostics(deps) {
     };
     const isFunctionLikeLookupDecl = decl => isFunctionLikeDecl(decl);
     const isObjectAliasDefineLookupDecl = decl => decl?.type === 'define' && !decl.args && !decl.macroStyle;
+    const hasIncludeFunctionTwinWithAtFallback = (name, incDecls, lookup) => {
+        if (hasIncludeFunctionTwin(name, incDecls, lookup)) return true;
+        const text = String(name || '');
+        if (!text.startsWith('@') || text.length <= 1) return false;
+        return hasIncludeFunctionTwin(text.slice(1), incDecls, lookup);
+    };
     const callSignatureDataCacheByAnalysis = new WeakMap();
     const directCallSignatureDataCacheByFunctionList = new WeakMap();
     const functionHeaderLinesByParsedDecls = new WeakMap();
@@ -151,7 +161,7 @@ function createSharedContextDiagnostics(deps) {
                 callName,
                 item => item.type === 'define' && !item.args && !item.macroStyle
             );
-            const aliasTargetName = String(aliasDefine?.value || '').trim().match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+            const aliasTargetName = getPawnIdentifierName(aliasDefine?.value);
             if (aliasTargetName) {
                 signatureData = getDirectCallSignatureData(aliasTargetName, ctx);
             }
@@ -163,11 +173,12 @@ function createSharedContextDiagnostics(deps) {
 
 
 
-    function findDocumentVariableDeclByName(ctx, name, lineNumber = -1) {
+    function findDocumentVariableDeclByName(ctx, name, lineNumber = -1, options = {}) {
         if (!name || !ctx?.lookup) return null;
+        const sameLineOnly = options.sameLineOnly === true;
         const lookupKey = ctx.lookup;
         const fpKey = ctx.fp || '';
-        const cacheKey = `${Number.isInteger(lineNumber) ? lineNumber : -1}:${name}`;
+        const cacheKey = `${sameLineOnly ? '1' : '0'}:${Number.isInteger(lineNumber) ? lineNumber : -1}:${name}`;
         let cacheByFile = documentVariableDeclCacheByLookup.get(lookupKey);
         if (!cacheByFile) {
             cacheByFile = new Map();
@@ -201,6 +212,10 @@ function createSharedContextDiagnostics(deps) {
                     }
                 }
             }
+        }
+        if (sameLineOnly) {
+            cacheByName.set(cacheKey, null);
+            return null;
         }
         const decl = ctx.lookup.findFuncArg(name) ||
             ctx.lookup.findLocal(name) ||
@@ -266,24 +281,9 @@ function createSharedContextDiagnostics(deps) {
         };
     }
 
-
-
-    const hasTrailingLineContinuation = source => {
-        const text = String(source || '');
-        let end = text.length;
-        while (end > 0) {
-            const code = text.charCodeAt(end - 1);
-            if (code !== 32 && code !== 9 && code !== 13) break;
-            end--;
-        }
-        return end > 0 && text.charCodeAt(end - 1) === 92;
-    };
-
-
-
     function getLineStringLiteralState(ctx) {
         const parsedDecls = ctx?.parsedDecls || null;
-        const rawLines = ctx.rawLines || ctx.text.split(/\r?\n/);
+        const rawLines = ctx.rawLines || splitPawnLines(ctx.text);
         if (rawLines && lineStringLiteralStateByRawLines.has(rawLines)) {
             return lineStringLiteralStateByRawLines.get(rawLines);
         }
@@ -350,7 +350,7 @@ function createSharedContextDiagnostics(deps) {
                 }
             }
             openStringQuote = inStr ? strCh : '';
-            continuedStringQuote = inStr && strCh && hasTrailingLineContinuation(lineText)
+            continuedStringQuote = inStr && strCh && hasTrailingBackslashContinuation(lineText)
                 ? strCh
                 : '';
         }
@@ -521,7 +521,7 @@ function createSharedContextDiagnostics(deps) {
                 hasDefaultParamDiagnostics ||
                 hasOperatorHeaderDiagnostics ||
                 hasStateHeaderDiagnostics ||
-                hasIncludeFunctionTwin(func.name, ctx.incDecls, ctx.lookup) ||
+                hasIncludeFunctionTwinWithAtFallback(func.name, ctx.incDecls, ctx.lookup) ||
                 sameNameDecls.length > 1;
             if (!isCandidate) continue;
             candidateFunctions.push(func);
@@ -543,20 +543,14 @@ function createSharedContextDiagnostics(deps) {
 
 
 
-    function normalizeFilePathForDecl(pathText) {
-        return String(pathText || '').replace(/\\/g, '/').toLowerCase();
-    }
-
-
-
     function getNormalizedDocumentPath(document) {
         if (!document || typeof document !== 'object') {
-            return normalizeFilePathForDecl(document?.fileName || '');
+            return normalizePathKey(document?.fileName || '');
         }
         const fileName = String(document.fileName || '');
         const cached = normalizedDocumentPathCache.get(document);
         if (cached?.fileName === fileName) return cached.path;
-        const normalized = normalizeFilePathForDecl(fileName);
+        const normalized = normalizePathKey(fileName);
         normalizedDocumentPathCache.set(document, { fileName, path: normalized });
         return normalized;
     }
@@ -568,7 +562,7 @@ function createSharedContextDiagnostics(deps) {
         const rawPath = String(decl.filePath || decl.file || '');
         const cached = normalizedDeclPathCache.get(decl);
         if (cached?.rawPath === rawPath) return cached.path;
-        const normalized = normalizeFilePathForDecl(rawPath);
+        const normalized = normalizePathKey(rawPath);
         normalizedDeclPathCache.set(decl, { rawPath, path: normalized });
         return normalized;
     }

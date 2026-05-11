@@ -2,9 +2,11 @@
 // Keeping these in one place avoids subtle drift where one feature treats a
 // declaration as "original" while another still tries to validate it.
 const {
+    createPawnFunctionCallRegex,
     isPawnIdentifierContinueCode,
     isWhitespaceCharCode
 } = require('./line-utils');
+const { splitPawnLines } = require('../syntax/lines');
 
 function createDeclarationGuardsCore(deps) {
     const {
@@ -136,7 +138,7 @@ function createDeclarationGuardsCore(deps) {
             const isOperatorName = parseOperatorOverloadToken(func.name) !== null;
             const re = isOperatorName
                 ? new RegExp(`${escapeRegExp(func.name)}\\s*\\(`)
-                : new RegExp(`\\b${escapeRegExp(func.name)}\\s*\\(`);
+                : createPawnFunctionCallRegex(func.name, escapeRegExp);
             const match = re.exec(lineText);
             if (!match) continue;
 
@@ -213,7 +215,7 @@ function createDeclarationGuardsCore(deps) {
         const lineCtrlChars = sourceState?.lineCtrlChars ||
             ctrlCharResolver?.lineCtrlChars ||
             getCtrlCharStateForContent(text, document.fileName).lineCtrlChars;
-        const rawLines = sourceState?.rawLines || text.split(/\r?\n/);
+        const rawLines = sourceState?.rawLines || splitPawnLines(text);
         const strippedLines = sourceState?.strippedLines || null;
         const lineStartOffsets = sourceState?.lineStartOffsets || null;
         const getLineStartOffset = lineNumber =>

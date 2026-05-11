@@ -86,74 +86,160 @@ function createSyntaxCore(deps) {
     function splitTopLevel(str, escapeChar = getActiveCtrlChar(), keepEmpty = false) {
         if (!str?.trim()) return [];
         const parts = [];
-        let d = 0, inStr = false, strCh = '', start = 0;
+        let d = 0, inStr = false, strCh = '', inLineComment = false, inBlockComment = false, start = 0;
+        let current = '';
+        const pushPart = () => {
+            const p = current.trim();
+            if (p || keepEmpty) parts.push(p);
+            current = '';
+        };
         for (let i = 0; i < str.length; i++) {
             const c = str[i];
+            const next = i + 1 < str.length ? str[i + 1] : '';
+            if (inLineComment) {
+                if (c === '\n' || c === '\r') {
+                    inLineComment = false;
+                    current += c;
+                }
+                continue;
+            }
+            if (inBlockComment) {
+                if (c === '*' && next === '/') {
+                    inBlockComment = false;
+                    i++;
+                } else if (c === '\n' || c === '\r') {
+                    current += c;
+                }
+                continue;
+            }
             if (inStr) {
                 if (c === strCh && !isEscapedQuote(str, i, escapeChar)) inStr = false;
+                current += c;
+                continue;
+            }
+            if (c === '/' && next === '/') {
+                inLineComment = true;
+                current += ' ';
+                i++;
+                continue;
+            }
+            if (c === '/' && next === '*') {
+                inBlockComment = true;
+                current += ' ';
+                i++;
                 continue;
             }
             if (c === '"' || c === "'") {
                 inStr = true;
                 strCh = c;
+                current += c;
                 continue;
             }
-            if ('[({'.includes(c)) d++;
-            else if ('])}'.includes(c)) d--;
+            if ('[({'.includes(c)) {
+                d++;
+                current += c;
+            }
+            else if ('])}'.includes(c)) {
+                d--;
+                current += c;
+            }
             else if (c === ',' && d === 0) {
-                const p = str.slice(start, i).trim();
-                if (p || keepEmpty) parts.push(p);
+                pushPart();
                 start = i + 1;
+            } else {
+                current += c;
             }
         }
-        const last = str.slice(start).trim();
-        if (last || keepEmpty) parts.push(last);
+        pushPart();
         return parts;
     }
 
     function splitTopLevelWithRanges(str, baseOffset = 0, escapeChar = getActiveCtrlChar(), keepEmpty = false) {
         if (!str?.trim()) return [];
         const parts = [];
-        let d = 0, inStr = false, strCh = '', start = 0;
+        let d = 0, inStr = false, strCh = '', inLineComment = false, inBlockComment = false, start = 0;
+        let current = '';
+        const currentOffsets = [];
+        const pushPart = () => {
+            const leadingTrim = current.search(/\S|$/);
+            const trimmedEnd = current.trimEnd().length;
+            const trimmed = current.slice(leadingTrim, trimmedEnd);
+            if (trimmed || keepEmpty) {
+                const startIndex = currentOffsets[leadingTrim] ?? baseOffset + start;
+                const endIndex = trimmedEnd > leadingTrim
+                    ? (currentOffsets[trimmedEnd - 1] ?? (baseOffset + start)) + 1
+                    : startIndex;
+                parts.push({
+                    text: trimmed,
+                    startOffset: startIndex,
+                    endOffset: endIndex
+                });
+            }
+            current = '';
+            currentOffsets.length = 0;
+        };
+        const appendCurrent = (char, index) => {
+            current += char;
+            currentOffsets.push(baseOffset + index);
+        };
         for (let i = 0; i < str.length; i++) {
             const c = str[i];
+            const next = i + 1 < str.length ? str[i + 1] : '';
+            if (inLineComment) {
+                if (c === '\n' || c === '\r') {
+                    inLineComment = false;
+                    appendCurrent(c, i);
+                }
+                continue;
+            }
+            if (inBlockComment) {
+                if (c === '*' && next === '/') {
+                    inBlockComment = false;
+                    i++;
+                } else if (c === '\n' || c === '\r') {
+                    appendCurrent(c, i);
+                }
+                continue;
+            }
             if (inStr) {
                 if (c === strCh && !isEscapedQuote(str, i, escapeChar)) inStr = false;
+                appendCurrent(c, i);
+                continue;
+            }
+            if (c === '/' && next === '/') {
+                inLineComment = true;
+                appendCurrent(' ', i);
+                i++;
+                continue;
+            }
+            if (c === '/' && next === '*') {
+                inBlockComment = true;
+                appendCurrent(' ', i);
+                i++;
                 continue;
             }
             if (c === '"' || c === "'") {
                 inStr = true;
                 strCh = c;
+                appendCurrent(c, i);
                 continue;
             }
-            if ('[({'.includes(c)) d++;
-            else if ('])}'.includes(c)) d--;
+            if ('[({'.includes(c)) {
+                d++;
+                appendCurrent(c, i);
+            }
+            else if ('])}'.includes(c)) {
+                d--;
+                appendCurrent(c, i);
+            }
             else if (c === ',' && d === 0) {
-                const raw = str.slice(start, i);
-                const trimmed = raw.trim();
-                if (trimmed || keepEmpty) {
-                    const leadingTrim = raw.search(/\S|$/);
-                    const trailingTrim = raw.length - raw.trimEnd().length;
-                    parts.push({
-                        text: trimmed,
-                        startOffset: baseOffset + start + leadingTrim,
-                        endOffset: baseOffset + i - trailingTrim
-                    });
-                }
+                pushPart();
                 start = i + 1;
+            } else {
+                appendCurrent(c, i);
             }
         }
-        const raw = str.slice(start);
-        const trimmed = raw.trim();
-        if (trimmed || keepEmpty) {
-            const leadingTrim = raw.search(/\S|$/);
-            const trailingTrim = raw.length - raw.trimEnd().length;
-            parts.push({
-                text: trimmed,
-                startOffset: baseOffset + start + leadingTrim,
-                endOffset: baseOffset + str.length - trailingTrim
-            });
-        }
+        pushPart();
         return parts;
     }
 

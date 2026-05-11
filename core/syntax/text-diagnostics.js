@@ -1,3 +1,7 @@
+const { isPawnIdentifierContinueChar } = require('./identifiers');
+const { isPreprocessorDirectiveLine } = require('./preprocessor-lines');
+const { findPawnLineTrimEndIndex } = require('./whitespace');
+
 function createTextSyntaxDiagnosticsCore(deps) {
     const {
         isEscapedQuote,
@@ -138,12 +142,7 @@ function createTextSyntaxDiagnosticsCore(deps) {
 
     function getTrailingStringContinuationStart(source = '', escapeChar = '') {
         const text = String(source || '');
-        let end = text.length;
-        while (end > 0) {
-            const code = text.charCodeAt(end - 1);
-            if (code !== 32 && code !== 9 && code !== 13) break;
-            end--;
-        }
+        const end = findPawnLineTrimEndIndex(text, 0, { allowCarriageReturn: true });
         if (end <= 0) return -1;
         const char = text[end - 1];
         return char === '\\' || (!!escapeChar && char === escapeChar) ? end - 1 : -1;
@@ -219,6 +218,10 @@ function createTextSyntaxDiagnosticsCore(deps) {
         return -1;
     }
 
+    function isPreprocessorLine(source = '') {
+        return isPreprocessorDirectiveLine(source);
+    }
+
     function isTargetedMultilineIssue(issue, targetLineNumbers) {
         if (!(targetLineNumbers instanceof Set)) return true;
         return targetLineNumbers.has(issue.lineNumber) ||
@@ -292,6 +295,7 @@ function createTextSyntaxDiagnosticsCore(deps) {
 
         for (let lineNumber = 0; lineNumber < sourceLines.length; lineNumber++) {
             const line = String(sourceLines[lineNumber] || '');
+            if (isPreprocessorLine(line)) continue;
             const pending = getLineEndStringContinuation(
                 line,
                 getEscapeChar(lineNumber),
@@ -505,8 +509,7 @@ function createTextSyntaxDiagnosticsCore(deps) {
         let inChar = initialQuote === '\'';
         const isInvalidAsciiPawnCodeChar = char =>
             char === '$' || char === '`';
-        const isAsciiPawnIdentifierChar = char =>
-            !!char && /[A-Za-z0-9_@]/.test(char);
+        const isAsciiPawnIdentifierChar = isPawnIdentifierContinueChar;
         const isInvalidPawnCodeChar = char =>
             !!char && (char.charCodeAt(0) > 0x7f || isInvalidAsciiPawnCodeChar(char));
         const isInvalidCodeTokenChar = char =>

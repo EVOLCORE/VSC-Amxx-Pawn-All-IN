@@ -1,4 +1,6 @@
 const { isBodyDeclarationContextChangeLine } = require('../../core/syntax/line-index');
+const { splitPawnLines } = require('../../core/syntax/lines');
+const { isPreprocessorDirectiveLine } = require('../../core/syntax/preprocessor-lines');
 const { createLineMembership } = require('../../core/utils/line-membership');
 
 const EMPTY_INLINE_CALLS = [];
@@ -20,7 +22,7 @@ function buildInactivePreprocessorLineFlags(rawLines = [], preprocessedRawLines 
     for (let line = 0; line < limit; line++) {
         const rawLine = String(rawLines[line] || '');
         if (!rawLine.trim()) continue;
-        if (rawLine.trimStart().startsWith('#')) continue;
+        if (isPreprocessorDirectiveLine(rawLine)) continue;
 
         const preprocessedLine = String(preprocessedRawLines[line] || '');
         if (preprocessedLine.trim()) continue;
@@ -47,7 +49,7 @@ function createDocumentScanPlanBuilder(deps = {}) {
     function getDocumentScanPlan(rootCtx, document) {
         const parsedDecls = rootCtx?.parsedDecls || null;
         const unusedStockValidationMode = settingsService?.getUnusedStockValidationMode?.() || 'reachable-only';
-        const rawLines = rootCtx.rawLines || rootCtx.text.split(/\r?\n/);
+        const rawLines = rootCtx.rawLines || splitPawnLines(rootCtx.text);
         const inactivePreprocessorLineFlags = buildInactivePreprocessorLineFlags(
             rawLines,
             rootCtx.preprocessedState?.rawLines,
@@ -122,10 +124,12 @@ function createDocumentScanPlanBuilder(deps = {}) {
         let nextBodyDeclarationChange = document.lineCount;
         let nextExplicitBoundary = document.lineCount;
         const functionHeaderLines = getFunctionHeaderLines(rootCtx);
-        const bodyDeclarationContextChangeFlags =
-            rootCtx.bodyDeclarationContextChangeFlags ||
-            (() => {
-                const flags = new Uint8Array(document.lineCount);
+        const bodyDeclarationContextChangeFlags = (() => {
+            const baseFlags = rootCtx.bodyDeclarationContextChangeFlags || null;
+            const flags = baseFlags
+                ? new Uint8Array(baseFlags)
+                : new Uint8Array(document.lineCount);
+            if (!baseFlags) {
                 const strippedLines = rootCtx.strippedLines || rawLines;
                 for (const line of lineIndex.bodyDeclarationCandidateLines || []) {
                     if (line < 0 || line >= document.lineCount) continue;
@@ -133,8 +137,15 @@ function createDocumentScanPlanBuilder(deps = {}) {
                         flags[line] = 1;
                     }
                 }
-                return flags;
-            })();
+            }
+            for (const local of rootCtx.parsedDecls?.locals || []) {
+                if (!local?.macroForVar) continue;
+                const line = local.lineNumber;
+                if (line < 0 || line >= document.lineCount) continue;
+                flags[line] = 1;
+            }
+            return flags;
+        })();
         for (let line = document.lineCount - 1; line >= 0; line--) {
             if (lineIndex.isPotentialTopLevelContextChangeLine(line)) {
                 nextTopLevelChange = line;

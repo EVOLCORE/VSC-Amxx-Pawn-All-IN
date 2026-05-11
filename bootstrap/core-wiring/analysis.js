@@ -5,6 +5,7 @@ const {
 const { createValidationCore } = require('../../core/validation/index');
 const { createCallAnalysisCore } = require('../../core/call-analysis/index');
 const { createIndexedAccessCore } = require('../../core/indexed-access/index');
+const { createStatementClassifier } = require('../../core/syntax/statement-classifier');
 
 function createAnalysisRuntime(deps) {
     const {
@@ -20,6 +21,7 @@ function createAnalysisRuntime(deps) {
         escapeRegExp,
         unwrapOuterParens,
         parseTopLevelTernaryExpression,
+        looksLikePawnExpressionFragment,
         extractEnumSymbolName,
         findDeclByNameCached,
         isFunctionLikeDecl,
@@ -32,6 +34,7 @@ function createAnalysisRuntime(deps) {
         getLookupTokenAtPosition,
         findDefinitionContext,
         collectDeclarationText,
+        collectForHeaderText,
         getCtrlCharStateForContent,
         withCtrlCharForContent,
         stripLineComment,
@@ -84,6 +87,17 @@ function createAnalysisRuntime(deps) {
         TAG_RE,
         isPawnIdentifierStartChar: deps.isPawnIdentifierStartChar,
         isPawnIdentifierContinueChar: deps.isPawnIdentifierContinueChar
+    });
+    const statementClassifierRuntime = createStatementClassifier({
+        isEscapedQuote,
+        isIdentifierStartChar: validationRuntime.isIdentifierStartChar,
+        isIdentifierContinueChar: validationRuntime.isIdentifierContinueChar,
+        findFirstNonWhitespaceIndex: validationRuntime.findFirstNonWhitespaceIndex,
+        findBalancedGroupEnd: validationRuntime.findBalancedGroupEnd,
+        stripTrailingSemicolon: validationRuntime.stripTrailingSemicolon,
+        splitTopLevel,
+        evaluatePawnNumericExpr: validationRuntime.evaluatePawnNumericExpr,
+        looksLikePawnExpressionFragment
     });
 
     const callAnalysisRuntime = createCallAnalysisCore({
@@ -156,6 +170,7 @@ function createAnalysisRuntime(deps) {
         parseFunctionStateSpecTail,
         computeLineDepths,
         collectDeclarationText,
+        collectForHeaderText,
         withCtrlCharForContent,
         getCtrlCharStateForContent,
         preprocessPawnContent,
@@ -189,6 +204,7 @@ function createAnalysisRuntime(deps) {
 
     return {
         ...validationRuntime,
+        ...statementClassifierRuntime,
         ...callAnalysisRuntime,
         ...declarationGuardsRuntime,
         ...declarationParsingRuntime,

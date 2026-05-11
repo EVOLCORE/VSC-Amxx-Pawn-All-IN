@@ -1,3 +1,5 @@
+const { splitPawnLines } = require('../syntax/lines');
+
 function createIncludeCacheCodec({ normalizeFsPath, getDefineStateKey, getDefineStateSignature }) {
     const INCLUDE_DECL_COMPACT_KEYS = [
         'name',
@@ -31,7 +33,8 @@ function createIncludeCacheCodec({ normalizeFsPath, getDefineStateKey, getDefine
         'deprecated',
         'deprecatedMessage'
     ];
-    const INCLUDE_DECL_COMPACT_SIGNATURE = INCLUDE_DECL_COMPACT_KEYS.join('|');
+    const INCLUDE_DECL_COMPACT_SCHEMA_VERSION = 'v2-underscore-value-defines';
+    const INCLUDE_DECL_COMPACT_SIGNATURE = `${INCLUDE_DECL_COMPACT_SCHEMA_VERSION}|${INCLUDE_DECL_COMPACT_KEYS.join('|')}`;
 
     function serializeDependencyStamps(dependencyStamps) {
         if (!(dependencyStamps instanceof Map)) return [];
@@ -365,7 +368,7 @@ function createIncludeCacheCodec({ normalizeFsPath, getDefineStateKey, getDefine
             : '';
         const revivedState = {
             content,
-            rawLines: content.split(/\r?\n/),
+            rawLines: splitPawnLines(content),
             rationalState: reviveRationalState(serializedState.q),
             directiveCandidateLines: Array.isArray(serializedState.d)
                 ? serializedState.d.filter(Number.isInteger)

@@ -2,7 +2,10 @@ const { createHoverRuntimeFeature } = require('../../features/hover');
 const { createPersistentHoverFeature } = require('../../features/persistent-hover');
 
 function buildHoverFeatures(deps, support) {
-    const { vscode } = deps;
+    const {
+        vscode,
+        liveValidationOutputChannel = null
+    } = deps;
     const { settingsRuntime, sharedRuntime } = deps.coreRuntime;
     const {
         HOVER_RELEVANT_CONFIG_KEYS,
@@ -97,6 +100,7 @@ function buildHoverFeatures(deps, support) {
         HOVER_RELEVANT_CONFIG_KEYS,
         getHoverMode,
         getHoverContentMode,
+        hoverOutputChannel: liveValidationOutputChannel,
         getLiveValidationIssueMode,
         normalizeLiveValidationIssueMode,
         areLiveValidationWarningsEnabled,

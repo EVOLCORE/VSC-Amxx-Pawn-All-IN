@@ -1,36 +1,20 @@
+const {
+    isPawnIdentifierContinueChar,
+    isPawnIdentifierStartChar,
+    readPawnIdentifierAt
+} = require('./identifiers');
+const { normalizeDeclaredPawnTagName } = require('./tags');
+const { skipPawnWhitespace } = require('./whitespace');
+
 function createLabelSyntaxCore() {
     const BUILTIN_TAG_NAMES = new Set(['Float', 'bool']);
-    const isIdentifierStart = char => !!char && /[A-Za-z_@]/.test(char);
-    const isIdentifierContinue = char => !!char && /[A-Za-z0-9_@]/.test(char);
-
-    function skipWhitespace(source, index) {
-        const text = String(source || '');
-        let cursor = Math.max(0, index || 0);
-        while (cursor < text.length && /\s/.test(text[cursor])) cursor++;
-        return cursor;
-    }
 
     function readIdentifier(source, index) {
-        const text = String(source || '');
-        let cursor = Math.max(0, index || 0);
-        if (!isIdentifierStart(text[cursor] || '')) return null;
-        const start = cursor++;
-        while (cursor < text.length && isIdentifierContinue(text[cursor])) cursor++;
-        return {
-            name: text.slice(start, cursor),
-            start,
-            end: cursor
-        };
-    }
-
-    function normalizeTagName(value) {
-        const raw = String(value || '').trim();
-        if (!raw || raw === '_' || raw.toLowerCase() === 'any') return '';
-        return raw.replace(/:$/, '').trim();
+        return readPawnIdentifierAt(source, index);
     }
 
     function addTagName(target, value) {
-        const name = normalizeTagName(value);
+        const name = normalizeDeclaredPawnTagName(value);
         if (name) target.add(name);
     }
 
@@ -52,9 +36,9 @@ function createLabelSyntaxCore() {
         if (!enumName) return '';
         const taggedEnum = enumName.match(/^([A-Za-z_@]\w*|_)\s*:\s*([A-Za-z_@]\w*)$/);
         if (taggedEnum) {
-            return normalizeTagName(taggedEnum[1]);
+            return normalizeDeclaredPawnTagName(taggedEnum[1]);
         }
-        return normalizeTagName(enumName);
+        return normalizeDeclaredPawnTagName(enumName);
     }
 
     function collectDeclaredTagNames(decls = []) {
@@ -83,10 +67,10 @@ function createLabelSyntaxCore() {
 
     function parseLabelDeclaration(source, options = {}) {
         const text = String(source || '');
-        const start = skipWhitespace(text, options.startOffset || 0);
+        const start = skipPawnWhitespace(text, options.startOffset || 0);
         const ident = readIdentifier(text, start);
         if (!ident) return null;
-        const colonIndex = skipWhitespace(text, ident.end);
+        const colonIndex = skipPawnWhitespace(text, ident.end);
         if (text[colonIndex] !== ':') return null;
         const afterColon = text[colonIndex + 1] || '';
         if (afterColon && !/\s/.test(afterColon)) return null;
@@ -102,13 +86,13 @@ function createLabelSyntaxCore() {
         const text = String(source || '');
         const refs = [];
         for (let index = 0; index < text.length; index++) {
-            if (!isIdentifierStart(text[index] || '')) continue;
-            if (index > 0 && isIdentifierContinue(text[index - 1])) continue;
+            if (!isPawnIdentifierStartChar(text[index] || '')) continue;
+            if (index > 0 && isPawnIdentifierContinueChar(text[index - 1])) continue;
             const word = readIdentifier(text, index);
             if (!word) continue;
             index = word.end - 1;
             if (word.name !== 'goto') continue;
-            const targetStart = skipWhitespace(text, word.end);
+            const targetStart = skipPawnWhitespace(text, word.end);
             const label = readIdentifier(text, targetStart);
             if (!label) {
                 refs.push({

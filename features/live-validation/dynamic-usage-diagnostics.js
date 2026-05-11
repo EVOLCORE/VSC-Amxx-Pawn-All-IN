@@ -1,4 +1,5 @@
 const { LIVE_DYNAMIC_USAGE_DIAGNOSTIC_CODE } = require('./diagnostic-codes');
+const { isPawnIdentifierContinueChar } = require('../../core/syntax/identifiers');
 
 function createDynamicUsageLiveDiagnostics(deps) {
     const {
@@ -14,7 +15,6 @@ function createDynamicUsageLiveDiagnostics(deps) {
     } = deps;
 
     const EMPTY_DIAGNOSTICS = [];
-    const identifierCharRe = /[A-Za-z0-9_@]/;
 
     function getIssueMessage(issue) {
         const key = issue?.messageKey || '';
@@ -30,7 +30,7 @@ function createDynamicUsageLiveDiagnostics(deps) {
             if (start < 0) return null;
             const before = start > 0 ? lineText[start - 1] : '';
             const after = lineText[start + name.length] || '';
-            if (!identifierCharRe.test(before) && !identifierCharRe.test(after)) {
+            if (!isPawnIdentifierContinueChar(before) && !isPawnIdentifierContinueChar(after)) {
                 if (seen === occurrenceIndex) {
                     return { start, end: start + name.length };
                 }

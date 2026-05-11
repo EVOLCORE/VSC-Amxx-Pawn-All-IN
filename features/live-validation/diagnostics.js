@@ -325,7 +325,9 @@ function createLiveValidationDiagnosticCore(deps) {
         getSymbolNeverUsedIssue,
         getSymbolAssignedValueNeverUsedIssue,
         isEscapedQuote,
-        splitTopLevel
+        splitTopLevel,
+        getPreferredFunctionHoverMatch,
+        hasIncludeFunctionTwin
     });
     const {
         collectDynamicUsageIssues
@@ -600,6 +602,7 @@ function createLiveValidationDiagnosticCore(deps) {
         collectSymbolUsageIssues,
         createLiveValidationDiagnostic,
         createOffsetRange,
+        getCallbackSignatureMode,
         getFunctionRangeMaps,
         getWarningSeverity,
         isIncludeDocument,

@@ -1,3 +1,4 @@
+const { containsPawnIdentifierStartChar } = require('../syntax/identifiers');
 const { createDimensionSyntaxCore } = require('../syntax/dimensions');
 
 function createNumericDimensionValidationCore(deps) {
@@ -133,6 +134,11 @@ function createNumericDimensionValidationCore(deps) {
             return result;
         };
 
+        if (!cacheKey) return cacheNumericExprResult(null);
+        if (!containsPawnIdentifierStartChar(cacheKey)) {
+            return cacheNumericExprResult(evaluateParsedPawnNumericExpr(cacheKey));
+        }
+
         let source = semanticSyntaxCore.stripRootTagCasts(expr, { escapeChar: getActiveCtrlChar() });
         if (!source) return cacheNumericExprResult(null);
         const expanded = macroExpansionCore.expandMacros(source, decls, {
@@ -149,7 +155,7 @@ function createNumericDimensionValidationCore(deps) {
         if (!expanded.complete) return cacheNumericExprResult(null);
         source = expanded.text;
 
-        if (/[A-Za-z_@]/.test(source)) {
+        if (containsPawnIdentifierStartChar(source)) {
             source = source.replace(/\bsizeof\s*\(\s*([A-Za-z_@]\w*)((?:\s*\[\s*\])*)\s*\)/g, (_, name, emptyAccesses) => {
                 const decl = findAnyDeclByNameFromSources(decls, name, null, analysisCache);
                 if (!decl) return 'NaN';

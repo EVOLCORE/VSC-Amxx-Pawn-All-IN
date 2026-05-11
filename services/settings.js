@@ -31,6 +31,7 @@ function createSettingsService(vscode) {
         externalIncludeWatchMode: `${CONFIG_NAMESPACE}.externalIncludeWatchMode`,
         debugOutput: `${CONFIG_NAMESPACE}.debugOutput`,
         completionEnabled: `${CONFIG_NAMESPACE}.completionEnabled`,
+        completionForwardDeclarationStyle: `${CONFIG_NAMESPACE}.completionForwardDeclarationStyle`,
         hoverMode: `${CONFIG_NAMESPACE}.hoverMode`,
         hoverContentMode: `${CONFIG_NAMESPACE}.hoverContentMode`,
         showThemeRecommendation: `${CONFIG_NAMESPACE}.showThemeRecommendation`,
@@ -58,6 +59,7 @@ function createSettingsService(vscode) {
         CONFIG_KEYS.externalIncludeWatchMode,
         CONFIG_KEYS.debugOutput,
         CONFIG_KEYS.completionEnabled,
+        CONFIG_KEYS.completionForwardDeclarationStyle,
         CONFIG_KEYS.hoverMode,
         CONFIG_KEYS.hoverContentMode,
         CONFIG_KEYS.showThemeRecommendation,
@@ -125,6 +127,7 @@ function createSettingsService(vscode) {
         includeValidationMode: 'balanced',
         debugOutput: false,
         completionEnabled: true,
+        completionForwardDeclarationStyle: 'same-line',
         hoverMode: 'normal',
         hoverContentMode: 'full',
         showThemeRecommendation: true,
@@ -205,6 +208,12 @@ function createSettingsService(vscode) {
                 : 'tracked-resolved-includes';
         settings.debugOutput = !!config.get('debugOutput', false);
         settings.completionEnabled = !!config.get('completionEnabled', true);
+        const rawCompletionForwardDeclarationStyle =
+            String(config.get('completionForwardDeclarationStyle', 'same-line') || 'same-line').trim().toLowerCase();
+        settings.completionForwardDeclarationStyle =
+            rawCompletionForwardDeclarationStyle === 'disabled' || rawCompletionForwardDeclarationStyle === 'next-line'
+                ? rawCompletionForwardDeclarationStyle
+                : 'same-line';
 
         settings.hoverMode = normalizeHoverMode(config.get('hoverMode', 'normal'));
         const rawHoverContentMode = String(config.get('hoverContentMode', 'full') || 'full').trim().toLowerCase();
@@ -275,6 +284,7 @@ function createSettingsService(vscode) {
         getExternalIncludeWatchMode: () => settings.externalIncludeWatchMode,
         isDebugOutputEnabled: () => settings.debugOutput,
         isCompletionEnabled: () => settings.completionEnabled,
+        getCompletionForwardDeclarationStyle: () => settings.completionForwardDeclarationStyle,
         getHoverMode: () => settings.hoverMode,
         getHoverContentMode: () => settings.hoverContentMode,
         shouldShowThemeRecommendation: () => settings.showThemeRecommendation,

@@ -2,6 +2,8 @@
 // Extracted behind dependency injection so we can keep behavior stable while
 // gradually shrinking the main extension file.
 const { createCallArgLayoutCore } = require('./arg-layout');
+const { createPawnFunctionCallRegex } = require('../declarations/line-utils');
+const { getPawnIdentifierName } = require('../syntax/identifiers');
 
 function createCallAnalysisCore(deps) {
     const {
@@ -173,7 +175,7 @@ function createCallAnalysisCore(deps) {
             const paramText = params[index] || '';
             const paramMeta = getParamMeta(index);
             const actualExpr = layout.effectiveArgs[index];
-            const rawArgIndex = layout.rawToParamIndex.findIndex(item => item === index);
+            const rawArgIndex = layout.firstRawIndexByParamIndex?.[index] ?? -1;
             if (rawArgIndex < 0 && unknownNamedArgRawIndexes.size) continue;
             const hasActualArg = actualExpr !== undefined;
             if (isMacroDefine) continue;
@@ -353,7 +355,7 @@ function createCallAnalysisCore(deps) {
         return { layout, issues };
     }
 
-    function getCallNameBeforeIndex(text, endIndex) {
+    function getCallNameInfoBeforeIndex(text, endIndex) {
         let cursor = endIndex - 1;
         while (cursor >= 0 && /\s/.test(text[cursor])) cursor--;
         if (cursor < 0 || !isIdentifierContinueChar(text[cursor])) return null;
@@ -365,7 +367,17 @@ function createCallAnalysisCore(deps) {
         if (!isIdentifierStartChar(firstChar)) return null;
 
         const funcName = text.slice(start, end);
-        return FORBIDDEN.has(funcName) ? null : funcName;
+        return FORBIDDEN.has(funcName)
+            ? null
+            : {
+                funcName,
+                nameStartOffset: start,
+                nameEndOffset: end
+            };
+    }
+
+    function getCallNameBeforeIndex(text, endIndex) {
+        return getCallNameInfoBeforeIndex(text, endIndex)?.funcName || null;
     }
 
     function cloneCallStack(callStack = []) {
@@ -422,8 +434,11 @@ function createCallAnalysisCore(deps) {
                 continue;
             }
             if (c === '(') {
+                const callNameInfo = getCallNameInfoBeforeIndex(text, index);
                 callStack.push({
-                    funcName: getCallNameBeforeIndex(text, index),
+                    funcName: callNameInfo?.funcName || null,
+                    nameStartOffset: callNameInfo ? callNameInfo.nameStartOffset : -1,
+                    nameEndOffset: callNameInfo ? callNameInfo.nameEndOffset : -1,
                     openOffset: index,
                     argIndex: 0
                 });
@@ -656,8 +671,14 @@ function createCallAnalysisCore(deps) {
             if (c === '"' || c === "'") { inStr = true; strChar = c; index++; continue; }
 
             if (c === '(') {
-                const funcName = getCallNameBeforeIndex(linePrefix, index);
-                callStack.push({ funcName, openOffset: lineStartOffset + index, argIndex: 0 });
+                const callNameInfo = getCallNameInfoBeforeIndex(linePrefix, index);
+                callStack.push({
+                    funcName: callNameInfo?.funcName || null,
+                    nameStartOffset: callNameInfo ? lineStartOffset + callNameInfo.nameStartOffset : -1,
+                    nameEndOffset: callNameInfo ? lineStartOffset + callNameInfo.nameEndOffset : -1,
+                    openOffset: lineStartOffset + index,
+                    argIndex: 0
+                });
             } else if (c === ')') {
                 if (callStack.length > 0) {
                     const closedCall = callStack.pop();
@@ -784,7 +805,7 @@ function createCallAnalysisCore(deps) {
         const visitedAliases = options.aliasVisited instanceof Set ? options.aliasVisited : new Set();
         const getAliasTargetName = decl => {
             if (!decl || decl.type !== 'define' || decl.args || decl.macroStyle) return '';
-            const targetName = String(decl.value || '').trim().match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+            const targetName = getPawnIdentifierName(decl.value);
             return targetName && targetName !== decl.name ? targetName : '';
         };
         const createAliasMatch = (match, aliasDefine, aliasName, immediateTargetName) => {
@@ -994,7 +1015,7 @@ function createCallAnalysisCore(deps) {
             const endLineText = document.lineAt(endLine).text;
             const endOffset = document.offsetAt(new vscode.Position(endLine, endLineText.length));
             const segment = text.slice(startOffset, endOffset);
-            const re = new RegExp(`\\b${escapeRegExp(func.name)}\\s*\\(`);
+            const re = createPawnFunctionCallRegex(func.name, escapeRegExp);
             const match = re.exec(segment);
             if (!match) continue;
 

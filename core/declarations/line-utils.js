@@ -1,24 +1,28 @@
+const {
+    isPawnIdentifierContinueChar,
+    isPawnIdentifierContinueCode,
+    isPawnIdentifierStartChar,
+    isPawnIdentifierStartCode
+} = require('../syntax/identifiers');
+const { PAWN_DECLARATION_KEYWORD_SET } = require('../syntax/keywords');
+const { countLineBreaks } = require('../syntax/lines');
+const { isPreprocessorDirectiveLine } = require('../syntax/preprocessor-lines');
+const {
+    isPawnWhitespaceCode,
+    skipPawnHorizontalWhitespace
+} = require('../syntax/whitespace');
+
 function isPotentialEnumDeclarationLine(line) {
     const source = String(line || '');
-    let cursor = 0;
-    while (cursor < source.length) {
-        const code = source.charCodeAt(cursor);
-        if (code !== 32 && code !== 9) break;
-        cursor++;
-    }
+    const cursor = skipPawnHorizontalWhitespace(source, 0);
     if (source.slice(cursor, cursor + 4) !== 'enum') return false;
     const nextChar = source[cursor + 4] || '';
-    return !/[A-Za-z0-9_@]/.test(nextChar);
+    return !isPawnIdentifierContinueChar(nextChar);
 }
 
 function isPotentialDeclarationStartLine(line) {
     const source = String(line || '');
-    let cursor = 0;
-    while (cursor < source.length) {
-        const code = source.charCodeAt(cursor);
-        if (code !== 32 && code !== 9) break;
-        cursor++;
-    }
+    const cursor = skipPawnHorizontalWhitespace(source, 0);
     if (cursor >= source.length) return false;
 
     const code = source.charCodeAt(cursor);
@@ -34,72 +38,51 @@ function isPotentialDeclarationStartLine(line) {
     }
     if (code === 47 || code === 42) return false; // / or * comment leftovers
     return (
-        code === 95 ||  // _
-        code === 64 ||  // @
         code === 123 || // {tag}:
-        (code >= 65 && code <= 90) ||
-        (code >= 97 && code <= 122)
+        isPawnIdentifierStartCode(code)
     );
 }
 
-const explicitDeclarationStartKeywords = new Set([
-    'new',
-    'static',
-    'stock',
-    'public',
-    'private',
-    'const',
-    'native',
-    'forward',
-    'enum'
-]);
-
 function readLeadingWord(line) {
     const source = String(line || '');
-    let cursor = 0;
-    while (cursor < source.length) {
-        const code = source.charCodeAt(cursor);
-        if (code !== 32 && code !== 9) break;
-        cursor++;
-    }
+    let cursor = skipPawnHorizontalWhitespace(source, 0);
     const start = cursor;
-    if (!/[A-Za-z_@]/.test(source[cursor] || '')) return '';
+    if (!isPawnIdentifierStartChar(source[cursor] || '')) return '';
     cursor++;
-    while (cursor < source.length && /[A-Za-z0-9_@]/.test(source[cursor])) cursor++;
+    while (cursor < source.length && isPawnIdentifierContinueChar(source[cursor])) cursor++;
     return source.slice(start, cursor);
 }
 
 function isExplicitDeclarationStartLine(line) {
+    const source = String(line || '');
+    if (/^\s*@[A-Za-z_]\w*\s*\(/.test(source)) return true;
     const word = readLeadingWord(line);
-    return !!word && explicitDeclarationStartKeywords.has(word);
+    return !!word && PAWN_DECLARATION_KEYWORD_SET.has(word);
 }
 
-const isWhitespaceCharCode = code =>
-    code === 32 || code === 9 || code === 10 || code === 11 || code === 12 || code === 13;
+const isWhitespaceCharCode = isPawnWhitespaceCode;
 
-const isPawnIdentifierStartCode = code =>
-    code === 95 ||
-    code === 64 ||
-    (code >= 65 && code <= 90) ||
-    (code >= 97 && code <= 122);
+const defaultEscapeRegExp = value =>
+    String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-const isPawnIdentifierContinueCode = code =>
-    isPawnIdentifierStartCode(code) ||
-    (code >= 48 && code <= 57);
+function getPawnFunctionNameRegexSource(name, escapeRegExp = defaultEscapeRegExp) {
+    const sourceName = String(name || '');
+    const escapedName = escapeRegExp(sourceName);
+    return `${sourceName.startsWith('@') ? '' : '\\b'}${escapedName}`;
+}
 
-function countLineBreaks(source, start = 0, end = source.length) {
-    let count = 0;
-    for (let index = Math.max(0, start); index < end && index < source.length; index++) {
-        if (source[index] === '\n') count++;
-    }
-    return count;
+function createPawnFunctionCallRegex(name, escapeRegExp = defaultEscapeRegExp) {
+    return new RegExp(`${getPawnFunctionNameRegexSource(name, escapeRegExp)}\\s*\\(`);
 }
 
 module.exports = {
     countLineBreaks,
+    createPawnFunctionCallRegex,
+    getPawnFunctionNameRegexSource,
     isExplicitDeclarationStartLine,
     isPawnIdentifierContinueCode,
     isPawnIdentifierStartCode,
+    isPreprocessorDirectiveLine,
     isPotentialDeclarationStartLine,
     isPotentialEnumDeclarationLine,
     isWhitespaceCharCode,

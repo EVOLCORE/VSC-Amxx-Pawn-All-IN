@@ -2,6 +2,8 @@
 // persistent-hover orchestration live with the hover feature, not in
 // persistent-hover itself. Persistent hover only decides when to open the
 // widget; these helpers decide whether a hover target is meaningful.
+const { splitPawnLines } = require('../../core/syntax/lines');
+
 function createHoverHelpersFeature(deps) {
     const {
         vscode,
@@ -86,7 +88,7 @@ function createHoverHelpersFeature(deps) {
 
     function resolvePersistentHoverTarget(document, position, functions, incDecls, cursorDepth = null, lookup = null) {
         const depth = cursorDepth ?? (() => {
-            const rawLines = document.getText().split(/\r?\n/);
+            const rawLines = splitPawnLines(document.getText());
             const depths = computeLineDepths(rawLines);
             return position.line < depths.length ? depths[position.line] : 0;
         })();

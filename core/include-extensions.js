@@ -1,16 +1,11 @@
+const { createUtilityCore } = require('./utils');
+
 const COMPILER_INCLUDE_FILE_EXTENSIONS = Object.freeze(['.inc', '.p', '.i', '.pawn']);
 const DEFAULT_CUSTOM_INCLUDE_FILE_EXTENSIONS = Object.freeze(['.inl']);
+const { normalizeExtensionList } = createUtilityCore();
 
 function normalizeIncludeExtensionList(values, fallback = []) {
-    const source = Array.isArray(values) ? values : fallback;
-    const result = [];
-    for (const value of source || []) {
-        let ext = String(value || '').trim().toLowerCase();
-        if (!ext) continue;
-        if (!ext.startsWith('.')) ext = `.${ext}`;
-        if (!result.includes(ext)) result.push(ext);
-    }
-    return result;
+    return normalizeExtensionList(values, fallback);
 }
 
 function mergeUniqueExtensions(...lists) {

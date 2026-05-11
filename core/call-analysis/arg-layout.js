@@ -1,3 +1,5 @@
+const { getPawnIdentifierName } = require('../syntax/identifiers');
+
 function createCallArgLayoutCore(deps) {
     const {
         parseParamMeta,
@@ -194,6 +196,16 @@ function createCallArgLayoutCore(deps) {
             : (currentParamIndex === variadicIndex
                 ? (variadicArgs[0] ?? '')
                 : (effectiveArgs[currentParamIndex] ?? ''));
+        const firstRawIndexByParamIndex = new Array(paramMetas.length).fill(-1);
+        for (let rawIndex = 0; rawIndex < rawToParamIndex.length; rawIndex++) {
+            const paramIndex = rawToParamIndex[rawIndex];
+            if (!Number.isInteger(paramIndex) || paramIndex < 0 || paramIndex >= firstRawIndexByParamIndex.length) {
+                continue;
+            }
+            if (firstRawIndexByParamIndex[paramIndex] < 0) {
+                firstRawIndexByParamIndex[paramIndex] = rawIndex;
+            }
+        }
 
         const layout = {
             params,
@@ -204,6 +216,7 @@ function createCallArgLayoutCore(deps) {
             extraArgs,
             namedArgIssues,
             rawToParamIndex,
+            firstRawIndexByParamIndex,
             currentParamIndex,
             currentRawArgExpr,
             currentArgExpr
@@ -252,7 +265,7 @@ function createCallArgLayoutCore(deps) {
         let expanded = null;
         for (let index = 0; index < callArgs.length; index++) {
             const rawArg = String(callArgs[index] || '');
-            const bareName = rawArg.trim().match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+            const bareName = getPawnIdentifierName(rawArg);
             const tupleTexts = bareName
                 ? getObjectLikeDefineTupleTexts(bareName, lookup, escapeChar)
                 : null;
@@ -274,7 +287,7 @@ function createCallArgLayoutCore(deps) {
         for (let rawIndex = 0; rawIndex < (rawArgPieces?.length || 0); rawIndex++) {
             const rawArgPiece = rawArgPieces[rawIndex];
             const rawText = String(rawArgPiece?.text || '');
-            const bareName = rawText.trim().match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+            const bareName = getPawnIdentifierName(rawText);
             const tupleTexts = bareName
                 ? getObjectLikeDefineTupleTexts(bareName, lookup, escapeChar)
                 : null;
@@ -299,7 +312,7 @@ function createCallArgLayoutCore(deps) {
 
     function hasExpandableObjectLikeDefineTupleArg(rawArgPieces, lookup, escapeChar = '') {
         for (const rawArgPiece of rawArgPieces || []) {
-            const bareName = String(rawArgPiece?.text || '').trim().match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+            const bareName = getPawnIdentifierName(rawArgPiece?.text);
             if (!bareName) continue;
             const tupleTexts = getObjectLikeDefineTupleTexts(bareName, lookup, escapeChar);
             if (tupleTexts?.length) return true;

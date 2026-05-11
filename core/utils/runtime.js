@@ -1,4 +1,9 @@
 const crypto = require('crypto');
+const {
+    isPawnIdentifierStartChar,
+    isPawnIdentifierContinueChar,
+    isPawnIdentifierBoundaryChar
+} = require('../syntax/identifiers');
 
 // Small shared utilities that do not belong to a single feature/domain.
 function createUtilityCore() {
@@ -63,18 +68,6 @@ function createUtilityCore() {
             });
         }
         return fingerprint;
-    }
-
-    function isPawnIdentifierStartChar(char = '') {
-        return /[A-Za-z_@]/.test(char);
-    }
-
-    function isPawnIdentifierContinueChar(char = '') {
-        return /[A-Za-z0-9_@]/.test(char);
-    }
-
-    function isPawnIdentifierBoundaryChar(char = '') {
-        return !char || !isPawnIdentifierContinueChar(char);
     }
 
     return {

@@ -204,15 +204,24 @@ function createHeaderDiagnostics(deps) {
             pushStateIssueDiagnostic(issue);
         }
 
-        const includeDecl = hasIncludeFunctionTwin(functionDecl.name, ctx.incDecls, ctx.lookup)
-            ? (getPreferredFunctionHoverMatch(
-                functionDecl.name,
+        const getIncludePrototypeMatch = name => {
+            if (!name || !hasIncludeFunctionTwin(name, ctx.incDecls, ctx.lookup)) return null;
+            return getPreferredFunctionHoverMatch(
+                name,
                 ctx.parsedDecls.functions,
                 ctx.incDecls,
                 { preferInclude: true },
                 ctx.lookup
-            )?.data || null)
-            : null;
+            )?.data || null;
+        };
+        const includeDecl = (() => {
+            const exactMatch = getIncludePrototypeMatch(functionDecl.name);
+            if (exactMatch) return exactMatch;
+            const name = String(functionDecl.name || '');
+            if (!name.startsWith('@') || name.length <= 1) return null;
+            const publicForwardMatch = getIncludePrototypeMatch(name.slice(1));
+            return publicForwardMatch?.type === 'forward' ? publicForwardMatch : null;
+        })();
         const shouldSkipCompilerLikePublicForwardSignatureCheck = parentDecl =>
             getCallbackSignatureMode() === 'compiler-like' &&
             functionDecl?.type === 'public' &&

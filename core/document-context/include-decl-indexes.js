@@ -1,37 +1,28 @@
-const { attachPrecomputedDeclBuckets } = require('../lookup/precomputed-buckets');
+const {
+    attachPrecomputedDeclBuckets,
+    buildDeclBuckets
+} = require('../lookup/precomputed-buckets');
 
 function buildIncludeDeclIndexes(decls = []) {
-    const nameBuckets = new Map();
-    const variableBuckets = new Map();
-    for (const decl of decls || []) {
-        if (!decl?.name) continue;
-        const bucket = nameBuckets.get(decl.name);
-        if (bucket) bucket.push(decl);
-        else nameBuckets.set(decl.name, [decl]);
-        if (decl.type === 'variable' && !variableBuckets.get(decl.name)) {
-            variableBuckets.set(decl.name, decl);
-        }
-    }
-    return { nameBuckets, variableBuckets };
+    return buildDeclBuckets(decls);
 }
 
 function getIncludeDeclDedupeKey(decl) {
     if (!decl || typeof decl !== 'object') return '';
-    return [
-        decl.filePath || decl.file || '',
-        decl.lineNumber ?? '',
-        decl.type || '',
-        decl.enumName || '',
-        decl.enumDisplayName || '',
-        decl.name || '',
-        decl.args || '',
-        decl.macroStyle || '',
-        decl.macroIndexer || '',
-        decl.typeTag || '',
-        decl.dims || '',
-        decl.value || '',
-        decl.valueDisplay || ''
-    ].join('\x1f');
+    const sep = '\x1f';
+    return `${decl.filePath || decl.file || ''}${sep}` +
+        `${decl.lineNumber ?? ''}${sep}` +
+        `${decl.type || ''}${sep}` +
+        `${decl.enumName || ''}${sep}` +
+        `${decl.enumDisplayName || ''}${sep}` +
+        `${decl.name || ''}${sep}` +
+        `${decl.args || ''}${sep}` +
+        `${decl.macroStyle || ''}${sep}` +
+        `${decl.macroIndexer || ''}${sep}` +
+        `${decl.typeTag || ''}${sep}` +
+        `${decl.dims || ''}${sep}` +
+        `${decl.value || ''}${sep}` +
+        `${decl.valueDisplay || ''}`;
 }
 
 function dedupeIncludeDecls(decls = []) {

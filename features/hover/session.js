@@ -2,6 +2,7 @@ const {
     getSemanticParsedDeclsMap,
     getSemanticAnalysisCache
 } = require('../../core/document-context/semantic-session');
+const { splitPawnLines } = require('../../core/syntax/lines');
 
 function createLazyArray(resolveItems) {
     let items = null;
@@ -137,7 +138,7 @@ function createHoverSessionFactory(deps) {
         );
 
         const declarationSourceState = {
-            rawLines: ctx.rawLines || text.split(/\r?\n/),
+            rawLines: ctx.rawLines || splitPawnLines(text),
             lineCtrlChars: ctx.lineCtrlChars || resolver.lineCtrlChars || getCtrlCharStateForContent(text, document.fileName).lineCtrlChars
         };
         Object.defineProperty(declarationSourceState, 'lineStartOffsets', {

@@ -1,3 +1,5 @@
+const { getPawnIdentifierName } = require('../syntax/identifiers');
+
 function createArrayShapeDiagnosticsCore(deps) {
     const {
         findAnyDeclByNameFromSources,
@@ -26,7 +28,7 @@ function createArrayShapeDiagnosticsCore(deps) {
         const expr = stripTagsForArrayShape(source);
         if (!expr) return '';
         if (expr.startsWith('"')) return expr;
-        const name = expr.match(/^([A-Za-z_@]\w*)$/)?.[1] || '';
+        const name = getPawnIdentifierName(expr);
         if (!name || seen.has(name)) return '';
         const decl = findAnyDeclByNameFromSources(decls, name, null, analysisCache);
         if (!decl) return '';

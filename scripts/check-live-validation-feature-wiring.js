@@ -7,6 +7,7 @@ const { createSettingsService } = require('../services/settings');
 const { createActivationState } = require('../bootstrap/state');
 const { buildCoreActivationRuntime } = require('../bootstrap/build-core-runtime');
 const { buildLiveValidationFeature } = require('../bootstrap/feature-wiring/live-validation');
+const { createHoverSignatureFeature } = require('../features/hover/signature');
 const { MockDocument, createMockVscode } = require('./bench-live-validation');
 
 function assert(condition, message) {
@@ -32,6 +33,10 @@ function main() {
         'forward client_disconnected(id, bool:drop, message[], maxlen)',
         ''
     ].join('\n'));
+    fs.writeFileSync(path.join(tempIncludeRoot, 'at_callback_parent.inc'), [
+        'forward @client_disconnected(id, bool:drop, message[], maxlen)',
+        ''
+    ].join('\n'));
     fs.writeFileSync(path.join(tempIncludeRoot, 'alias_func.inc'), [
         'enum DataType',
         '{',
@@ -47,6 +52,19 @@ function main() {
     fs.writeFileSync(path.join(tempIncludeRoot, 'hard_pawn.pawn'), '#define HARD_PAWN_SYMBOL 1\n');
     fs.writeFileSync(path.join(tempIncludeRoot, 'hard_order.inc'), '#define HARD_ORDER_INC 1\n');
     fs.writeFileSync(path.join(tempIncludeRoot, 'hard_order.p'), '#define HARD_ORDER_P 1\n');
+    fs.writeFileSync(path.join(tempIncludeRoot, 'underscore_value.inc'), [
+        '#define _UNDERSCORE_INCLUDE_GUARD',
+        '#define _UNDERSCORE_INCLUDE_VALUE "visible"',
+        ''
+    ].join('\n'));
+    fs.writeFileSync(path.join(tempIncludeRoot, 'bare_child.inc'), '#define BARE_CHILD_SYMBOL 7\n');
+    fs.writeFileSync(path.join(tempIncludeRoot, 'bare_root.inc'), '#include bare_child\n#define BARE_ROOT_SYMBOL 8\n');
+    fs.writeFileSync(path.join(tempIncludeRoot, 'parent_with_missing_child.inc'), '#include <missing_nested_child>\n#define PARENT_WITH_MISSING_CHILD 9\n');
+    const tempProjectRoot = path.join(tempRoot, 'project');
+    const tempProjectModuleRoot = path.join(tempProjectRoot, 'Modules');
+    fs.mkdirSync(tempProjectModuleRoot, { recursive: true });
+    fs.writeFileSync(path.join(tempProjectModuleRoot, 'Feature.inc'), '#include "Modules/FeatureChild"\n#define FEATURE_SYMBOL FEATURE_CHILD_SYMBOL\n');
+    fs.writeFileSync(path.join(tempProjectModuleRoot, 'FeatureChild.inc'), '#define FEATURE_CHILD_SYMBOL 10\n');
     const vscode = createMockVscode(workspaceRoot, {
         projectLocalIncludePaths: [tempIncludeRoot]
     });
@@ -68,7 +86,18 @@ function main() {
         settingsService,
         state
     });
-    const { buildSig, getVariableInitializerUsageText } = coreRuntime.sharedRuntime;
+    const {
+        buildSig,
+        getVariableInitializerUsageText,
+        getIncludeNameFromLine,
+        parsePreprocessorDirectiveLine,
+        getPreprocessorDirectiveIssues,
+        splitTopLevel,
+        splitTopLevelWithRanges,
+        buildCallArgLayout,
+        collectCallArgumentIssues,
+        isFunctionLikeDefineDecl
+    } = coreRuntime.sharedRuntime;
     assert(
         buildSig({ type: 'variable', name: 'g_files', modifiers: ['new', 'const'], dims: '[][]', value: '{ "a.wav", "long_name.wav" }' }) === 'new const g_files[][] size(2, 14)',
         'hover signature should render inferred sizes for initialized variable declarations with blank dimensions'
@@ -89,6 +118,86 @@ function main() {
         getVariableInitializerUsageText({ type: 'variable', name: 'g_files', modifiers: ['new'], dims: '[][]', value: '{ "a.wav", "long_name.wav" }' }) === '',
         'hover info should not duplicate signature size when every dimension is inferred'
     );
+    const hoverSignature = createHoverSignatureFeature({
+        t,
+        buildSig,
+        splitTopLevel,
+        buildCallArgLayout,
+        collectCallArgumentIssues,
+        createHoverTypeAnalysisCache: () => ({}),
+        resolveIndexedAccessValidationChain: () => [],
+        parseIndexedAccessExpression: () => null,
+        parseDimsParts: () => [],
+        explainIndexedAccessDimCompat: () => '',
+        isFunctionLikeDefineDecl
+    });
+    const documentedMacroSignature = hoverSignature.buildColoredSignatureLine(
+        {
+            type: 'define',
+            name: 'Forwards_RegAndCallP',
+            args: '%1,%2,[%3],[%4]',
+            macroStyle: 'paren',
+            value: '',
+            docs: 'Forwards_RegAndCallP(const name[], const stopType, [... param_types], [... param_values]);'
+        },
+        2,
+        ['"VipM_OnInitModules"', 'ET_IGNORE', 'FP_CELL'],
+        [],
+        { validateArgs: false }
+    );
+    assert(
+        documentedMacroSignature.text.includes('Forwards_RegAndCallP(const name[], const stopType, [... param_types]') &&
+            documentedMacroSignature.text.includes('[... param_values])'),
+        `macro call hover should render documented parameter names, got: ${documentedMacroSignature.text}`
+    );
+    const commentedCallArgs = splitTopLevelWithRanges(
+        `
+MODULE_NAME,
+// TODO: Read "Menus" as param
+PCParam("MainMenuTitle", DEFAULT_PARAMS_STR_NAME),
+PCParam("ResetCountOnSpawn", DEFAULT_PARAMS_BOOL_NAME), // deprecated
+PCParam("AutoopenLimits", VIPM_PARAM_TYPE_LIMITS_NAME)
+`.trim(),
+        100
+    );
+    assert(
+        commentedCallArgs.length === 4 &&
+            commentedCallArgs[1].text === 'PCParam("MainMenuTitle", DEFAULT_PARAMS_STR_NAME)' &&
+            commentedCallArgs[2].text === 'PCParam("ResetCountOnSpawn", DEFAULT_PARAMS_BOOL_NAME)' &&
+            commentedCallArgs[3].text === 'PCParam("AutoopenLimits", VIPM_PARAM_TYPE_LIMITS_NAME)',
+        `call argument splitter should ignore comments, got: ${commentedCallArgs.map(part => part.text).join(' | ')}`
+    );
+    const taggedMultilineInitializerDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-tagged-multiline-initializer.sma'),
+        `
+stock send_json(data, message, photoUrl, messageDest, protectContent, messageEffectId, urlMethod, callbackContextId)
+{
+    new EzJSON:object = CreateRequestBody(
+        data,
+        message,
+        photoUrl,
+        messageDest,
+        protectContent,
+        messageEffectId
+    );
+
+    if (object == EzInvalid_JSON)
+        return;
+
+    PostTelegramRequest(urlMethod, object, callbackContextId);
+}
+`.trimStart()
+    );
+    const taggedMultilineCtx = coreRuntime.sharedRuntime.getPawnDocumentContext(taggedMultilineInitializerDocument, 14);
+    const taggedObjectDecl = taggedMultilineCtx.parsedDecls.locals.find(decl =>
+        decl.type === 'variable' &&
+        decl.name === 'object' &&
+        decl.typeTag === 'EzJSON'
+    );
+    assert(
+        taggedObjectDecl && taggedObjectDecl.scopeEndLine >= 14,
+        `tagged multiline initializer should keep local object in scope, got: ${JSON.stringify(taggedObjectDecl || null)}`
+    );
     assert(
         buildSig({ type: 'variable', name: 'arg_values', modifiers: ['const'], dims: '[]', value: '{ 1, 2 }', isArg: true }) === 'const arg_values[]',
         'hover signature should not render inferred sizes for function argument defaults'
@@ -106,6 +215,176 @@ function main() {
         {
             themeRecommendationFeature: { prompt() {} }
         }
+    );
+    const taggedMultilineDiagnostics = liveValidation.collectLiveValidationDiagnostics(taggedMultilineInitializerDocument);
+    assert(
+        !taggedMultilineDiagnostics.some(diagnostic => /unknown symbol.*object/i.test(diagnostic.message)),
+        `tagged multiline initializer should not report object as unknown, got: ${taggedMultilineDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    const commentedCallDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-commented-call-args.sma'),
+        `
+native VipM_Modules_AddParamsEx(const moduleName[], const any:...);
+stock PCParam(const name[], const typeName[]) {
+    return 0;
+}
+
+new const MODULE_NAME[] = "WeaponMenu";
+new const DEFAULT_PARAMS_STR_NAME[] = "str";
+new const DEFAULT_PARAMS_BOOL_NAME[] = "bool";
+new const VIPM_PARAM_TYPE_LIMITS_NAME[] = "limits";
+
+public main()
+{
+    VipM_Modules_AddParamsEx(MODULE_NAME,
+        // TODO: Read "Menus" as param
+        PCParam("MainMenuTitle", DEFAULT_PARAMS_STR_NAME),
+        PCParam("ResetCountOnSpawn", DEFAULT_PARAMS_BOOL_NAME), // deprecated
+        PCParam("AutoopenLimits", VIPM_PARAM_TYPE_LIMITS_NAME)
+    );
+}
+`.trimStart()
+    );
+    const commentedCallDiagnostics = liveValidation.collectLiveValidationDiagnostics(commentedCallDocument);
+    assert(
+        !commentedCallDiagnostics.some(diagnostic => /unknown symbol.*(?:Read|as|param|deprecated)/i.test(diagnostic.message)),
+        `comments inside call arguments should not produce unknown symbol diagnostics, got: ${commentedCallDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    const multilineReturnElseDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-multiline-return-else.sma'),
+        `
+native min(left, right);
+
+GetUserLeftItems()
+{
+    new maxPlayer = 1;
+    new maxMenu = 2;
+    new usedPlayer = 3;
+    new usedMenu = 4;
+
+    if (maxPlayer < 0) {
+        return maxMenu - usedMenu;
+    } else if (maxMenu < 0) {
+        return maxPlayer - usedPlayer;
+    } else {
+        return min(
+            maxPlayer - usedPlayer,
+            maxMenu - usedMenu
+        );
+    }
+}
+
+public main()
+{
+    return GetUserLeftItems();
+}
+`.trimStart()
+    );
+    const multilineReturnElseDiagnostics = liveValidation.collectLiveValidationDiagnostics(multilineReturnElseDocument);
+    assert(
+        !multilineReturnElseDiagnostics.some(diagnostic => /should return a value|unreachable code/i.test(diagnostic.message)),
+        `if/else multiline return chain should not produce terminal-flow diagnostics, got: ${multilineReturnElseDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    const guardReturnDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-guard-return-single-statement.sma'),
+        `
+native server_print(const fmt[], any:...)
+
+public guard_return(id)
+{
+    if(!id)
+    return
+
+    server_print("%d", id)
+}
+`.trimStart()
+    );
+    const guardReturnDiagnostics = liveValidation.collectLiveValidationDiagnostics(guardReturnDocument);
+    assert(
+        !guardReturnDiagnostics.some(diagnostic => /unreachable code/i.test(diagnostic.message)),
+        `guard return without braces should not make following statements unreachable, got: ${guardReturnDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    const macroLoopContinueDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-macro-loop-continue.sma'),
+        `
+#define Each(%1) \\
+    if (%1) \\
+        for (new i = 0; i < 4; i++)
+
+public main()
+{
+    Each(1) {
+        continue;
+    }
+    return 0;
+}
+`.trimStart()
+    );
+    const macroLoopContinueDiagnostics = liveValidation.collectLiveValidationDiagnostics(macroLoopContinueDocument);
+    assert(
+        !macroLoopContinueDiagnostics.some(diagnostic => /continue.*out of context/i.test(diagnostic.message)),
+        `loop-like function macro body should allow continue, got: ${macroLoopContinueDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    const singleStatementDeclScopeDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-single-statement-decl-scope.sma'),
+        `
+native json_array_get_string(value, index, buffer[], maxlen)
+native charsmax(any:array[])
+
+public main(value)
+{
+    new size = 1;
+    for (new j; j < size; j++)
+        new soundPath[128];
+    json_array_get_string(value, 0, soundPath, charsmax(soundPath));
+}
+`.trimStart()
+    );
+    const singleStatementDeclScopeContext = coreRuntime.sharedRuntime.getPawnDocumentContext(
+        singleStatementDeclScopeDocument,
+        undefined,
+        { preparseLocals: true }
+    );
+    const singleStatementSoundPathDecl = singleStatementDeclScopeContext.parsedDecls.locals.find(decl => decl.name === 'soundPath');
+    assert(
+        singleStatementSoundPathDecl?.scopeEndLine >= 8,
+        `single-statement body declaration should stay visible through the enclosing block, got: ${JSON.stringify(singleStatementSoundPathDecl || null)}`
+    );
+    const singleStatementDeclScopeDiagnostics = liveValidation.collectLiveValidationDiagnostics(singleStatementDeclScopeDocument);
+    assert(
+        !singleStatementDeclScopeDiagnostics.some(diagnostic => /unknown symbol: soundPath|unknown symbol.*soundPath/i.test(diagnostic.message)),
+        `single-statement body declaration should be visible to following lines, got: ${singleStatementDeclScopeDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    const bracedForDeclScopeDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-braced-for-decl-scope.sma'),
+        `
+native json_array_get_string(value, index, buffer[], maxlen)
+native charsmax(any:array[])
+
+public main(value)
+{
+    new size = 1;
+    for (new j; j < size; j++) {
+        new soundPath[128];
+        json_array_get_string(value, j, soundPath, charsmax(soundPath));
+    }
+}
+`.trimStart()
+    );
+    const bracedForDeclScopeContext = coreRuntime.sharedRuntime.getPawnDocumentContext(
+        bracedForDeclScopeDocument,
+        undefined,
+        { preparseLocals: true }
+    );
+    const bracedForSoundPathDecl = bracedForDeclScopeContext.parsedDecls.locals.find(decl => decl.name === 'soundPath');
+    assert(
+        bracedForSoundPathDecl?.scopeEndLine >= 8,
+        `braced for body declaration should stay visible through the loop block, got: ${JSON.stringify(bracedForSoundPathDecl || null)}`
+    );
+    const bracedForDeclScopeDiagnostics = liveValidation.collectLiveValidationDiagnostics(bracedForDeclScopeDocument);
+    assert(
+        !bracedForDeclScopeDiagnostics.some(diagnostic => /unknown symbol: soundPath|unknown symbol.*soundPath/i.test(diagnostic.message)),
+        `braced for body declaration should be visible within the loop block, got: ${bracedForDeclScopeDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
     );
     const createLiveValidationWithConfig = configurationOverrides => {
         const configuredVscode = createMockVscode(workspaceRoot, {
@@ -551,6 +830,118 @@ public main()
         !hardIncludeDefines.has('HARD_ORDER_P'),
         'extensionless include should prefer .inc before .p when both files exist'
     );
+    const underscoreValueDefineDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-underscore-value-define.sma'),
+        `
+#include <underscore_value>
+
+new const value[] = _UNDERSCORE_INCLUDE_VALUE;
+`.trimStart()
+    );
+    const underscoreValueDefineContext = coreRuntime.sharedRuntime.getPawnDocumentContext(underscoreValueDefineDocument);
+    const underscoreValueDefineDecls = new Set(underscoreValueDefineContext.incDecls
+        .filter(decl => decl.type === 'define')
+        .map(decl => decl.name));
+    assert(
+        underscoreValueDefineDecls.has('_UNDERSCORE_INCLUDE_VALUE'),
+        'include define declarations with underscore names and values should be visible'
+    );
+    assert(
+        !underscoreValueDefineDecls.has('_UNDERSCORE_INCLUDE_GUARD'),
+        'empty underscore include guard defines should stay hidden from symbols'
+    );
+    const underscoreValueDefineDiagnostics = liveValidation.collectLiveValidationDiagnostics(underscoreValueDefineDocument);
+    assert(
+        !underscoreValueDefineDiagnostics.some(diagnostic => /unknown symbol.*_UNDERSCORE_INCLUDE_VALUE/i.test(diagnostic.message)),
+        `underscore value define from include should not be reported as unknown, got: ${underscoreValueDefineDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    const quotedIncludeAtEofDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-quoted-include-at-eof.sma'),
+        '#include "hard_inc"'
+    );
+    const quotedIncludeAtEofDiagnostics = liveValidation.collectLiveValidationDiagnostics(quotedIncludeAtEofDocument);
+    assert(
+        !quotedIncludeAtEofDiagnostics.some(diagnostic => diagnostic.message === t('validation.invalidString')),
+        `quoted include at EOF should not be treated as an unterminated string, got: ${quotedIncludeAtEofDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    assert(
+        getIncludeNameFromLine('#include bare_root') === 'bare_root',
+        'bare include directive should parse without angle brackets or quotes'
+    );
+    const bareIncludeIssues = getPreprocessorDirectiveIssues(parsePreprocessorDirectiveLine('#include bare_root'));
+    assert(
+        !bareIncludeIssues.length,
+        `bare include directive should not be reported as invalid, got: ${bareIncludeIssues.map(issue => issue.messageKey).join(', ')}`
+    );
+    const bareIncludeDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-bare-include.sma'),
+        `
+#include bare_root
+
+public main()
+{
+    return BARE_ROOT_SYMBOL + BARE_CHILD_SYMBOL;
+}
+`.trimStart()
+    );
+    const bareIncludeContext = coreRuntime.sharedRuntime.getPawnDocumentContext(bareIncludeDocument);
+    const bareIncludeDefines = new Set(bareIncludeContext.incDecls
+        .filter(decl => decl.type === 'define')
+        .map(decl => decl.name));
+    assert(
+        bareIncludeDefines.has('BARE_ROOT_SYMBOL') && bareIncludeDefines.has('BARE_CHILD_SYMBOL'),
+        'bare include directives should resolve root and nested include definitions'
+    );
+    const includeWithMissingNestedDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-include-with-missing-nested.sma'),
+        `
+#include <parent_with_missing_child>
+
+public main()
+{
+    return PARENT_WITH_MISSING_CHILD;
+}
+`.trimStart()
+    );
+    const includeWithMissingNestedDiagnostics = liveValidation.collectLiveValidationDiagnostics(includeWithMissingNestedDocument);
+    assert(
+        !includeWithMissingNestedDiagnostics.some(diagnostic =>
+            diagnostic.code === 'amxx.live.unresolvedInclude' &&
+            /^include not resolved: parent_with_missing_child/i.test(diagnostic.message)
+        ),
+        `resolved parent include should not be reported as directly unresolved because of a missing nested include, got: ${includeWithMissingNestedDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    assert(
+        includeWithMissingNestedDiagnostics.some(diagnostic =>
+            diagnostic.code === 'amxx.live.unresolvedInclude' &&
+            /include dependency not resolved: missing_nested_child .*parent_with_missing_child/i.test(diagnostic.message)
+        ),
+        `missing nested include should be reported as an unresolved dependency of its parent include, got: ${includeWithMissingNestedDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    const rootRelativeNestedIncludeDocument = new MockDocument(
+        path.join(tempProjectRoot, 'feature-wiring-root-relative-nested-include.sma'),
+        `
+#include "Modules/Feature"
+
+public main()
+{
+    return FEATURE_SYMBOL;
+}
+`.trimStart()
+    );
+    const rootRelativeNestedContext = coreRuntime.sharedRuntime.getPawnDocumentContext(rootRelativeNestedIncludeDocument);
+    const rootRelativeNestedDefines = new Set(rootRelativeNestedContext.incDecls
+        .filter(decl => decl.type === 'define')
+        .map(decl => decl.name));
+    assert(
+        rootRelativeNestedDefines.has('FEATURE_CHILD_SYMBOL'),
+        'nested path-like include should resolve from an ancestor source root when local include directory lookup misses'
+    );
+    const rootRelativeNestedDiagnostics = liveValidation.collectLiveValidationDiagnostics(rootRelativeNestedIncludeDocument);
+    assert(
+        !rootRelativeNestedDiagnostics.some(diagnostic => diagnostic.code === 'amxx.live.unresolvedInclude'),
+        `root-relative nested include should not produce unresolved include diagnostics, got: ${rootRelativeNestedDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
 
     const hardIncludeOnlyHarness = createLiveValidationWithConfig({ includeFileExtensions: [] });
     const hardIncludeOnlyContext = hardIncludeOnlyHarness.coreRuntime.sharedRuntime.getPawnDocumentContext(hardIncludeDocument);
@@ -580,12 +971,90 @@ public client_disconnected(id)
         strictCallbackDiagnostics.some(diagnostic => diagnostic.message === missingParameterDeclaration),
         `strict callback signature mode should report missing trailing forward parameters, got: ${strictCallbackDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
     );
+    const atPublicCallbackDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-at-public-callback-forward-parent.sma'),
+        `
+#include <callback_parent>
+
+@client_disconnected(id)
+{
+}
+`.trimStart()
+    );
+    const atPublicCallbackContext = coreRuntime.sharedRuntime.getPawnDocumentContext(atPublicCallbackDocument);
+    const atPublicCallbackDecl = atPublicCallbackContext.parsedDecls.functions.find(decl =>
+        decl.name === '@client_disconnected'
+    );
+    assert(
+        atPublicCallbackDecl?.type === 'public' &&
+            (atPublicCallbackDecl.modifiers || []).includes('public') &&
+            !atPublicCallbackContext.parsedDecls.functions.some(decl => decl.name === 'client_disconnected'),
+        `@callback declaration should be a public function with its @-prefixed compiler name, got: ${JSON.stringify(atPublicCallbackContext.parsedDecls.functions)}`
+    );
+    const atPublicCallbackDiagnostics = liveValidation.collectLiveValidationDiagnostics(atPublicCallbackDocument);
+    assert(
+        atPublicCallbackDiagnostics.some(diagnostic => diagnostic.message === missingParameterDeclaration),
+        `strict callback signature mode should fall back from @callback to unprefixed include forward, got: ${atPublicCallbackDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    const atPublicUnusedArg = t('validation.symbolNeverUsed', { name: 'id' });
+    assert(
+        !atPublicCallbackDiagnostics.some(diagnostic => diagnostic.message === atPublicUnusedArg),
+        `@callback arguments should inherit public/forward usage suppression, got: ${atPublicCallbackDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    const atPublicPrefixedForwardDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-at-public-prefixed-forward-parent.sma'),
+        `
+#include <at_callback_parent>
+
+@client_disconnected(id)
+{
+}
+`.trimStart()
+    );
+    const atPublicPrefixedForwardDiagnostics = liveValidation.collectLiveValidationDiagnostics(atPublicPrefixedForwardDocument);
+    assert(
+        atPublicPrefixedForwardDiagnostics.some(diagnostic => diagnostic.message === missingParameterDeclaration),
+        `strict callback signature mode should match @callback with @forward parent, got: ${atPublicPrefixedForwardDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
 
     const compilerLikeHarness = createLiveValidationWithConfig({ callbackSignatureMode: 'compiler-like' });
     const compilerLikeCallbackDiagnostics = compilerLikeHarness.liveValidation.collectLiveValidationDiagnostics(callbackDocument);
     assert(
         !compilerLikeCallbackDiagnostics.some(diagnostic => diagnostic.message === missingParameterDeclaration),
         `compiler-like callback signature mode should allow public callbacks with omitted trailing forward parameters, got: ${compilerLikeCallbackDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    const compilerLikeUnprefixedFallbackDiagnostics = compilerLikeHarness.liveValidation.collectLiveValidationDiagnostics(atPublicCallbackDocument);
+    assert(
+        !compilerLikeUnprefixedFallbackDiagnostics.some(diagnostic => diagnostic.message === missingParameterDeclaration),
+        `compiler-like callback signature mode should allow @callbacks with omitted trailing unprefixed include forward parameters, got: ${compilerLikeUnprefixedFallbackDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    const compilerLikeAtPublicCallbackDiagnostics = compilerLikeHarness.liveValidation.collectLiveValidationDiagnostics(atPublicPrefixedForwardDocument);
+    assert(
+        !compilerLikeAtPublicCallbackDiagnostics.some(diagnostic => diagnostic.message === missingParameterDeclaration),
+        `compiler-like callback signature mode should allow @callbacks with omitted trailing @forward parameters, got: ${compilerLikeAtPublicCallbackDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+
+    const callbackUnusedArgDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-callback-unused-args.sma'),
+        `
+forward sw_menu_callback(id, unused_arg)
+
+sw_menu_callback(id, unused_arg)
+{
+    return id;
+}
+`.trimStart()
+    );
+    const callbackUnusedArgMessage = t('validation.symbolNeverUsed', { name: 'unused_arg' });
+    const strictCallbackUnusedArgDiagnostics = liveValidation.collectLiveValidationDiagnostics(callbackUnusedArgDocument);
+    assert(
+        strictCallbackUnusedArgDiagnostics.some(diagnostic => diagnostic.message === callbackUnusedArgMessage),
+        `strict callback signature mode should still report unused forward callback arguments, got: ${strictCallbackUnusedArgDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    const compilerLikeCallbackUnusedArgDiagnostics = compilerLikeHarness.liveValidation.collectLiveValidationDiagnostics(callbackUnusedArgDocument);
+    assert(
+        !compilerLikeCallbackUnusedArgDiagnostics.some(diagnostic => diagnostic.message === callbackUnusedArgMessage),
+        `compiler-like callback signature mode should suppress unused arguments for forward-backed callbacks, got: ${compilerLikeCallbackUnusedArgDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
     );
 
     const localForwardDocument = new MockDocument(

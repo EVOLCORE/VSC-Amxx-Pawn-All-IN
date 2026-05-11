@@ -1,5 +1,10 @@
 // Bitmask-expression helpers are hover-specific: they support hover analysis
 // and rendering for combined flags, but are not generic language services.
+const {
+    hasTrailingBackslashContinuation,
+    removeTrailingBackslashContinuation
+} = require('../../core/syntax/continuation');
+
 function createHoverBitmaskFeature(deps) {
     const {
         getActiveCtrlChar,
@@ -84,12 +89,12 @@ function createHoverBitmaskFeature(deps) {
     }
 
     function endsWithBitwiseContinuation(line) {
-        const trimmed = String(line || '').trim().replace(/\\\s*$/, '').trimEnd();
+        const trimmed = removeTrailingBackslashContinuation(String(line || '').trim()).trimEnd();
         return /(?:\|=|&=|\^=|<<=|>>=|=|\||&|\^|<<|>>)$/.test(trimmed);
     }
 
     function hasExplicitLineContinuation(line) {
-        return /\\\s*$/.test(String(line || '').trim());
+        return hasTrailingBackslashContinuation(line);
     }
 
     function areBitmaskLinesConnected(previousLine, nextLine) {
@@ -128,7 +133,7 @@ function createHoverBitmaskFeature(deps) {
             const escapeChar = ctrlCharResolver?.ctrlCharAtLine(line) || getActiveCtrlChar();
             const trimmed = trimBitmaskContinuationLine(document.lineAt(line).text, escapeChar);
             if (!trimmed) continue;
-            fragments.push(trimmed.replace(/\\\s*$/, '').trim());
+            fragments.push(removeTrailingBackslashContinuation(trimmed).trim());
         }
 
         return {

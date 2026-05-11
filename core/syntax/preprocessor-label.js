@@ -1,3 +1,6 @@
+const { isPreprocessorDirectiveLine } = require('./preprocessor-lines');
+const { splitPawnLines } = require('./lines');
+
 function createPreprocessorLabelSyntaxCore(deps) {
     const {
         getMacroRedefinitionIssue,
@@ -34,7 +37,7 @@ function createPreprocessorLabelSyntaxCore(deps) {
         const includeWarnings = !!options.includeWarnings;
         const targetLines = targetLineNumbers instanceof Set ? targetLineNumbers : null;
         const shouldIncludeLine = lineNumber => !targetLines || targetLines.has(lineNumber);
-        const rawLines = rootCtx.rawLines || rootCtx.text.split(/\r?\n/);
+        const rawLines = rootCtx.rawLines || splitPawnLines(rootCtx.text);
         const strippedLines = rootCtx.strippedLines || rawLines;
         const lineCtrlChars = rootCtx.lineCtrlChars || [];
         const scanLineNumbers = rootCtx.lineIndex.preprocessorAndLabelCandidateLines || [];
@@ -50,9 +53,10 @@ function createPreprocessorLabelSyntaxCore(deps) {
             .filter(entry => entry?.required !== false);
         const hasUnresolvedRequiredIncludes = unresolvedRequiredIncludes.length > 0;
         const unresolvedRequiredIncludeByLineAndName = new Map();
+        const unresolvedIncludeDependenciesByParentLineAndName = new Map();
         for (const entry of unresolvedRequiredIncludes) {
             if (!entry?.name) continue;
-            if (Number.isInteger(entry.lineNumber) && entry.lineNumber >= 0) {
+            if ((entry.depth | 0) === 0 && Number.isInteger(entry.lineNumber) && entry.lineNumber >= 0) {
                 const key = `${entry.lineNumber}|${entry.name}`;
                 if (!unresolvedRequiredIncludeByLineAndName.has(key)) {
                     unresolvedRequiredIncludeByLineAndName.set(key, entry);
@@ -60,8 +64,11 @@ function createPreprocessorLabelSyntaxCore(deps) {
             }
             if (Number.isInteger(entry.parentLineNumber) && entry.parentLineNumber >= 0 && entry.parentName) {
                 const parentKey = `${entry.parentLineNumber}|${entry.parentName}`;
-                if (!unresolvedRequiredIncludeByLineAndName.has(parentKey)) {
-                    unresolvedRequiredIncludeByLineAndName.set(parentKey, entry);
+                const existing = unresolvedIncludeDependenciesByParentLineAndName.get(parentKey);
+                if (existing) {
+                    if (!existing.some(item => item?.name === entry.name)) existing.push(entry);
+                } else {
+                    unresolvedIncludeDependenciesByParentLineAndName.set(parentKey, [entry]);
                 }
             }
         }
@@ -202,7 +209,16 @@ function createPreprocessorLabelSyntaxCore(deps) {
             const payload = String(directive?.payload || '').trim();
             const payloadOffset = String(directive?.payload || '').indexOf(payload);
             const opener = payload[0] || '';
-            if (opener !== '<' && opener !== '"') return null;
+            if (opener !== '<' && opener !== '"') {
+                const bareMatch = payload.match(/^([A-Za-z0-9_./\\-]+)/);
+                if (!bareMatch) return null;
+                const name = bareMatch[1] || '';
+                return {
+                    name,
+                    startIndex: (directive?.payloadStart || 0) + Math.max(0, payloadOffset),
+                    length: Math.max(1, name.length)
+                };
+            }
             const closer = opener === '<' ? '>' : '"';
             const closeIndex = payload.indexOf(closer, 1);
             if (closeIndex <= 1) return null;
@@ -389,7 +405,7 @@ function createPreprocessorLabelSyntaxCore(deps) {
                 });
             }
 
-            if (trimmedLine[0] !== '#') {
+            if (!isPreprocessorDirectiveLine(trimmedLine)) {
                 pushRationalLiteralIssues(lineNumber, structuralLine, activeBranchAtLineStart);
                 return;
             }
@@ -536,6 +552,20 @@ function createPreprocessorLabelSyntaxCore(deps) {
                             'validation.includeNotResolved',
                             { name: includeRequest.name }
                         );
+                    } else if (includeRequest) {
+                        const unresolvedDependencies = unresolvedIncludeDependenciesByParentLineAndName.get(`${lineNumber}|${includeRequest.name}`) || [];
+                        for (const unresolvedDependency of unresolvedDependencies) {
+                            pushIssue(
+                                lineNumber,
+                                includeRequest.startIndex,
+                                includeRequest.length,
+                                'validation.includeDependencyNotResolved',
+                                {
+                                    name: unresolvedDependency.name,
+                                    parentName: includeRequest.name
+                                }
+                            );
+                        }
                     }
                 }
                 return;

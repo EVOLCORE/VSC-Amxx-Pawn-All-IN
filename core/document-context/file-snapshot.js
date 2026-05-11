@@ -2,6 +2,7 @@ const {
     createLineIndexCore,
     isBodyDeclarationContextChangeLine
 } = require('../syntax/line-index');
+const { splitPawnLines } = require('../syntax/lines');
 
 const defaultLineIndexCore = createLineIndexCore();
 
@@ -31,7 +32,7 @@ function createFileSnapshotCore(deps) {
         const sourceText = String(content || '');
         const rawLines = Array.isArray(initialRawLines)
             ? initialRawLines
-            : sourceText.split(/\r?\n/);
+            : splitPawnLines(sourceText);
         let ctrlCharState = initialCtrlCharState || null;
         let lineIndex = null;
         let lineStartOffsets = null;

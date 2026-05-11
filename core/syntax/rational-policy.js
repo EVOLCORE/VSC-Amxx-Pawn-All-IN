@@ -1,3 +1,10 @@
+const {
+    isPawnIdentifierBoundaryChar,
+    readPawnIdentifierAt
+} = require('./identifiers');
+const { findBalancedGroupEnd } = require('./balanced');
+const { skipPawnWhitespace } = require('./whitespace');
+
 function createRationalPolicySyntaxCore(deps = {}) {
     const {
         evaluatePawnNumericExpr
@@ -9,51 +16,20 @@ function createRationalPolicySyntaxCore(deps = {}) {
         params,
         severity
     });
-    const isIdentifierStart = char => /[A-Za-z_@]/.test(char || '');
-    const isIdentifierContinue = char => /[A-Za-z0-9_@]/.test(char || '');
-    const isIdentifierBoundary = char => !isIdentifierContinue(char || '');
-
-    function skipSpaces(source, index) {
-        let cursor = Math.max(0, index | 0);
-        while (cursor < source.length && /\s/.test(source[cursor])) cursor++;
-        return cursor;
-    }
+    const isIdentifierBoundary = isPawnIdentifierBoundaryChar;
 
     function readIdentifier(source, index) {
-        const start = skipSpaces(String(source || ''), index);
-        if (!isIdentifierStart(source[start] || '')) return null;
-        let end = start + 1;
-        while (end < source.length && isIdentifierContinue(source[end])) end++;
-        return {
-            name: source.slice(start, end),
-            start,
-            end
-        };
-    }
-
-    function findSimpleClosingParen(source, openIndex) {
-        if (source[openIndex] !== '(') return -1;
-        let depth = 0;
-        for (let index = openIndex; index < source.length; index++) {
-            const char = source[index];
-            if (char === '(') {
-                depth++;
-                continue;
-            }
-            if (char === ')') {
-                depth--;
-                if (depth === 0) return index;
-            }
-        }
-        return -1;
+        const text = String(source || '');
+        const start = skipPawnWhitespace(text, index);
+        return readPawnIdentifierAt(text, start);
     }
 
     function parseRationalPragmaPayload(payload, defineDecls = []) {
         const source = String(payload || '');
         const tagInfo = readIdentifier(source, 0);
         const tagName = tagInfo?.name || '';
-        let cursor = tagInfo?.end ?? skipSpaces(source, 0);
-        cursor = skipSpaces(source, cursor);
+        let cursor = tagInfo?.end ?? skipPawnWhitespace(source, 0);
+        cursor = skipPawnWhitespace(source, cursor);
 
         const parsed = {
             tagName,
@@ -67,7 +43,7 @@ function createRationalPolicySyntaxCore(deps = {}) {
         };
 
         if (source[cursor] !== '(') return parsed;
-        const closeIndex = findSimpleClosingParen(source, cursor);
+        const closeIndex = findBalancedGroupEnd(source, cursor, '(', ')');
         const expressionEnd = closeIndex >= 0 ? closeIndex : source.length;
         const expression = source.slice(cursor + 1, expressionEnd).trim();
         const evaluated = evaluatePawnNumericExpr(expression, defineDecls);

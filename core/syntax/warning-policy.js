@@ -1,3 +1,6 @@
+const { findBalancedGroupEnd } = require('./balanced');
+const { isPawnAssignmentCompareNeighbor } = require('./operators');
+
 function createWarningPolicySyntaxCore() {
     const COMPILER_SYMBOL_MAX_LENGTH = 63;
     const KNOWN_PRAGMA_NAMES = new Set([
@@ -29,12 +32,6 @@ function createWarningPolicySyntaxCore() {
         params,
         severity: 'warning'
     });
-
-    function isAssignmentCompareNeighbor(source, index) {
-        const prev = source[index - 1] || '';
-        const next = source[index + 1] || '';
-        return prev === '=' || prev === '!' || prev === '<' || prev === '>' || next === '=';
-    }
 
     function findTopLevelSimpleAssignmentOperator(source) {
         const text = String(source || '');
@@ -81,39 +78,8 @@ function createWarningPolicySyntaxCore() {
             }
             if (parenDepth || bracketDepth || braceDepth) continue;
             if (char !== '=') continue;
-            if (isAssignmentCompareNeighbor(text, index)) continue;
+            if (isPawnAssignmentCompareNeighbor(text, index)) continue;
             return index;
-        }
-
-        return -1;
-    }
-
-    function findBalancedParenEnd(source, openIndex) {
-        const text = String(source || '');
-        if (text[openIndex] !== '(') return -1;
-        let depth = 0;
-        let inString = false;
-        let stringChar = '';
-
-        for (let index = openIndex; index < text.length; index++) {
-            const char = text[index];
-            if (inString) {
-                if (char === stringChar) inString = false;
-                continue;
-            }
-            if (char === '"' || char === "'") {
-                inString = true;
-                stringChar = char;
-                continue;
-            }
-            if (char === '(') {
-                depth++;
-                continue;
-            }
-            if (char === ')') {
-                depth--;
-                if (depth === 0) return index;
-            }
         }
 
         return -1;
@@ -126,7 +92,7 @@ function createWarningPolicySyntaxCore() {
         while (index < text.length && /\s/.test(text[index])) index++;
         if (text[index] !== '(') return null;
         const openIndex = index;
-        const closeIndex = findBalancedParenEnd(text, openIndex);
+        const closeIndex = findBalancedGroupEnd(text, openIndex, '(', ')');
         if (closeIndex <= openIndex) return null;
         const condition = text.slice(openIndex + 1, closeIndex);
         const operatorIndex = findTopLevelSimpleAssignmentOperator(condition);

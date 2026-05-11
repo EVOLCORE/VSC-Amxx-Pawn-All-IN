@@ -14,6 +14,7 @@ function createHoverRuntimeFeature(deps) {
         HOVER_RELEVANT_CONFIG_KEYS,
         getHoverMode,
         getHoverContentMode,
+        hoverOutputChannel = null,
         getLiveValidationIssueMode,
         normalizeLiveValidationIssueMode,
         areLiveValidationWarningsEnabled,
@@ -85,6 +86,13 @@ function createHoverRuntimeFeature(deps) {
         isHoverAtActiveCursor,
         isMeaningfulCallPosition
     } = deps;
+    const logHover = message => {
+        try {
+            hoverOutputChannel?.appendLine?.(`[hover] ${message}`);
+        } catch {
+            // Hover logging must never affect hover rendering.
+        }
+    };
     const getHoverCacheSignature = () => [
         `mode:${getHoverMode() || ''}`,
         `content:${getHoverContentMode() || ''}`,
@@ -247,7 +255,8 @@ function createHoverRuntimeFeature(deps) {
         expandObjectLikeDefineTupleCallArgs,
         isMeaningfulCallCursorPosition,
         isMeaningfulCallPosition,
-        getHoverCacheSignature
+        getHoverCacheSignature,
+        logHover
     });
 
     const hoverFeature = createHoverFeature({

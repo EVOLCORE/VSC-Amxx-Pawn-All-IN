@@ -12,6 +12,8 @@ function buildCompletionNavigationFeatures(deps, support) {
         t,
         normalizeFsPath,
         isSameFilePath,
+        getSearchPaths,
+        resolveInclude,
         getPawnDocumentContext,
         getLookupTokenAtPosition,
         findHeaderFunctionByNameAtPosition,
@@ -20,10 +22,17 @@ function buildCompletionNavigationFeatures(deps, support) {
         hasIncludeFunctionTwin,
         findFirstNavigableDecl,
         splitTopLevel,
+        parseParamMeta,
+        isEscapedQuote,
         isFunctionLikeDecl,
         isFunctionLikeDefineDecl,
         BUILTIN_DECLS,
-        buildSig
+        buildSig,
+        classifyPawnStatementLine,
+        countStructuralBraces,
+        findFirstNonWhitespaceIndex,
+        findKeywordOccurrences,
+        skipInlineControlHeader
     } = sharedRuntime;
 
     const completionFeature = createCompletionFeature({
@@ -31,13 +40,21 @@ function buildCompletionNavigationFeatures(deps, support) {
         t,
         getPawnDocumentContext,
         splitTopLevel,
+        parseParamMeta,
+        isEscapedQuote,
         isFunctionLikeDecl,
         isFunctionLikeDefineDecl,
         isSameFilePath,
         BUILTIN_DECLS,
         buildSig,
         buildCommandLink: support.buildCommandLink,
+        classifyPawnStatementLine,
+        countStructuralBraces,
+        findFirstNonWhitespaceIndex,
+        findKeywordOccurrences,
+        skipInlineControlHeader,
         isCompletionEnabled: () => settingsService?.isCompletionEnabled?.() !== false,
+        getForwardCompletionBodyStyle: () => settingsService?.getCompletionForwardDeclarationStyle?.() || 'same-line',
         completionOutputChannel: liveValidationOutputChannel
     });
 
@@ -45,6 +62,8 @@ function buildCompletionNavigationFeatures(deps, support) {
         vscode,
         t,
         normalizeFsPath,
+        getSearchPaths,
+        resolveInclude,
         getPawnDocumentContext,
         getLookupTokenAtPosition,
         findHeaderFunctionByNameAtPosition,

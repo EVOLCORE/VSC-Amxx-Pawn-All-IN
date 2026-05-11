@@ -15,6 +15,7 @@ function createPreprocessorRuntime(deps) {
         getCachedCommentAnalysis,
         setCachedCommentAnalysis,
         buildCommentAnalysis,
+        getCtrlCharStateForContent,
         evaluatePawnNumericExpr,
         readCachedIncludePreprocessedState,
         writeCachedIncludePreprocessedState
@@ -38,6 +39,7 @@ function createPreprocessorRuntime(deps) {
         getCachedCommentAnalysis,
         setCachedCommentAnalysis,
         buildCommentAnalysis,
+        getCtrlCharStateForContent,
         readCachedIncludePreprocessedState,
         writeCachedIncludePreprocessedState
     });

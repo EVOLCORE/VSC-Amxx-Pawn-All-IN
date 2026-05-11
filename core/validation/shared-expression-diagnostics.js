@@ -1,3 +1,11 @@
+const { isPreprocessorDirectiveLine } = require('../syntax/preprocessor-lines');
+const { hasTrailingBackslashContinuation } = require('../syntax/continuation');
+const { readPawnAssignmentOperatorAt } = require('../syntax/operators');
+const {
+    startsWithControlKeyword,
+    startsWithDeclarationKeyword
+} = require('../syntax/keywords');
+
 function createSharedExpressionDiagnostics(deps) {
     const {
         vscode,
@@ -138,15 +146,7 @@ function createSharedExpressionDiagnostics(deps) {
 
 
     function getAssignmentOperatorText(lineText, operatorIndex) {
-        const source = String(lineText || '');
-        const start = Math.max(0, operatorIndex);
-        if (source.slice(start, start + 3) === '<<=' || source.slice(start, start + 3) === '>>=') {
-            return source.slice(start, start + 3);
-        }
-        if (/^[+\-*/%&|^]=/.test(source.slice(start, start + 2))) {
-            return source.slice(start, start + 2);
-        }
-        return source[start] === '=' ? '=' : '';
+        return readPawnAssignmentOperatorAt(lineText, operatorIndex);
     }
 
 
@@ -154,7 +154,7 @@ function createSharedExpressionDiagnostics(deps) {
     function isStandaloneMutationTargetCandidate(source) {
         const text = String(source || '').trim();
         if (!text) return false;
-        if (/^(?:return|new|static|const|stock|public|private|native|forward|enum|if|for|while|switch|case|default|else|do)\b/.test(text)) {
+        if (startsWithDeclarationKeyword(text) || startsWithControlKeyword(text)) {
             return false;
         }
         if (/[=,;]/.test(text)) return false;
@@ -202,7 +202,7 @@ function createSharedExpressionDiagnostics(deps) {
 
         for (let probe = lineNumber - 1; probe >= 0; probe--) {
             const candidate = String(rawLines[probe] || '');
-            if (candidate.trimEnd().endsWith('\\')) return true;
+            if (hasTrailingBackslashContinuation(candidate)) return true;
             if (candidate.trim()) return false;
         }
 
@@ -212,7 +212,7 @@ function createSharedExpressionDiagnostics(deps) {
 
 
     function isPreprocessorDirectiveOrContinuationLine(ctx, lineNumber, strippedLineText = '') {
-        return String(strippedLineText || '').trim().startsWith('#') ||
+        return isPreprocessorDirectiveLine(strippedLineText) ||
             isPreprocessorContinuationLine(ctx, lineNumber);
     }
 
@@ -489,26 +489,7 @@ function createSharedExpressionDiagnostics(deps) {
 
 
     function readAssignmentOperatorForExpressionBoundary(source, index) {
-        const three = source.slice(index, index + 3);
-        if (three === '<<=' || three === '>>=') return three;
-        const two = source.slice(index, index + 2);
-        if (
-            two === '+=' ||
-            two === '-=' ||
-            two === '*=' ||
-            two === '/=' ||
-            two === '%=' ||
-            two === '&=' ||
-            two === '|=' ||
-            two === '^='
-        ) {
-            return two;
-        }
-        if (source[index] !== '=') return '';
-        const previous = source[index - 1] || '';
-        const next = source[index + 1] || '';
-        if (previous === '<' || previous === '>' || previous === '!' || previous === '=' || next === '=') return '';
-        return '=';
+        return readPawnAssignmentOperatorAt(source, index);
     }
 
 

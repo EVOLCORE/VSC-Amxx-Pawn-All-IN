@@ -1,3 +1,5 @@
+const { isAnyPawnTagName } = require('../syntax/tags');
+
 function createTypeCompatCore(deps) {
     const {
         explainArrayShapeIssue,
@@ -184,8 +186,8 @@ function createTypeCompatCore(deps) {
         const expectedDims = expectedMeta.expectedDims || '';
         const actualDims = actualMeta.expectedDims || '';
 
-        const isAnyTag = String(expectedTag || '').toLowerCase() === 'any';
-        const isActualAnyTag = String(actualTag || '').toLowerCase() === 'any';
+        const isAnyTag = isAnyPawnTagName(expectedTag);
+        const isActualAnyTag = isAnyPawnTagName(actualTag);
 
         if (!expectedTag || expectedTag === '_' || isAnyTag) {
             if (expectedDims) {

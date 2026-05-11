@@ -1,11 +1,37 @@
+const { createUtilityCore } = require('../utils');
+const { normalizePathKey } = require('../utils/path');
 const { createMacroExpansionSyntaxCore } = require('../syntax/macro-expander');
+const { createVirtualExpandedLineContextCore } = require('../syntax/virtual-expanded-line-context');
+const { findBalancedGroupEnd } = require('../syntax/balanced');
+const { readPawnAssignmentOperatorAt } = require('../syntax/operators');
+const { splitPawnLines } = require('../syntax/lines');
+const {
+    isPawnIdentifierStartCode: defaultIsIdentifierStartCode,
+    isPawnIdentifierContinueCode: defaultIsIdentifierContinueCode
+} = require('../syntax/identifiers');
+const {
+    findNextNonWhitespaceIndex,
+    findPreviousNonWhitespaceIndex,
+    isPawnWhitespaceChar
+} = require('../syntax/whitespace');
+
+const {
+    isPawnIdentifierStartChar: defaultIsIdentifierStartChar,
+    isPawnIdentifierContinueChar: defaultIsIdentifierContinueChar
+} = createUtilityCore();
 
 function createSymbolUsageDiagnostics(deps = {}) {
     const {
         getSymbolNeverUsedIssue,
         getSymbolAssignedValueNeverUsedIssue,
         isEscapedQuote,
-        splitTopLevel
+        splitTopLevel,
+        getPreferredFunctionHoverMatch,
+        hasIncludeFunctionTwin,
+        isIdentifierStartChar = defaultIsIdentifierStartChar,
+        isIdentifierContinueChar = defaultIsIdentifierContinueChar,
+        isIdentifierStartCode = defaultIsIdentifierStartCode,
+        isIdentifierContinueCode = defaultIsIdentifierContinueCode
     } = deps;
     const macroExpansionCore = createMacroExpansionSyntaxCore({
         isEscapedQuote,
@@ -13,91 +39,16 @@ function createSymbolUsageDiagnostics(deps = {}) {
         isIdentifierContinueChar,
         splitTopLevel
     });
+    const virtualExpandedLineContextCore = createVirtualExpandedLineContextCore({
+        macroExpansionCore
+    });
 
-    function isIdentifierStartChar(char) {
-        if (!char) return false;
-        const code = char.charCodeAt(0);
-        return isIdentifierStartCode(code);
-    }
-
-    function isIdentifierStartCode(code) {
-        return (
-            (code >= 65 && code <= 90) ||
-            (code >= 97 && code <= 122) ||
-            code === 95 ||
-            code === 64
-        );
-    }
-
-    function isIdentifierContinueChar(char) {
-        if (!char) return false;
-        const code = char.charCodeAt(0);
-        return isIdentifierContinueCode(code);
-    }
-
-    function isIdentifierContinueCode(code) {
-        return (
-            (code >= 65 && code <= 90) ||
-            (code >= 97 && code <= 122) ||
-            (code >= 48 && code <= 57) ||
-            code === 95 ||
-            code === 64
-        );
-    }
-
-    function isWhitespaceChar(char) {
-        if (!char) return false;
-        const code = char.charCodeAt(0);
-        return code === 32 || code === 9 || code === 10 || code === 13 || code === 11 || code === 12;
-    }
-    const normalizePath = value => String(value || '').replace(/\\/g, '/').toLowerCase();
-
-    function findNextNonWhitespaceIndex(source, index) {
-        for (let cursor = Math.max(0, index); cursor < source.length; cursor++) {
-            if (!isWhitespaceChar(source[cursor])) return cursor;
-        }
-        return -1;
-    }
-
-    function findPreviousNonWhitespaceIndex(source, index) {
-        for (let cursor = Math.min(source.length - 1, index); cursor >= 0; cursor--) {
-            if (!isWhitespaceChar(source[cursor])) return cursor;
-        }
-        return -1;
-    }
-
-    function findMatchingBracket(source, openIndex) {
-        if (source[openIndex] !== '[') return -1;
-        let depth = 0;
-        let inString = false;
-        let stringChar = '';
-        for (let index = openIndex; index < source.length; index++) {
-            const char = source[index];
-            if (inString) {
-                if (char === stringChar) inString = false;
-                continue;
-            }
-            if (char === '"' || char === "'") {
-                inString = true;
-                stringChar = char;
-                continue;
-            }
-            if (char === '[') {
-                depth++;
-                continue;
-            }
-            if (char === ']') {
-                depth--;
-                if (depth === 0) return index;
-            }
-        }
-        return -1;
-    }
+    const normalizePath = normalizePathKey;
 
     function skipIndexedAccesses(source, index) {
         let cursor = findNextNonWhitespaceIndex(source, index);
         while (cursor >= 0 && source[cursor] === '[') {
-            const closeIndex = findMatchingBracket(source, cursor);
+            const closeIndex = findBalancedGroupEnd(source, cursor, '[', ']');
             if (closeIndex < 0) return cursor;
             cursor = findNextNonWhitespaceIndex(source, closeIndex + 1);
         }
@@ -105,19 +56,7 @@ function createSymbolUsageDiagnostics(deps = {}) {
     }
 
     function getAssignmentOperatorAt(source, index) {
-        const char = source[index] || '';
-        const next = source[index + 1] || '';
-        const previous = source[index - 1] || '';
-        if (char === '=' && previous !== '=' && previous !== '!' && previous !== '<' && previous !== '>' && next !== '=') {
-            return '=';
-        }
-        if ((char === '+' || char === '-' || char === '*' || char === '/' || char === '%' || char === '&' || char === '|' || char === '^') && next === '=') {
-            return `${char}=`;
-        }
-        if ((char === '<' || char === '>') && next === source[index] && source[index + 2] === '=') {
-            return `${char}${next}=`;
-        }
-        return '';
+        return readPawnAssignmentOperatorAt(source, index);
     }
 
     function hasUnmatchedTernaryQuestionBefore(source, colonIndex, occurrenceStart) {
@@ -285,6 +224,54 @@ function createSymbolUsageDiagnostics(deps = {}) {
         return !declPath || !documentPath || declPath === documentPath;
     }
 
+    function isFunctionImplementationDecl(functionDecl) {
+        if (!functionDecl?.name) return false;
+        const functionType = String(functionDecl.type || '');
+        if (functionType === 'native' || functionType === 'forward' || functionType === 'define') {
+            return false;
+        }
+        const modifiers = new Set(functionDecl.modifiers || []);
+        return !modifiers.has('native') && !modifiers.has('forward');
+    }
+
+    function findForwardParentDecl(functionDecl, rootCtx) {
+        if (!isFunctionImplementationDecl(functionDecl)) return null;
+        const name = functionDecl.name;
+        const functions = rootCtx?.parsedDecls?.functions || [];
+        const localForward = functions.find(candidate =>
+            candidate !== functionDecl &&
+            candidate?.name === name &&
+            candidate.type === 'forward'
+        );
+        if (localForward) return localForward;
+
+        const incDecls = rootCtx?.incDecls || [];
+        const findIncludeForward = candidateName => {
+            if (!candidateName || !hasIncludeFunctionTwin?.(candidateName, incDecls, rootCtx?.lookup)) {
+                return null;
+            }
+            const includeDecl = getPreferredFunctionHoverMatch?.(
+                candidateName,
+                functions,
+                incDecls,
+                { preferInclude: true },
+                rootCtx?.lookup
+            )?.data || null;
+            if (includeDecl?.type === 'forward') return includeDecl;
+            return incDecls.find(candidate =>
+                candidate?.name === candidateName &&
+                candidate.type === 'forward'
+            ) || null;
+        };
+
+        const exactIncludeForward = findIncludeForward(name);
+        if (exactIncludeForward) return exactIncludeForward;
+        if (!String(name || '').startsWith('@') || String(name || '').length <= 1) {
+            return null;
+        }
+        return findIncludeForward(String(name).slice(1));
+    }
+
     function collectPragmaUnusedNames(lines) {
         const names = new Set();
         for (const line of lines || []) {
@@ -313,35 +300,13 @@ function createSymbolUsageDiagnostics(deps = {}) {
         };
         const nextNonWhitespace = start => {
             for (let index = start; index < text.length; index++) {
-                if (!isWhitespaceChar(text[index])) return index;
+                if (!isPawnWhitespaceChar(text[index])) return index;
             }
             return -1;
         };
         const skipBalanced = (start, openChar, closeChar) => {
-            let depth = 0;
-            let nestedString = false;
-            let nestedStringChar = '';
-            for (let index = start; index < text.length; index++) {
-                const char = text[index];
-                if (nestedString) {
-                    if (char === nestedStringChar) nestedString = false;
-                    continue;
-                }
-                if (char === '"' || char === "'") {
-                    nestedString = true;
-                    nestedStringChar = char;
-                    continue;
-                }
-                if (char === openChar) {
-                    depth++;
-                    continue;
-                }
-                if (char === closeChar) {
-                    depth--;
-                    if (depth === 0) return index + 1;
-                }
-            }
-            return text.length;
+            const close = findBalancedGroupEnd(text, start, openChar, closeChar, { isEscapedQuote });
+            return close >= 0 ? close + 1 : text.length;
         };
         const skipInitializer = start => {
             let parenDepth = 0;
@@ -461,19 +426,18 @@ function createSymbolUsageDiagnostics(deps = {}) {
         return names;
     }
 
-    function collectFunctionLikeDefineDecls(rootCtx) {
-        const defineDecls = rootCtx?.preprocessedState?.defineDecls || [];
-        if (!Array.isArray(defineDecls) || !defineDecls.length) return [];
-        return defineDecls.filter(decl =>
-            decl?.type === 'define' &&
-            decl.macroStyle === 'paren' &&
-            decl.name
-        );
-    }
-
     function getFunctionLikeDefineDeclMap(rootCtx) {
         const map = new Map();
-        for (const decl of collectFunctionLikeDefineDecls(rootCtx)) {
+        const defineDecls = rootCtx?.preprocessedState?.defineDecls || [];
+        if (!Array.isArray(defineDecls) || !defineDecls.length) return map;
+        for (const decl of defineDecls) {
+            if (
+                decl?.type !== 'define' ||
+                decl.macroStyle !== 'paren' ||
+                !decl.name
+            ) {
+                continue;
+            }
             map.set(decl.name, decl);
         }
         return map;
@@ -481,8 +445,10 @@ function createSymbolUsageDiagnostics(deps = {}) {
 
     function collectSymbolUsageIssues(rootCtx, options = {}) {
         const parsedDecls = rootCtx?.parsedDecls || {};
-        const rawLines = rootCtx?.rawLines || String(rootCtx?.text || '').split(/\r?\n/);
-        const preprocessedLines = String(rootCtx?.preprocessedState?.content || '').split(/\r?\n/);
+        const rawLines = rootCtx?.rawLines || splitPawnLines(rootCtx?.text || '');
+        const preprocessedLines = Array.isArray(rootCtx?.preprocessedState?.rawLines)
+            ? rootCtx.preprocessedState.rawLines
+            : splitPawnLines(rootCtx?.preprocessedState?.content || '');
         const scanLines = preprocessedLines.length === rawLines.length
             ? preprocessedLines
             : rawLines;
@@ -494,6 +460,19 @@ function createSymbolUsageDiagnostics(deps = {}) {
             ? rootCtx.preprocessedState.defineDecls
             : [];
         const functionLikeDefinesByName = getFunctionLikeDefineDeclMap(rootCtx);
+        const callbackSignatureMode = String(options.callbackSignatureMode || 'strict');
+        const compilerLikeForwardCallbackCache = new WeakMap();
+        const isCompilerLikeForwardCallbackFunction = functionDecl => {
+            if (callbackSignatureMode !== 'compiler-like' || !functionDecl) {
+                return false;
+            }
+            if (compilerLikeForwardCallbackCache.has(functionDecl)) {
+                return compilerLikeForwardCallbackCache.get(functionDecl);
+            }
+            const value = !!findForwardParentDecl(functionDecl, rootCtx);
+            compilerLikeForwardCallbackCache.set(functionDecl, value);
+            return value;
+        };
         const variableEntriesByName = new Map();
         const entries = [];
         const addEntry = entry => {
@@ -566,10 +545,14 @@ function createSymbolUsageDiagnostics(deps = {}) {
                     functionDecl.name === 'main' ||
                     functionDecl.name === 'entry'
                 ));
+                const isCompilerLikeCallbackArg = !!(
+                    decl.isArg &&
+                    isCompilerLikeForwardCallbackFunction(functionDecl)
+                );
                 const isReferenceArg = !!(decl.isArg && (modifiers.has('&') || String(decl.dims || '').trim()));
                 const isPublicVariable = modifiers.has('public');
                 addEntry(createEntry(decl, 'variable', {
-                    read: isPublicArg || isReferenceArg || isPublicVariable,
+                    read: isPublicArg || isCompilerLikeCallbackArg || isReferenceArg || isPublicVariable,
                     written: !!String(decl.value || '').trim() || isPublicVariable,
                     public: isPublicVariable,
                     stock: modifiers.has('stock') || isStockFunction,
@@ -716,23 +699,15 @@ function createSymbolUsageDiagnostics(deps = {}) {
             let expansionSource = '';
             if (closeIndex >= 0) {
                 const invocation = line.slice(start, closeIndex + 1);
-                const expanded = macroExpansionCore.expandMacros(invocation, defineDecls, {
+                const virtualLine = virtualExpandedLineContextCore.getVirtualExpandedLineContext(invocation, defineDecls, {
                     escapeChar,
+                    expandActualArgs: false,
+                    fallbackToFunctionLikeCall: true,
                     maxOutputLength: 8192
                 });
-                if (expanded.complete && expanded.changed) {
-                    expansionSource = expanded.text;
-                } else {
-                    expansionSource = macroExpansionCore.expandFunctionLikeDefineCall(
-                        decl,
-                        line.slice(openIndex + 1, closeIndex),
-                        {
-                            escapeChar,
-                            defineDecls,
-                            expandActualArgs: false
-                        }
-                    );
-                }
+                expansionSource = virtualLine.hasExpansion
+                    ? virtualLine.expandedText
+                    : '';
             } else {
                 expansionSource = String(decl.value || '');
             }

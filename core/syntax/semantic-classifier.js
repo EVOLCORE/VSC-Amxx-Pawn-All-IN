@@ -1,3 +1,7 @@
+const { readPawnIdentifierAt } = require('./identifiers');
+const { findBalancedGroupEnd } = require('./balanced');
+const { isPawnWhitespaceChar } = require('./whitespace');
+
 function createSemanticSyntaxCore(deps = {}) {
     const {
         isEscapedQuote,
@@ -47,8 +51,7 @@ function createSemanticSyntaxCore(deps = {}) {
     const PARSED_EXPRESSION_CACHE_MAX_CHARS = 192;
     const parsedExpressionCache = new Map();
 
-    const isWhitespaceChar = char =>
-        char === ' ' || char === '\t' || char === '\r' || char === '\n' || char === '\f' || char === '\v';
+    const isWhitespaceChar = isPawnWhitespaceChar;
     const isDigitChar = char => char >= '0' && char <= '9';
     const isHexDigitChar = char =>
         (char >= '0' && char <= '9') ||
@@ -59,15 +62,10 @@ function createSemanticSyntaxCore(deps = {}) {
     const isQuoteEscaped = (source, index, escapeChar) => isEscapedQuote(source, index, escapeChar);
 
     function readIdentifierAt(source, index) {
-        if (!isIdentifierStart(source[index])) return null;
-        let end = index + 1;
-        while (end < source.length && isIdentifierContinue(source[end])) end++;
-        return {
-            type: 'identifier',
-            value: source.slice(index, end),
-            start: index,
-            end
-        };
+        return readPawnIdentifierAt(source, index, {
+            isIdentifierStartChar: isIdentifierStart,
+            isIdentifierContinueChar: isIdentifierContinue
+        });
     }
 
     function readNumberAt(source, index) {
@@ -725,33 +723,10 @@ function createSemanticSyntaxCore(deps = {}) {
         const open = text[openIndex];
         const close = open === '[' ? ']' : open === '{' ? '}' : '';
         if (!close) return -1;
-        const escapeChar = options.escapeChar || '';
-        let depth = 0;
-        let inString = false;
-        let stringChar = '';
-        for (let index = openIndex; index < text.length; index++) {
-            const char = text[index];
-            if (inString) {
-                if (char === stringChar && !isQuoteEscaped(text, index, escapeChar)) {
-                    inString = false;
-                }
-                continue;
-            }
-            if (char === '"' || char === '\'') {
-                inString = true;
-                stringChar = char;
-                continue;
-            }
-            if (char === open) {
-                depth++;
-                continue;
-            }
-            if (char === close) {
-                depth--;
-                if (depth === 0) return index;
-            }
-        }
-        return -1;
+        return findBalancedGroupEnd(text, openIndex, open, close, {
+            escapeChar: options.escapeChar || '',
+            isEscapedQuote: isQuoteEscaped
+        });
     }
 
     function parseBalancedIndexedAccessExpression(source, options = {}) {

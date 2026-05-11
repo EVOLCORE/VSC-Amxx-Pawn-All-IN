@@ -3,6 +3,8 @@ const path = require('path');
 // Shared document-context runtime. This keeps the heavy snapshot/context builder
 // separate from cache-key helpers and from feature-specific code such as hover or
 // live validation.
+const { splitPawnLines } = require('../syntax/lines');
+
 function createDocumentContextCore(deps) {
     const {
         vscode,
@@ -17,6 +19,7 @@ function createDocumentContextCore(deps) {
         getActiveDecls,
         createCtrlCharResolver,
         parseFileDecls,
+        filterEnumEvalOuterDecls,
         buildDocumentDeclLookup,
         getDocumentContextCacheKey,
         getSharedDocumentContextCacheKey,
@@ -30,7 +33,8 @@ function createDocumentContextCore(deps) {
         buildDependencyStampMap,
         areDependencyStampsFresh,
         documentWarmupTimers,
-        touchWarmedIncludeDocument
+        touchWarmedIncludeDocument,
+        debugOutputChannel = null
     } = deps;
     const safeDocumentContextVersionHistory = documentContextVersionHistory || new Map();
     const safeDocumentEditImpactHistory = documentEditImpactHistory || new Map();
@@ -40,6 +44,13 @@ function createDocumentContextCore(deps) {
             : (() => {});
     const documentIdentityByObject = new WeakMap();
     let nextDocumentIdentity = 1;
+    const logContext = message => {
+        try {
+            debugOutputChannel?.appendLine?.(`[context] ${message}`);
+        } catch {
+            // Debug logging must never affect context building.
+        }
+    };
 
     function getDocumentIdentity(document) {
         if (!document || (typeof document !== 'object' && typeof document !== 'function')) return '';
@@ -83,7 +94,7 @@ function createDocumentContextCore(deps) {
             return null;
         }
         const previousContent = String(previousSharedContext.preprocessedState.content || '');
-        const previousLines = previousContent.split(/\r?\n/);
+        const previousLines = splitPawnLines(previousContent);
         if (!previousLines.length || previousLines.length !== rawLines.length) {
             return null;
         }
@@ -167,9 +178,14 @@ function createDocumentContextCore(deps) {
             pruneDocumentContextCache(fp);
         };
         if (!sharedContext) {
+            const sharedStartedAt = Date.now();
             const fn = path.basename(fp);
             const text = document.getText();
             const searchPaths = getSearchPaths(fp);
+            logContext(
+                `shared-start file=${fp} version=${document.version} includeDecls=${includeDeclsEnabled ? 1 : 0} ` +
+                `chars=${text.length}`
+            );
             const textSnapshot = getFileSnapshot(fp, text);
             const ctrlCharState = textSnapshot.ctrlCharState;
             const editImpact = getDocumentEditImpactForVersion(fp, document.version);
@@ -190,6 +206,8 @@ function createDocumentContextCore(deps) {
                     searchPaths,
                     rawLines: textSnapshot.rawLines,
                     strippedLines: textSnapshot.strippedLines,
+                    lineCtrlChars: ctrlCharState.lineCtrlChars || [],
+                    finalCtrlChar: ctrlCharState.finalCtrlChar,
                     directiveCandidateLines: ctrlCharState.directiveCandidateLines || null,
                     captureIncludePreprocessedStates: includeDeclsEnabled,
                     returnState: true
@@ -221,11 +239,17 @@ function createDocumentContextCore(deps) {
                     dependencyStamps,
                     contextByParsedDecls: new WeakMap(),
                     sequentialContextState: null,
+                    includeMetadata: null,
                     semanticSession: createSemanticSessionState()
                 };
             }, fp, ctrlCharState.finalCtrlChar);
             sharedDocumentContextCache.set(sharedCacheKey, sharedContext);
             safeTrackVersionedDocumentCacheVersion(fp, document.version);
+            logContext(
+                `shared-done file=${fp} version=${document.version} includeDecls=${includeDeclsEnabled ? 1 : 0} ` +
+                `lines=${textSnapshot.rawLines.length} includes=${sharedContext.includeEntries.length} ` +
+                `incDecls=${sharedContext.incDecls.length} ms=${Date.now() - sharedStartedAt}`
+            );
         }
         touchAndPruneContextFile();
         return sharedContext;
@@ -324,9 +348,10 @@ function createDocumentContextCore(deps) {
         return builtContext;
     }
 
-    function parseContextDeclsFromSharedContext(sharedContext, cursorLine, options = {}) {
+    function buildSharedIncludeMetadata(sharedContext) {
         const includeRootLineByPath = new Map();
         let currentRootIncludeLine = -1;
+        let maxRootIncludeLine = -1;
         for (const entry of sharedContext.includeEntries || []) {
             if (!entry?.filePath) continue;
             if (Number(entry.depth || 0) === 0 || currentRootIncludeLine < 0) {
@@ -339,6 +364,9 @@ function createDocumentContextCore(deps) {
             if (previousLine == null || includeLine < previousLine) {
                 includeRootLineByPath.set(key, includeLine);
             }
+            if (includeLine > maxRootIncludeLine) {
+                maxRootIncludeLine = includeLine;
+            }
         }
         const includeDeclsCacheKey = sharedContext.incDecls?.length
             ? `includes:${sharedContext.incDecls.length}:` +
@@ -347,15 +375,87 @@ function createDocumentContextCore(deps) {
                     .filter(Boolean)
                     .join('|')
             : '';
+        const enumEvalOuterDecls = typeof filterEnumEvalOuterDecls === 'function'
+            ? filterEnumEvalOuterDecls(sharedContext.incDecls)
+            : sharedContext.incDecls;
+        return {
+            includeRootLineByPath,
+            maxRootIncludeLine,
+            includeDeclsCacheKey,
+            enumEvalOuterDecls,
+            includeLineByDeclFilePath: new Map(),
+            outerDeclsByLine: new Map(),
+            enumEvalOuterDeclsByLine: new Map()
+        };
+    }
+
+    function getSharedIncludeMetadata(sharedContext) {
+        if (!sharedContext.includeMetadata) {
+            sharedContext.includeMetadata = buildSharedIncludeMetadata(sharedContext);
+        }
+        return sharedContext.includeMetadata;
+    }
+
+    function parseContextDeclsFromSharedContext(sharedContext, cursorLine, options = {}) {
+        const includeMetadata = getSharedIncludeMetadata(sharedContext);
+        const {
+            includeRootLineByPath,
+            maxRootIncludeLine,
+            includeDeclsCacheKey,
+            enumEvalOuterDecls,
+            includeLineByDeclFilePath,
+            outerDeclsByLine,
+            enumEvalOuterDeclsByLine
+        } = includeMetadata;
+        const getIncludeLineForDecl = decl => {
+            const filePath = String(decl?.filePath || '');
+            if (includeLineByDeclFilePath.has(filePath)) {
+                return includeLineByDeclFilePath.get(filePath);
+            }
+            const includeLine = includeRootLineByPath.get(normalizeFsPath(filePath));
+            const normalizedIncludeLine = includeLine == null ? null : includeLine;
+            includeLineByDeclFilePath.set(filePath, normalizedIncludeLine);
+            return normalizedIncludeLine;
+        };
         const getOuterDeclsForLine = lineNumber => {
             if (!sharedContext.incDecls?.length || !includeRootLineByPath.size) {
                 return sharedContext.incDecls;
             }
             const maxLine = Number.isInteger(lineNumber) ? lineNumber : Number.MAX_SAFE_INTEGER;
-            return sharedContext.incDecls.filter(decl => {
-                const includeLine = includeRootLineByPath.get(normalizeFsPath(decl?.filePath || ''));
-                return includeLine == null || includeLine <= maxLine;
-            });
+            if (maxRootIncludeLine >= 0 && maxLine >= maxRootIncludeLine) {
+                return sharedContext.incDecls;
+            }
+            const cached = outerDeclsByLine.get(maxLine);
+            if (cached) return cached;
+            const filtered = [];
+            for (const decl of sharedContext.incDecls) {
+                const includeLine = getIncludeLineForDecl(decl);
+                if (includeLine == null || includeLine <= maxLine) {
+                    filtered.push(decl);
+                }
+            }
+            outerDeclsByLine.set(maxLine, filtered);
+            return filtered;
+        };
+        const getEnumEvalOuterDeclsForLine = lineNumber => {
+            if (!Array.isArray(enumEvalOuterDecls) || !enumEvalOuterDecls.length || !includeRootLineByPath.size) {
+                return enumEvalOuterDecls;
+            }
+            const maxLine = Number.isInteger(lineNumber) ? lineNumber : Number.MAX_SAFE_INTEGER;
+            if (maxRootIncludeLine >= 0 && maxLine >= maxRootIncludeLine) {
+                return enumEvalOuterDecls;
+            }
+            const cached = enumEvalOuterDeclsByLine.get(maxLine);
+            if (cached) return cached;
+            const filtered = [];
+            for (const decl of enumEvalOuterDecls) {
+                const includeLine = getIncludeLineForDecl(decl);
+                if (includeLine == null || includeLine <= maxLine) {
+                    filtered.push(decl);
+                }
+            }
+            enumEvalOuterDeclsByLine.set(maxLine, filtered);
+            return filtered;
         };
         return withCtrlCharForContent(sharedContext.text, () => parseFileDecls(
             sharedContext.text,
@@ -367,7 +467,9 @@ function createDocumentContextCore(deps) {
                 cursorCache: options.cursorCache !== false,
                 preparseLocals: options.preparseLocals === true,
                 outerDecls: sharedContext.incDecls,
+                enumEvalOuterDecls,
                 getOuterDeclsForLine,
+                getEnumEvalOuterDeclsForLine,
                 outerDeclsCacheKey: includeDeclsCacheKey
             }
         ), sharedContext.fp, sharedContext.finalCtrlChar);
@@ -403,6 +505,11 @@ function createDocumentContextCore(deps) {
         const sharedContext = getOrCreateSharedContext(document, includeDeclsEnabled);
 
         const previousSequentialContextState = sharedContext.sequentialContextState;
+        const cursorStartedAt = Date.now();
+        logContext(
+            `cursor-start file=${fp} version=${document.version} line=${cursorLine === undefined ? 'all' : cursorLine} ` +
+            `includeDecls=${includeDeclsEnabled ? 1 : 0} preparseLocals=${preparseLocals ? 1 : 0}`
+        );
         const parsedDecls = parseContextDeclsFromSharedContext(sharedContext, cursorLine, {
             cursorCache: useCursorCache,
             preparseLocals
@@ -429,6 +536,12 @@ function createDocumentContextCore(deps) {
             touchDocumentContextCacheFile(fp);
             pruneDocumentContextCache(fp);
         }
+        logContext(
+            `cursor-done file=${fp} version=${document.version} line=${cursorLine === undefined ? 'all' : cursorLine} ` +
+            `globals=${context.parsedDecls.globals.length} locals=${context.parsedDecls.locals.length} ` +
+            `funcs=${context.parsedDecls.functions.length} args=${context.parsedDecls.funcArgs.length} ` +
+            `incDecls=${context.incDecls.length} ms=${Date.now() - cursorStartedAt}`
+        );
         return context;
     }
 
@@ -477,6 +590,8 @@ function createDocumentContextCore(deps) {
         const maxFiles = getIncludeDocumentWarmupFileLimit();
         if (maxFiles === 0) return;
         const documentFilePath = normalizeFsPath(document.fileName);
+        const startedAt = Date.now();
+        logContext(`warm-includes-start file=${document.fileName || ''} limit=${maxFiles}`);
 
         let ctx = null;
         try {
@@ -502,13 +617,24 @@ function createDocumentContextCore(deps) {
 
         const candidates = directCandidates.concat(nestedCandidates);
 
+        let opened = 0;
+        let skipped = 0;
         for (const filePath of candidates) {
-            if (touchWarmedIncludeDocument(filePath)) continue;
+            if (touchWarmedIncludeDocument(filePath)) {
+                skipped++;
+                continue;
+            }
+            opened++;
             vscode.workspace.openTextDocument(vscode.Uri.file(filePath)).then(
                 () => {},
                 () => {}
             );
         }
+        logContext(
+            `warm-includes-done file=${document.fileName || ''} candidates=${candidates.length} ` +
+            `direct=${directCandidates.length} nested=${nestedCandidates.length} opened=${opened} skipped=${skipped} ` +
+            `ms=${Date.now() - startedAt}`
+        );
     }
 
     function scheduleWarmDocumentContext(document, delayMs = 120) {

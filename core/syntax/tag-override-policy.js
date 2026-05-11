@@ -1,3 +1,5 @@
+const { skipPawnWhitespace } = require('./whitespace');
+
 function createTagOverridePolicySyntaxCore(deps = {}) {
     const {
         isIdentifierStartChar,
@@ -65,14 +67,8 @@ function createTagOverridePolicySyntaxCore(deps = {}) {
             (index + keyword.length >= source.length || !isIdentifierContinueChar(source[index + keyword.length] || ''));
     }
 
-    function skipWhitespace(source, index) {
-        let cursor = Math.max(0, index | 0);
-        while (cursor < source.length && /\s/.test(source[cursor] || '')) cursor++;
-        return cursor;
-    }
-
     function scanCaseExpression(source, caseStart, knownTags, issues) {
-        let index = skipWhitespace(source, caseStart + 4);
+        let index = skipPawnWhitespace(source, caseStart + 4);
         const expressionStart = index;
         const end = source.length;
         const parenAllowsTagStack = [];

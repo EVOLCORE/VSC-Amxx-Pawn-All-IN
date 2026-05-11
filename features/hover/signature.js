@@ -1,6 +1,9 @@
 // Signature highlighting/render helpers are hover-specific presentation logic.
 // They belong with the hover feature rather than with generic validation/core
 // code, even though they reuse shared type-compatibility analysis.
+const { findBalancedGroupEnd } = require('../../core/syntax/balanced');
+const { isPawnIdentifierBoundaryChar } = require('../../core/syntax/identifiers');
+
 function createHoverSignatureFeature(deps) {
     const {
         t,
@@ -129,6 +132,55 @@ function createHoverSignatureFeature(deps) {
         return outputLines.join('\n');
     }
 
+    const isIdentifierBoundaryChar = isPawnIdentifierBoundaryChar;
+
+    function findMatchingParenInDocs(source, openIndex) {
+        return findBalancedGroupEnd(source, openIndex, '(', ')');
+    }
+
+    function getDocumentedSignatureParams(data, expectedCount) {
+        if (!isFunctionLikeDefineDecl(data)) return null;
+        const docs = String(data?.docs || '');
+        if (!docs || docs.indexOf('(') < 0) return null;
+
+        const names = [];
+        for (const name of [data.hoverDisplayName, data.name]) {
+            const text = String(name || '').trim();
+            if (text && !names.includes(text)) names.push(text);
+        }
+        for (const name of names) {
+            let cursor = 0;
+            while (cursor < docs.length) {
+                const nameIndex = docs.indexOf(name, cursor);
+                if (nameIndex < 0) break;
+                cursor = nameIndex + name.length;
+                if (
+                    !isIdentifierBoundaryChar(docs[nameIndex - 1] || '') ||
+                    !isIdentifierBoundaryChar(docs[nameIndex + name.length] || '')
+                ) {
+                    continue;
+                }
+
+                let openIndex = nameIndex + name.length;
+                while (openIndex < docs.length && /\s/.test(docs[openIndex])) openIndex++;
+                if (docs[openIndex] !== '(') continue;
+
+                const closeIndex = findMatchingParenInDocs(docs, openIndex);
+                if (closeIndex <= openIndex) continue;
+
+                const pieces = splitTopLevel(docs.slice(openIndex + 1, closeIndex))
+                    .map(part => part.trim())
+                    .filter(Boolean);
+                if (!pieces.length) continue;
+                if (Number.isInteger(expectedCount) && expectedCount > 0 && pieces.length !== expectedCount) {
+                    continue;
+                }
+                return pieces;
+            }
+        }
+        return null;
+    }
+
     function buildColoredSignatureLine(data, currentArgIndex, callSiteArgs, allDecls, options = {}) {
         const {
             validateArgs = true,
@@ -144,6 +196,7 @@ function createHoverSignatureFeature(deps) {
         const paramsSource = data.args || '';
         const params = splitTopLevel(paramsSource);
         const isMacroDefine = isFunctionLikeDefineDecl(data);
+        const displayParams = getDocumentedSignatureParams(data, params.length) || params;
         const macroCallSiteArgs = isMacroDefine && params.length === 1
             ? [String((callSiteArgs || []).join(', ')).trim()]
             : callSiteArgs;
@@ -152,7 +205,7 @@ function createHoverSignatureFeature(deps) {
             : currentArgIndex;
         const displayName = data.hoverDisplayName || data.name;
         const header = `${pre}${tag}${displayName}(`;
-        const renderedParams = params.map(p => p.trim());
+        const renderedParams = displayParams.map(p => p.trim());
         const spans = [];
         const issuePlan = validateArgs
             ? collectCallArgumentIssues(paramsSource, macroCallSiteArgs, allDecls, analysisCache, {
@@ -191,7 +244,7 @@ function createHoverSignatureFeature(deps) {
             }
         }
         const paramStates = params.map((p, idx) => {
-            const pStr = p.trim();
+            const pStr = renderedParams[idx] || p.trim();
             const isCurrent = idx === layout.currentParamIndex ||
                 (isVariadic && idx === variadicIndex && layout.currentParamIndex === variadicIndex);
             const paramIssues = issuesByParamIndex.get(idx) || [];

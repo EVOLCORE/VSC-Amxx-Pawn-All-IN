@@ -1,3 +1,6 @@
+const { splitPawnLines } = require('./lines');
+const { skipPawnHorizontalWhitespace } = require('./whitespace');
+
 function createCtrlCharSyntaxCore(deps) {
     const {
         normalizeFsPath,
@@ -13,7 +16,7 @@ function createCtrlCharSyntaxCore(deps) {
 
     const getIncludeNameFromLine = line => {
         const match = String(line || '').match(INCLUDE_LINE_RE);
-        return match ? (match[1] || match[2] || '') : '';
+        return match ? (match[1] || match[2] || match[3] || '') : '';
     };
 
     const DEFAULT_CTRL_CHAR = '^';
@@ -34,12 +37,7 @@ function createCtrlCharSyntaxCore(deps) {
         for (let lineIndex = 0; lineIndex < strippedLines.length; lineIndex++) {
             const source = String(strippedLines[lineIndex] || '');
             if (source.indexOf('#') < 0) continue;
-            let cursor = 0;
-            while (cursor < source.length) {
-                const code = source.charCodeAt(cursor);
-                if (code !== 32 && code !== 9) break;
-                cursor++;
-            }
+            const cursor = skipPawnHorizontalWhitespace(source, 0);
             if (cursor < source.length && source.charCodeAt(cursor) === 35) {
                 directiveLines.push(lineIndex);
             }
@@ -86,12 +84,13 @@ function createCtrlCharSyntaxCore(deps) {
         }
         if (currentPath) {
             if (visited.has(currentPath)) {
-                const rawLines = content.split(/\r?\n/);
+                const rawLines = splitPawnLines(content);
                 const analysis = content.includes('/*') || content.includes('//')
                     ? buildCommentAnalysis(rawLines)
                     : null;
                 const strippedLines = analysis?.strippedLines || rawLines;
                 return {
+                    rawLines,
                     strippedLines,
                     lineCtrlChars: rawLines.map(() => ctrlChar),
                     directiveCandidateLines: content.indexOf('#') >= 0
@@ -105,7 +104,7 @@ function createCtrlCharSyntaxCore(deps) {
 
         const rawLines = Array.isArray(precomputedRawLines)
             ? precomputedRawLines
-            : content.split(/\r?\n/);
+            : splitPawnLines(content);
         const strippedLines = (content.includes('/*') || content.includes('//'))
             ? (() => {
                 const cachedAnalysis = getCachedCommentAnalysis(currentPath, content);
@@ -118,6 +117,7 @@ function createCtrlCharSyntaxCore(deps) {
         const hasDirectiveMarker = content.indexOf('#') >= 0;
         if (content.indexOf('ctrlchar') < 0 && content.indexOf('#include') < 0) {
             const state = {
+                rawLines,
                 strippedLines,
                 lineCtrlChars: [],
                 directiveCandidateLines: hasDirectiveMarker
@@ -157,7 +157,7 @@ function createCtrlCharSyntaxCore(deps) {
         }
         fillLineCtrlCharRange(lineCtrlChars, nextUnfilledLine, rawLines.length, ctrlChar);
 
-        const state = { strippedLines, lineCtrlChars, directiveCandidateLines, finalCtrlChar: ctrlChar };
+        const state = { rawLines, strippedLines, lineCtrlChars, directiveCandidateLines, finalCtrlChar: ctrlChar };
         setCachedCtrlCharState(currentPath, content, state);
         return state;
     };

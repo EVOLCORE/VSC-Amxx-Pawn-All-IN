@@ -8,6 +8,7 @@ const {
     resolveEditedValidationPlan,
     canUseLocalBodyEditedValidation
 } = require('../../core/document-context/edit-impact');
+const { createFastFunctionRangeCore } = require('../../core/syntax/function-ranges');
 
 function createLiveValidationScheduler(deps) {
     const {
@@ -32,11 +33,17 @@ function createLiveValidationScheduler(deps) {
         readPersistentLiveDiagnosticsCache = null,
         writePersistentLiveDiagnosticsCache = null,
         computeFunctionRangeMaps = defaultComputeFunctionRangeMaps,
+        getFileSnapshot = null,
+        getCtrlCharStateForContent = null,
         normalizeLiveValidationIssueMode,
         getDocumentFingerprint: computeDocumentFingerprint,
         liveValidationOutputChannel = null
     } = deps;
     const functionValidationRangeByParsedDecls = new WeakMap();
+    const fastFunctionRanges = createFastFunctionRangeCore({
+        getFileSnapshot,
+        getCtrlCharStateForContent
+    });
     const diagnosticsCache = createLiveDiagnosticsCache({
         vscode,
         liveValidationFullResultCache,
@@ -74,6 +81,23 @@ function createLiveValidationScheduler(deps) {
             // Scheduler logging must never affect diagnostics.
         }
     };
+    const formatScanStats = stats => {
+        if (!stats || typeof stats !== 'object') return '';
+        const parts = [];
+        for (const key of [
+            'lineContexts',
+            'analysisCaches',
+            'indexedLines',
+            'callLines',
+            'usageLines',
+            'functionRanges',
+            'includeDeclarations'
+        ]) {
+            const value = stats[key];
+            if (Number.isFinite(value)) parts.push(`${key}=${value}`);
+        }
+        return parts.length ? ` ${parts.join(' ')}` : '';
+    };
     const getDiagnosticCount = diagnostics => Array.isArray(diagnostics) ? diagnostics.length : 0;
 
     function isLiveValidationDocument(document) {
@@ -108,6 +132,17 @@ function createLiveValidationScheduler(deps) {
         return rangeByLine[lineNumber] || null;
     }
 
+    function addRootFunctionRangeLines(document, lines, sourceLines, rootCtx) {
+        if (!rootCtx) return;
+        for (const line of sourceLines) {
+            const functionRange = findEnclosingFunctionRange(rootCtx, line, document.lineCount - 1);
+            if (!functionRange) continue;
+            for (let functionLine = functionRange.startLine; functionLine <= functionRange.endLine; functionLine++) {
+                lines.add(functionLine);
+            }
+        }
+    }
+
     function expandLinesToValidationLines(document, baseLines = [], options = {}) {
         const lines = new Set(baseLines || []);
         if (!lines.size) return [];
@@ -120,28 +155,75 @@ function createLiveValidationScheduler(deps) {
         );
 
         let rootCtx = null;
-        try {
-            rootCtx = getPawnDocumentContext(document, undefined) || null;
-        } catch {
-            rootCtx = null;
-        }
-        if (!rootCtx) {
-            return baseLineNumbers;
-        }
 
         if (
             bodyOnlyIncrementalEdit &&
-            canUseLocalBodyEditedValidation(rootCtx, baseLineNumbers, options.editImpact)
+            canUseLocalBodyEditedValidation(fastFunctionRanges.getLocalBodyContext(document), baseLineNumbers, options.editImpact)
         ) {
             return baseLineNumbers;
         }
 
+        const fastState = fastFunctionRanges.getFunctionRangeState(document);
+        if (!fastState) {
+            try {
+                rootCtx = getPawnDocumentContext(document, undefined) || null;
+            } catch {
+                rootCtx = null;
+            }
+            if (!rootCtx) {
+                return baseLineNumbers;
+            }
+            if (
+                bodyOnlyIncrementalEdit &&
+                canUseLocalBodyEditedValidation(rootCtx, baseLineNumbers, options.editImpact)
+            ) {
+                return baseLineNumbers;
+            }
+            addRootFunctionRangeLines(document, lines, [...lines], rootCtx);
+            const rootExpandedLineNumbers = [...lines].sort((left, right) => left - right);
+            if (
+                semanticEquivalentEdit &&
+                rootExpandedLineNumbers.length > SEMANTIC_EQUIVALENT_NARROW_LINE_THRESHOLD
+            ) {
+                return baseLineNumbers;
+            }
+            return rootExpandedLineNumbers;
+        }
+
+        const fallbackLines = [];
         for (const line of [...lines]) {
-            const functionRange = findEnclosingFunctionRange(rootCtx, line, document.lineCount - 1);
-            if (!functionRange) continue;
+            const functionRange = fastFunctionRanges.findEnclosingFunctionRange(document, line);
+            if (!functionRange) {
+                if ((fastState?.depthByLine?.[line] || 0) > 0) {
+                    fallbackLines.push(line);
+                }
+                continue;
+            }
             for (let functionLine = functionRange.startLine; functionLine <= functionRange.endLine; functionLine++) {
                 lines.add(functionLine);
             }
+        }
+
+        if (
+            (bodyOnlyIncrementalEdit && !fastFunctionRanges.getLocalBodyContext(document)) ||
+            fallbackLines.length
+        ) {
+            try {
+                rootCtx = getPawnDocumentContext(document, undefined) || null;
+            } catch {
+                rootCtx = null;
+            }
+            if (!rootCtx && !fastState) {
+                return baseLineNumbers;
+            }
+            if (
+                bodyOnlyIncrementalEdit &&
+                rootCtx &&
+                canUseLocalBodyEditedValidation(rootCtx, baseLineNumbers, options.editImpact)
+            ) {
+                return baseLineNumbers;
+            }
+            addRootFunctionRangeLines(document, lines, fallbackLines, rootCtx);
         }
 
         const expandedLineNumbers = [...lines].sort((left, right) => left - right);
@@ -188,6 +270,7 @@ function createLiveValidationScheduler(deps) {
             `file=${document.fileName}`
         );
         if (full) {
+            const cacheStartedAt = Date.now();
             const settingsSignature = getValidationCacheSettingsSignature();
             const cachedResult = getCachedFullResultEntry(document, {
                 allowPublishedReuse,
@@ -213,7 +296,8 @@ function createLiveValidationScheduler(deps) {
                 });
                 logScheduler(
                     `publish-cache reason=${reason} source=full-cache ` +
-                    `count=${getDiagnosticCount(cachedResult.diagnostics)} file=${document.fileName}`
+                    `count=${getDiagnosticCount(cachedResult.diagnostics)} ` +
+                    `ms=${Date.now() - cacheStartedAt} file=${document.fileName}`
                 );
                 return;
             }
@@ -223,9 +307,10 @@ function createLiveValidationScheduler(deps) {
         if (existing?.timer) clearTimeout(existing.timer);
         const timer = setTimeout(() => {
             liveValidationTimers.delete(normalized);
+            const runStartedAt = Date.now();
             logScheduler(
                 `run reason=${reason} mode=${mode} full=${full ? 1 : 0} ` +
-                `file=${document.fileName} version=${document.version}`
+                `file=${document.fileName} version=${document.version} lines=${document.lineCount || 0}`
             );
             if (!isLiveValidationDocument(document)) {
                 logScheduler(
@@ -240,6 +325,7 @@ function createLiveValidationScheduler(deps) {
 
             try {
                 if (full) {
+                    const cacheStartedAt = Date.now();
                     const cachedResult = getCachedFullResultEntry(document, {
                         allowPublishedReuse,
                         allowPersistentReuse: true,
@@ -259,12 +345,18 @@ function createLiveValidationScheduler(deps) {
                         });
                         logScheduler(
                             `publish-cache reason=${reason} source=${cacheSource} ` +
-                            `count=${getDiagnosticCount(cachedResult.diagnostics)} file=${document.fileName}`
+                            `count=${getDiagnosticCount(cachedResult.diagnostics)} ` +
+                            `ms=${Date.now() - cacheStartedAt} totalMs=${Date.now() - runStartedAt} ` +
+                            `file=${document.fileName}`
                         );
                         return;
                     }
                     const scanStats = {};
-                    logScheduler(`scan-start reason=${reason} source=full-scan file=${document.fileName}`);
+                    const scanStartedAt = Date.now();
+                    logScheduler(
+                        `scan-start reason=${reason} source=full-scan ` +
+                        `version=${runVersion} lines=${document.lineCount || 0} file=${document.fileName}`
+                    );
                     const diagnostics = collectLiveValidationDiagnostics(document, { scanStats });
                     if (!isDocumentSnapshotCurrent(document, runVersion, runFingerprint)) {
                         logScheduler(`drop-stale reason=${reason} source=full-scan file=${document.fileName}`);
@@ -280,7 +372,9 @@ function createLiveValidationScheduler(deps) {
                     });
                     logScheduler(
                         `scan-done reason=${reason} source=full-scan ` +
-                        `count=${getDiagnosticCount(diagnostics)} file=${document.fileName}`
+                        `count=${getDiagnosticCount(diagnostics)} ` +
+                        `ms=${Date.now() - scanStartedAt} totalMs=${Date.now() - runStartedAt}` +
+                        `${formatScanStats(scanStats)} file=${document.fileName}`
                     );
                     if (document?.isDirty !== true && typeof writePersistentLiveDiagnosticsCache === 'function') {
                         writePersistentLiveDiagnosticsCache(document, cacheEntry, {
@@ -294,6 +388,7 @@ function createLiveValidationScheduler(deps) {
                     editImpact: options.editImpact || null
                 });
                 const focusLines = [...mergedLines].sort((left, right) => left - right);
+                const cacheStartedAt = Date.now();
                 const cachedEditedResult = getCachedEditedResultEntry(document, targetLines, focusLines, {
                     settingsSignature
                 });
@@ -317,13 +412,17 @@ function createLiveValidationScheduler(deps) {
                     logScheduler(
                         `publish-cache reason=${reason} source=edited-cache ` +
                         `lines=${targetLines.length} focus=${focusLines.length} ` +
-                        `count=${getDiagnosticCount(cachedEditedResult.diagnostics)} file=${document.fileName}`
+                        `count=${getDiagnosticCount(cachedEditedResult.diagnostics)} ` +
+                        `ms=${Date.now() - cacheStartedAt} totalMs=${Date.now() - runStartedAt} ` +
+                        `file=${document.fileName}`
                     );
                     return;
                 }
+                const scanStartedAt = Date.now();
                 logScheduler(
                     `scan-start reason=${reason} source=edited-scan ` +
-                    `lines=${targetLines.length} focus=${focusLines.length} file=${document.fileName}`
+                    `version=${runVersion} lines=${targetLines.length} focus=${focusLines.length} ` +
+                    `file=${document.fileName}`
                 );
                 const diagnostics = collectLiveValidationDiagnostics(document, {
                     lines: targetLines,
@@ -342,7 +441,9 @@ function createLiveValidationScheduler(deps) {
                 logScheduler(
                     `scan-done reason=${reason} source=edited-scan ` +
                     `lines=${targetLines.length} focus=${focusLines.length} ` +
-                    `count=${getDiagnosticCount(diagnostics)} file=${document.fileName}`
+                    `count=${getDiagnosticCount(diagnostics)} ` +
+                    `ms=${Date.now() - scanStartedAt} totalMs=${Date.now() - runStartedAt} ` +
+                    `file=${document.fileName}`
                 );
                 setEditedResultCacheEntry(document, targetLines, focusLines, diagnostics, {
                     settingsSignature

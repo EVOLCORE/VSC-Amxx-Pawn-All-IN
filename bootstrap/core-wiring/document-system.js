@@ -49,6 +49,7 @@ function createDocumentSystemRuntime(deps) {
         normalizeExtensionList,
         createCtrlCharResolver,
         parseFileDecls,
+        filterEnumEvalOuterDecls,
         buildDocumentDeclLookup,
         getDocumentContextCacheKey,
         getSharedDocumentContextCacheKey,
@@ -79,7 +80,8 @@ function createDocumentSystemRuntime(deps) {
         clearIncludeFileTextCacheForFile,
         clearFileSnapshotCacheForFile,
         parsePreprocessorDirectiveLine,
-        isExplicitDeclarationStartLine
+        isExplicitDeclarationStartLine,
+        liveValidationOutputChannel = null
     } = deps;
 
     const includeSystemRuntime = createDocumentIncludeSystem({
@@ -139,6 +141,7 @@ function createDocumentSystemRuntime(deps) {
         getActiveDecls: includeSystemRuntime.getActiveDecls,
         createCtrlCharResolver,
         parseFileDecls,
+        filterEnumEvalOuterDecls,
         buildDocumentDeclLookup,
         getDocumentContextCacheKey,
         getSharedDocumentContextCacheKey,
@@ -152,7 +155,8 @@ function createDocumentSystemRuntime(deps) {
         buildDependencyStampMap,
         areDependencyStampsFresh,
         documentWarmupTimers,
-        touchWarmedIncludeDocument
+        touchWarmedIncludeDocument,
+        debugOutputChannel: liveValidationOutputChannel
     });
 
     const cacheRuntime = createCacheMaintenanceService({
@@ -193,6 +197,7 @@ function createDocumentSystemRuntime(deps) {
     });
 
     return {
+        getFileSnapshot,
         ...includeSystemRuntime,
         ...documentContextRuntime,
         ...cacheRuntime
