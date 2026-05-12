@@ -1,5 +1,7 @@
+const { PAWN_INCLUDE_LINE_RE } = require('./includes');
+
 function createSyntaxConstantCore(t) {
-    const INCLUDE_LINE_RE = /^\s*#\s*(?:include|tryinclude)\s+(?:<([^>"]+)>\s*|"([^"]+)"\s*|([A-Za-z0-9_./\\-]+))/;
+    const INCLUDE_LINE_RE = PAWN_INCLUDE_LINE_RE;
 
     const FORBIDDEN = new Set([
         'if','for','while','switch','return','else','delete','break',

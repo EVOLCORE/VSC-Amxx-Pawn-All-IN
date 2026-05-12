@@ -1,3 +1,5 @@
+const { getTypeAnalysisSourceDecls } = require('../../core/validation/type-analysis-cache');
+
 function createIndexedAccessDiagnostics(deps) {
     const {
         areWarningDiagnosticsEnabled,
@@ -19,7 +21,7 @@ function createIndexedAccessDiagnostics(deps) {
     function collectIndexedAccessLiveDiagnosticsForLine(document, lineNumber, ctx, analysisCache, lineStartOffset, docLength, declarationSourceState = null, indexedExpressions = null) {
         const diagnostics = [];
         const includeDocument = isIncludeDocument(document);
-        const analysisDecls = analysisCache ? [] : ctx.allDecls;
+        const analysisDecls = getTypeAnalysisSourceDecls(ctx, analysisCache);
         const expressions = Array.isArray(indexedExpressions) ? indexedExpressions : [];
         if (!expressions.length) return diagnostics;
         const shouldSkipIncludeContextDependentAccess = (() => {

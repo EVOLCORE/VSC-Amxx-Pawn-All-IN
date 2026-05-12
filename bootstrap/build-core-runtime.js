@@ -55,7 +55,6 @@ function buildCoreActivationRuntime(deps) {
 
     const syntaxPrelude = createCoreSyntaxPrelude({ t });
     const {
-        INCLUDE_LINE_RE,
         FORBIDDEN,
         BUILTIN_DECLS,
         VAR_MODS,
@@ -142,7 +141,6 @@ function buildCoreActivationRuntime(deps) {
         normalizeFsPath,
         getSearchPaths: (...args) => getSearchPaths(...args),
         resolveInclude: (...args) => resolveInclude(...args),
-        INCLUDE_LINE_RE,
         OPERATOR_SYMBOLS,
         commentAnalysisCache,
         ctrlCharStateCache,

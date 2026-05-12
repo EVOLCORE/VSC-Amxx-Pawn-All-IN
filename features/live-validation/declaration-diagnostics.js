@@ -7,6 +7,8 @@ const { startsWithDeclarationKeyword } = require('../../core/syntax/keywords');
 const { skipPawnWhitespace } = require('../../core/syntax/whitespace');
 const { isPreprocessorDirectiveLine } = require('../../core/syntax/preprocessor-lines');
 
+const { getTypeAnalysisSourceDecls } = require('../../core/validation/type-analysis-cache');
+
 function createDeclarationDiagnostics(deps) {
     const {
         areWarningDiagnosticsEnabled,
@@ -429,7 +431,7 @@ function createDeclarationDiagnostics(deps) {
             const getAssignmentAnalysis = () => {
                 if (!cachedAnalysisCache) {
                     cachedAnalysisCache = getDeclarationAnalysisCache();
-                    cachedAnalysisDecls = cachedAnalysisCache ? [] : ctx.allDecls;
+                    cachedAnalysisDecls = ctx.allDecls;
                 }
                 return {
                     analysisCache: cachedAnalysisCache,
@@ -656,7 +658,7 @@ function createDeclarationDiagnostics(deps) {
             if (mutation?.target) {
                 const targetLooksAssignable = isSyntacticAssignableExpression(mutation.target);
                 const analysisCache = targetLooksAssignable ? getDeclarationAnalysisCache() : null;
-                const analysisDecls = analysisCache ? [] : ctx.allDecls;
+                const analysisDecls = ctx.allDecls;
                 const assignable = targetLooksAssignable
                     ? getExpressionAssignableInfo(mutation.target, analysisDecls, analysisCache, { escapeChar })
                     : null;
@@ -690,7 +692,7 @@ function createDeclarationDiagnostics(deps) {
             if (invalidTailDecls.has(decl)) continue;
             if (decl?.type !== 'variable' || decl.dims || !decl.value) continue;
             const analysisCache = getDeclarationAnalysisCache();
-            const analysisDecls = analysisCache ? [] : ctx.allDecls;
+            const analysisDecls = ctx.allDecls;
             const valueText = String(decl.value || '').trim();
             if (
                 areWarningDiagnosticsEnabled()
@@ -777,7 +779,7 @@ function createDeclarationDiagnostics(deps) {
             if (invalidTailDecls.has(decl)) continue;
             if (!decl?.dims) continue;
             const analysisCache = getDeclarationAnalysisCache();
-            const analysisDecls = analysisCache ? [] : ctx.allDecls;
+            const analysisDecls = getTypeAnalysisSourceDecls(ctx, analysisCache);
             const invalidArraySizeIssue = findInvalidArraySizeIssue(decl, analysisDecls, analysisCache);
             if (invalidArraySizeIssue) {
                 const dimStart = lineText.indexOf(invalidArraySizeIssue.dimText);

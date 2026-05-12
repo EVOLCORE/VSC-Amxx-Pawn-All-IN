@@ -7,6 +7,7 @@ const {
     startsWithDeclarationKeyword
 } = require('../../core/syntax/keywords');
 const { isPreprocessorDirectiveLine } = require('../../core/syntax/preprocessor-lines');
+const { getTypeAnalysisSourceDecls } = require('../../core/validation/type-analysis-cache');
 
 function createSymbolDiagnostics(deps) {
     const {
@@ -139,7 +140,7 @@ function createSymbolDiagnostics(deps) {
                 const analysisCache = getAnalysisCache();
                 const unresolved = findUnresolvedReferenceNames(
                     bareIdentifierMatch[1],
-                    analysisCache ? [] : ctx.allDecls,
+                    getTypeAnalysisSourceDecls(ctx, analysisCache),
                     analysisCache,
                     escapeChar
                 );
@@ -276,7 +277,7 @@ function createSymbolDiagnostics(deps) {
             const analysisCache = getAnalysisCache();
             const unresolved = findUnresolvedReferenceNames(
                 name,
-                analysisCache ? [] : ctx.allDecls,
+                getTypeAnalysisSourceDecls(ctx, analysisCache),
                 analysisCache,
                 escapeChar
             );

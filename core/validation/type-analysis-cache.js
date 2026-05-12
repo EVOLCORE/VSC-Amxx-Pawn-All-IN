@@ -79,4 +79,14 @@ function createTypeAnalysisCacheFactory(deps) {
     };
 }
 
-module.exports = { createTypeAnalysisCacheFactory };
+function getTypeAnalysisSourceDecls(ctx, analysisCache, fallbackCtx = null) {
+    if (analysisCache) return [];
+    if (Array.isArray(ctx?.allDecls)) return ctx.allDecls;
+    if (Array.isArray(fallbackCtx?.allDecls)) return fallbackCtx.allDecls;
+    return [];
+}
+
+module.exports = {
+    createTypeAnalysisCacheFactory,
+    getTypeAnalysisSourceDecls
+};

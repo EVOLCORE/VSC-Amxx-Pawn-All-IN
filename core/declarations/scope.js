@@ -7,6 +7,11 @@ const {
     removeTrailingBackslashContinuation
 } = require('../syntax/continuation');
 const { findBalancedGroupEnd } = require('../syntax/balanced');
+const {
+    findNextNonEmptyLine,
+    findPreviousNonEmptyLine,
+    isDoWhileClosingLine
+} = require('../syntax/control-lines');
 
 function computeFunctionRangeMaps(functions = [], depths = [], lineCount = 0, options = {}) {
     const includeHeader = options?.includeHeader === true;
@@ -210,19 +215,11 @@ function createDeclarationScopeCore(deps) {
     }
 
     function findNextSignificantLine(lines, startLine, lineCtrlChars = []) {
-        for (let i = startLine; i < lines.length; i++) {
-            const line = lines[i] || '';
-            if (line.trim()) return i;
-        }
-        return -1;
+        return findNextNonEmptyLine(lines, startLine);
     }
 
     function findPreviousSignificantLine(lines, startLine) {
-        for (let i = Math.min(startLine, lines.length - 1); i >= 0; i--) {
-            const line = lines[i] || '';
-            if (line.trim()) return i;
-        }
-        return -1;
+        return findPreviousNonEmptyLine(lines, startLine);
     }
 
     function startsWithSingleStatementControl(line) {
@@ -310,27 +307,7 @@ function createDeclarationScopeCore(deps) {
     }
 
     function isDoWhileTerminatorLine(lines, depths, lineNumber, lineCtrlChars = []) {
-        const line = String(lines[lineNumber] || '').trimStart();
-        if (!/^while\s*\(/.test(line)) return false;
-
-        const previousLine = findPreviousSignificantLine(lines, lineNumber - 1);
-        if (previousLine < 0) return false;
-        if (!String(lines[previousLine] || '').trimStart().startsWith('}')) return false;
-
-        const baseDepth = depths[lineNumber] ?? 0;
-        for (let probe = previousLine; probe >= 0; probe--) {
-            if ((depths[probe] ?? 0) !== baseDepth) continue;
-            const openBraceIndex = String(lines[probe] || '').indexOf('{');
-            if (openBraceIndex < 0) continue;
-
-            const beforeBrace = String(lines[probe] || '').slice(0, openBraceIndex).trim();
-            if (/^do\b/.test(beforeBrace)) return true;
-
-            const doLine = findPreviousSignificantLine(lines, probe - 1);
-            return doLine >= 0 && /^do\b/.test(String(lines[doLine] || '').trimStart());
-        }
-
-        return false;
+        return isDoWhileClosingLine(lines, depths, lineNumber);
     }
 
     function findControlStatementBodyStart(lines, depths, lineNumber, lineCtrlChars = []) {

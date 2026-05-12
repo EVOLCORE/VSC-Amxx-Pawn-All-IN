@@ -1,5 +1,7 @@
 const { findBalancedGroupEnd } = require('./balanced');
-const { isPawnAssignmentCompareNeighbor } = require('./operators');
+const {
+    findTopLevelSimpleAssignmentOperator: findTopLevelSimpleAssignmentOperatorCore
+} = require('./top-level');
 
 function createWarningPolicySyntaxCore() {
     const COMPILER_SYMBOL_MAX_LENGTH = 63;
@@ -34,55 +36,7 @@ function createWarningPolicySyntaxCore() {
     });
 
     function findTopLevelSimpleAssignmentOperator(source) {
-        const text = String(source || '');
-        let parenDepth = 0;
-        let bracketDepth = 0;
-        let braceDepth = 0;
-        let inString = false;
-        let stringChar = '';
-
-        for (let index = 0; index < text.length; index++) {
-            const char = text[index];
-            if (inString) {
-                if (char === stringChar) inString = false;
-                continue;
-            }
-            if (char === '"' || char === "'") {
-                inString = true;
-                stringChar = char;
-                continue;
-            }
-            if (char === '(') {
-                parenDepth++;
-                continue;
-            }
-            if (char === ')') {
-                parenDepth = Math.max(0, parenDepth - 1);
-                continue;
-            }
-            if (char === '[') {
-                bracketDepth++;
-                continue;
-            }
-            if (char === ']') {
-                bracketDepth = Math.max(0, bracketDepth - 1);
-                continue;
-            }
-            if (char === '{') {
-                braceDepth++;
-                continue;
-            }
-            if (char === '}') {
-                braceDepth = Math.max(0, braceDepth - 1);
-                continue;
-            }
-            if (parenDepth || bracketDepth || braceDepth) continue;
-            if (char !== '=') continue;
-            if (isPawnAssignmentCompareNeighbor(text, index)) continue;
-            return index;
-        }
-
-        return -1;
+        return findTopLevelSimpleAssignmentOperatorCore(source);
     }
 
     function findPossiblyUnintendedAssignmentInCondition(source, keywordStart, keyword) {

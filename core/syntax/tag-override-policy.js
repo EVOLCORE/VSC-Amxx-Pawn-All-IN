@@ -3,7 +3,8 @@ const { skipPawnWhitespace } = require('./whitespace');
 function createTagOverridePolicySyntaxCore(deps = {}) {
     const {
         isIdentifierStartChar,
-        isIdentifierContinueChar
+        isIdentifierContinueChar,
+        isEscapedQuote
     } = deps;
 
     const createWarningIssue = (start, end, tagName) => ({
@@ -46,6 +47,78 @@ function createTagOverridePolicySyntaxCore(deps = {}) {
             previous === '>';
     };
 
+    function isTernarySeparatorColon(sourceText, colonOffset, escapeChar = '^') {
+        const text = String(sourceText || '');
+        if (!text || colonOffset <= 0 || colonOffset >= text.length) return false;
+        const lineStart = text.lastIndexOf('\n', colonOffset - 1) + 1;
+        const ternaryDepthByGroup = new Map();
+        let parenDepth = 0;
+        let bracketDepth = 0;
+        let braceDepth = 0;
+        let inString = false;
+        let stringChar = '';
+        const groupKey = () => `${parenDepth}|${bracketDepth}|${braceDepth}`;
+        const getTernaryDepth = key => ternaryDepthByGroup.get(key) || 0;
+        const setTernaryDepth = (key, value) => {
+            if (value > 0) ternaryDepthByGroup.set(key, value);
+            else ternaryDepthByGroup.delete(key);
+        };
+        const quoteEscaped = index => typeof isEscapedQuote === 'function'
+            ? isEscapedQuote(text, index, escapeChar)
+            : text[index - 1] === '\\';
+
+        for (let index = lineStart; index < colonOffset; index++) {
+            const char = text[index];
+            if (inString) {
+                if (char === stringChar && !quoteEscaped(index)) inString = false;
+                continue;
+            }
+            if (char === '"' || char === "'") {
+                inString = true;
+                stringChar = char;
+                continue;
+            }
+
+            if (char === '(') {
+                parenDepth++;
+                continue;
+            }
+            if (char === ')') {
+                parenDepth = Math.max(0, parenDepth - 1);
+                continue;
+            }
+            if (char === '[') {
+                bracketDepth++;
+                continue;
+            }
+            if (char === ']') {
+                bracketDepth = Math.max(0, bracketDepth - 1);
+                continue;
+            }
+            if (char === '{') {
+                braceDepth++;
+                continue;
+            }
+            if (char === '}') {
+                braceDepth = Math.max(0, braceDepth - 1);
+                continue;
+            }
+
+            if (char === '?') {
+                const key = groupKey();
+                setTernaryDepth(key, getTernaryDepth(key) + 1);
+                continue;
+            }
+            if (char === ':') {
+                const key = groupKey();
+                const depth = getTernaryDepth(key);
+                if (depth > 0) setTernaryDepth(key, depth - 1);
+            }
+        }
+
+        return getTernaryDepth(groupKey()) > 0;
+    }
+
     function readTagBeforeColon(source, colonIndex, knownTags) {
         if (source[colonIndex] !== ':' || source[colonIndex + 1] === ':' || source[colonIndex - 1] === ':') {
             return null;
@@ -57,8 +130,37 @@ function createTagOverridePolicySyntaxCore(deps = {}) {
         if (start >= end || !isIdentifierStartChar(source[start] || '')) return null;
         if (start > 0 && isIdentifierContinueChar(source[start - 1] || '')) return null;
         const tagName = source.slice(start, end);
-        if (!knownTags?.has(tagName)) return null;
+        if (knownTags && !knownTags.has(tagName)) return null;
         return { tagName, start, end: colonIndex + 1 };
+    }
+
+    function findTagOverrideBeforeIdentifier(sourceText, nameOffsets, expectedName = '', options = {}) {
+        if (typeof isIdentifierStartChar !== 'function' || typeof isIdentifierContinueChar !== 'function') {
+            return null;
+        }
+        const text = String(sourceText || '');
+        const startOffset = Number.isInteger(nameOffsets?.startOffset) ? nameOffsets.startOffset : -1;
+        const endOffset = Number.isInteger(nameOffsets?.endOffset) ? nameOffsets.endOffset : -1;
+        if (startOffset < 0 || endOffset <= startOffset || endOffset > text.length) return null;
+        if (expectedName && text.slice(startOffset, endOffset) !== expectedName) return null;
+
+        let colonOffset = startOffset - 1;
+        while (colonOffset >= 0 && (text[colonOffset] === ' ' || text[colonOffset] === '\t')) {
+            colonOffset--;
+        }
+        if (text[colonOffset] !== ':') return null;
+        const escapeChar = typeof options.getEscapeCharAtOffset === 'function'
+            ? options.getEscapeCharAtOffset(colonOffset)
+            : options.escapeChar || '^';
+        if (isTernarySeparatorColon(text, colonOffset, escapeChar)) return null;
+
+        const tag = readTagBeforeColon(text, colonOffset, options.knownTags);
+        if (!tag) return null;
+        return {
+            tag: tag.tagName,
+            startOffset: tag.start,
+            endOffset: tag.end
+        };
     }
 
     function matchesKeywordAt(source, index, keyword) {
@@ -208,7 +310,9 @@ function createTagOverridePolicySyntaxCore(deps = {}) {
     }
 
     return {
-        collectTagOverrideParenthesesIssues
+        collectTagOverrideParenthesesIssues,
+        findTagOverrideBeforeIdentifier,
+        isTernarySeparatorColon
     };
 }
 

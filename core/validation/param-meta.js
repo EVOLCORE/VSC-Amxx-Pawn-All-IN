@@ -1,3 +1,5 @@
+const { findTopLevelSimpleAssignmentOperator } = require('../syntax/top-level');
+
 function createParamMetaCore(deps) {
     const {
         getActiveCtrlChar,
@@ -6,59 +8,10 @@ function createParamMetaCore(deps) {
     } = deps;
 
     function findTopLevelDefaultAssignmentIndex(source) {
-        let parenDepth = 0;
-        let braceDepth = 0;
-        let bracketDepth = 0;
-        let inString = false;
-        let stringChar = '';
-
-        for (let index = 0; index < source.length; index++) {
-            const char = source[index];
-            const prev = source[index - 1] || '';
-            const next = source[index + 1] || '';
-
-            if (inString) {
-                if (char === stringChar && !isEscapedQuote(source, index, getActiveCtrlChar())) {
-                    inString = false;
-                }
-                continue;
-            }
-            if (char === '"' || char === "'") {
-                inString = true;
-                stringChar = char;
-                continue;
-            }
-            if (char === '(') {
-                parenDepth++;
-                continue;
-            }
-            if (char === ')') {
-                parenDepth = Math.max(0, parenDepth - 1);
-                continue;
-            }
-            if (char === '[') {
-                bracketDepth++;
-                continue;
-            }
-            if (char === ']') {
-                bracketDepth = Math.max(0, bracketDepth - 1);
-                continue;
-            }
-            if (char === '{') {
-                braceDepth++;
-                continue;
-            }
-            if (char === '}') {
-                braceDepth = Math.max(0, braceDepth - 1);
-                continue;
-            }
-            if (parenDepth || braceDepth || bracketDepth) continue;
-            if (char === '=' && prev !== '=' && prev !== '!' && next !== '=') {
-                return index;
-            }
-        }
-
-        return -1;
+        return findTopLevelSimpleAssignmentOperator(source, {
+            isEscapedQuote,
+            escapeChar: getActiveCtrlChar()
+        });
     }
 
     function parseParamMeta(paramStr) {

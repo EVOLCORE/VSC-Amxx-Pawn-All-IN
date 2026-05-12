@@ -1,3 +1,6 @@
+const { createTagOverridePolicySyntaxCore } = require('../../core/syntax/tag-override-policy');
+const { getTypeAnalysisSourceDecls } = require('../../core/validation/type-analysis-cache');
+
 function createCallDiagnostics(deps) {
     const {
         areWarningDiagnosticsEnabled,
@@ -26,6 +29,11 @@ function createCallDiagnostics(deps) {
         splitTopLevelWithRanges,
         t
     } = deps;
+    const tagOverridePolicyRuntime = createTagOverridePolicySyntaxCore({
+        isEscapedQuote,
+        isIdentifierStartChar,
+        isIdentifierContinueChar
+    });
 
     function collectCallLiveDiagnostics(document, ctx, callCtx, analysisCache, docLength, callLineNumber = null) {
         const diagnostics = [];
@@ -72,104 +80,15 @@ function createCallDiagnostics(deps) {
         };
 
         const findCallResultTagOverride = () => {
-            if (typeof isIdentifierStartChar !== 'function') return null;
             const nameOffsets = findCallNameOffsets();
-            if (ctx.text.slice(nameOffsets.startOffset, nameOffsets.endOffset) !== callCtx.funcName) return null;
-            let colonOffset = nameOffsets.startOffset - 1;
-            while (colonOffset >= 0 && (ctx.text[colonOffset] === ' ' || ctx.text[colonOffset] === '\t')) {
-                colonOffset--;
-            }
-            if (ctx.text[colonOffset] !== ':') return null;
-            if (ctx.text[colonOffset - 1] === ':' || ctx.text[colonOffset + 1] === ':') return null;
-            if (isTernarySeparatorColon(ctx.text, colonOffset, ctx.resolver?.ctrlCharAtOffset?.(colonOffset))) {
-                return null;
-            }
-
-            let cursor = colonOffset - 1;
-            while (cursor >= 0 && (ctx.text[cursor] === ' ' || ctx.text[cursor] === '\t')) cursor--;
-            const tagEndOffset = cursor + 1;
-            while (cursor >= 0 && isIdentifierContinueChar(ctx.text[cursor])) cursor--;
-            const tagStartOffset = cursor + 1;
-            if (tagStartOffset >= tagEndOffset) return null;
-            if (!isIdentifierStartChar(ctx.text[tagStartOffset] || '')) return null;
-
-            return {
-                tag: ctx.text.slice(tagStartOffset, tagEndOffset),
-                startOffset: tagStartOffset,
-                endOffset: colonOffset + 1
-            };
-        };
-
-        const isTernarySeparatorColon = (sourceText, colonOffset, escapeChar = '^') => {
-            const text = String(sourceText || '');
-            if (!text || colonOffset <= 0 || colonOffset >= text.length) return false;
-            const lineStart = text.lastIndexOf('\n', colonOffset - 1) + 1;
-            const ternaryDepthByGroup = new Map();
-            let parenDepth = 0;
-            let bracketDepth = 0;
-            let braceDepth = 0;
-            let inString = false;
-            let stringChar = '';
-            const groupKey = () => `${parenDepth}|${bracketDepth}|${braceDepth}`;
-            const getTernaryDepth = key => ternaryDepthByGroup.get(key) || 0;
-            const setTernaryDepth = (key, value) => {
-                if (value > 0) ternaryDepthByGroup.set(key, value);
-                else ternaryDepthByGroup.delete(key);
-            };
-            const quoteEscaped = index => typeof isEscapedQuote === 'function'
-                ? isEscapedQuote(text, index, escapeChar)
-                : text[index - 1] === '\\';
-
-            for (let index = lineStart; index < colonOffset; index++) {
-                const char = text[index];
-                if (inString) {
-                    if (char === stringChar && !quoteEscaped(index)) inString = false;
-                    continue;
+            return tagOverridePolicyRuntime.findTagOverrideBeforeIdentifier(
+                ctx.text,
+                nameOffsets,
+                callCtx.funcName,
+                {
+                    getEscapeCharAtOffset: offset => ctx.resolver?.ctrlCharAtOffset?.(offset)
                 }
-                if (char === '"' || char === "'") {
-                    inString = true;
-                    stringChar = char;
-                    continue;
-                }
-
-                if (char === '(') {
-                    parenDepth++;
-                    continue;
-                }
-                if (char === ')') {
-                    parenDepth = Math.max(0, parenDepth - 1);
-                    continue;
-                }
-                if (char === '[') {
-                    bracketDepth++;
-                    continue;
-                }
-                if (char === ']') {
-                    bracketDepth = Math.max(0, bracketDepth - 1);
-                    continue;
-                }
-                if (char === '{') {
-                    braceDepth++;
-                    continue;
-                }
-                if (char === '}') {
-                    braceDepth = Math.max(0, braceDepth - 1);
-                    continue;
-                }
-
-                if (char === '?') {
-                    const key = groupKey();
-                    setTernaryDepth(key, getTernaryDepth(key) + 1);
-                    continue;
-                }
-                if (char === ':') {
-                    const key = groupKey();
-                    const depth = getTernaryDepth(key);
-                    if (depth > 0) setTernaryDepth(key, depth - 1);
-                }
-            }
-
-            return getTernaryDepth(groupKey()) > 0;
+            );
         };
 
         const collectCallResultTagOverrideDiagnostic = signatureData => {
@@ -179,9 +98,10 @@ function createCallDiagnostics(deps) {
             if (!tagOverride) return null;
             const expectedTag = signatureData.typeTag || '';
             const expectedDims = signatureData.dims || '';
+            if (!expectedTag && !expectedDims) return null;
             const expectedParam = `${expectedTag ? `${expectedTag}:` : ''}__return${expectedDims}`;
             const syntheticTaggedValue = `${tagOverride.tag}:0`;
-            const analysisDecls = analysisCache ? [] : ctx.allDecls;
+            const analysisDecls = ctx.allDecls;
             const compat = explainTypeCompat(
                 expectedParam,
                 tagOverride.tag,
@@ -239,7 +159,7 @@ function createCallDiagnostics(deps) {
             callEscapeChar
         );
         let expandedPieces = rawArgPieces;
-        const analysisDecls = analysisCache ? [] : ctx.allDecls;
+        const analysisDecls = getTypeAnalysisSourceDecls(ctx, analysisCache);
         let callSiteArgs = rawArgPieces.map(item => item.text);
         let layout = buildCallArgLayout(signatureData.args || '', callSiteArgs, null, {
             useDynamicCache: false

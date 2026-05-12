@@ -18,6 +18,26 @@ const {
     getCompletionIntent,
     getCompletionControlContext
 } = require('./control-context');
+const {
+    findNextNonEmptyLine,
+    findPreviousNonEmptyLine,
+    isDoWhileClosingLine,
+    isWhileConditionOnlyLine
+} = require('./control-lines');
+const { computeLineStartGroupContextFlags } = require('./group-context');
+const {
+    PAWN_INCLUDE_LINE_RE,
+    parsePawnIncludeDirectiveTarget,
+    getPawnIncludeNameFromLine
+} = require('./includes');
+const {
+    advanceTopLevelScannerState,
+    createTopLevelScannerState,
+    findTopLevelChar,
+    findTopLevelSequence,
+    findTopLevelSimpleAssignmentOperator,
+    isTopLevelScannerState
+} = require('./top-level');
 const { createDelimiterSyntaxCore } = require('./delimiters');
 const { createPreprocessorLabelSyntaxCore } = require('./preprocessor-label');
 const { createTextSyntaxDiagnosticsCore } = require('./text-diagnostics');
@@ -91,6 +111,20 @@ module.exports = {
     createControlContextTracker,
     getCompletionIntent,
     getCompletionControlContext,
+    findNextNonEmptyLine,
+    findPreviousNonEmptyLine,
+    isDoWhileClosingLine,
+    isWhileConditionOnlyLine,
+    computeLineStartGroupContextFlags,
+    PAWN_INCLUDE_LINE_RE,
+    parsePawnIncludeDirectiveTarget,
+    getPawnIncludeNameFromLine,
+    advanceTopLevelScannerState,
+    createTopLevelScannerState,
+    findTopLevelChar,
+    findTopLevelSequence,
+    findTopLevelSimpleAssignmentOperator,
+    isTopLevelScannerState,
     createDelimiterSyntaxCore,
     createPreprocessorLabelSyntaxCore,
     createTextSyntaxDiagnosticsCore,

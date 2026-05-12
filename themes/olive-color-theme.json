@@ -83,19 +83,24 @@
       "scope": [
         "keyword.other.preprocessor.pawn",
         "keyword.other.preprocessor.include.pawn",
-        "keyword.other.preprocessor.define.pawn"
+        "keyword.other.preprocessor.define.pawn",
+        "punctuation.definition.directive.pawn",
+        "keyword.control.directive.pawn",
+        "keyword.control.directive.include.pawn",
+        "keyword.control.directive.define.pawn"
       ],
       "settings": {
-        "foreground": "#F2F2E8"
+        "foreground": "#66D9EF"
       }
     },
     {
       "scope": [
         "string.quoted.other.include.pawn",
+        "entity.name.filename.include.pawn",
         "include_path.pawn"
       ],
       "settings": {
-        "foreground": "#F2F2E8"
+        "foreground": "#9CDCFE"
       }
     },
     {

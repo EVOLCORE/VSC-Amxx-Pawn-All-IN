@@ -83,23 +83,47 @@ function createSyntaxCore(deps) {
         return null;
     }
 
-    function splitTopLevel(str, escapeChar = getActiveCtrlChar(), keepEmpty = false) {
-        if (!str?.trim()) return [];
+    function splitTopLevelCore(str, baseOffset = 0, escapeChar = getActiveCtrlChar(), keepEmpty = false, withRanges = false) {
+        const source = String(str || '');
+        if (!source.trim()) return [];
         const parts = [];
         let d = 0, inStr = false, strCh = '', inLineComment = false, inBlockComment = false, start = 0;
         let current = '';
+        const currentOffsets = withRanges ? [] : null;
+        const appendCurrent = (char, index) => {
+            current += char;
+            if (withRanges) currentOffsets.push(baseOffset + index);
+        };
         const pushPart = () => {
-            const p = current.trim();
-            if (p || keepEmpty) parts.push(p);
+            if (withRanges) {
+                const leadingTrim = current.search(/\S|$/);
+                const trimmedEnd = current.trimEnd().length;
+                const trimmed = current.slice(leadingTrim, trimmedEnd);
+                if (trimmed || keepEmpty) {
+                    const startIndex = currentOffsets[leadingTrim] ?? baseOffset + start;
+                    const endIndex = trimmedEnd > leadingTrim
+                        ? (currentOffsets[trimmedEnd - 1] ?? (baseOffset + start)) + 1
+                        : startIndex;
+                    parts.push({
+                        text: trimmed,
+                        startOffset: startIndex,
+                        endOffset: endIndex
+                    });
+                }
+                currentOffsets.length = 0;
+            } else {
+                const p = current.trim();
+                if (p || keepEmpty) parts.push(p);
+            }
             current = '';
         };
-        for (let i = 0; i < str.length; i++) {
-            const c = str[i];
-            const next = i + 1 < str.length ? str[i + 1] : '';
+        for (let i = 0; i < source.length; i++) {
+            const c = source[i];
+            const next = i + 1 < source.length ? source[i + 1] : '';
             if (inLineComment) {
                 if (c === '\n' || c === '\r') {
                     inLineComment = false;
-                    current += c;
+                    appendCurrent(c, i);
                 }
                 continue;
             }
@@ -108,139 +132,58 @@ function createSyntaxCore(deps) {
                     inBlockComment = false;
                     i++;
                 } else if (c === '\n' || c === '\r') {
-                    current += c;
+                    appendCurrent(c, i);
                 }
                 continue;
             }
             if (inStr) {
-                if (c === strCh && !isEscapedQuote(str, i, escapeChar)) inStr = false;
-                current += c;
+                if (c === strCh && !isEscapedQuote(source, i, escapeChar)) inStr = false;
+                appendCurrent(c, i);
                 continue;
             }
             if (c === '/' && next === '/') {
                 inLineComment = true;
-                current += ' ';
+                appendCurrent(' ', i);
                 i++;
                 continue;
             }
             if (c === '/' && next === '*') {
                 inBlockComment = true;
-                current += ' ';
+                appendCurrent(' ', i);
                 i++;
                 continue;
             }
             if (c === '"' || c === "'") {
                 inStr = true;
                 strCh = c;
-                current += c;
+                appendCurrent(c, i);
                 continue;
             }
             if ('[({'.includes(c)) {
                 d++;
-                current += c;
+                appendCurrent(c, i);
             }
             else if ('])}'.includes(c)) {
                 d--;
-                current += c;
+                appendCurrent(c, i);
             }
             else if (c === ',' && d === 0) {
                 pushPart();
                 start = i + 1;
             } else {
-                current += c;
+                appendCurrent(c, i);
             }
         }
         pushPart();
         return parts;
     }
 
+    function splitTopLevel(str, escapeChar = getActiveCtrlChar(), keepEmpty = false) {
+        return splitTopLevelCore(str, 0, escapeChar, keepEmpty, false);
+    }
+
     function splitTopLevelWithRanges(str, baseOffset = 0, escapeChar = getActiveCtrlChar(), keepEmpty = false) {
-        if (!str?.trim()) return [];
-        const parts = [];
-        let d = 0, inStr = false, strCh = '', inLineComment = false, inBlockComment = false, start = 0;
-        let current = '';
-        const currentOffsets = [];
-        const pushPart = () => {
-            const leadingTrim = current.search(/\S|$/);
-            const trimmedEnd = current.trimEnd().length;
-            const trimmed = current.slice(leadingTrim, trimmedEnd);
-            if (trimmed || keepEmpty) {
-                const startIndex = currentOffsets[leadingTrim] ?? baseOffset + start;
-                const endIndex = trimmedEnd > leadingTrim
-                    ? (currentOffsets[trimmedEnd - 1] ?? (baseOffset + start)) + 1
-                    : startIndex;
-                parts.push({
-                    text: trimmed,
-                    startOffset: startIndex,
-                    endOffset: endIndex
-                });
-            }
-            current = '';
-            currentOffsets.length = 0;
-        };
-        const appendCurrent = (char, index) => {
-            current += char;
-            currentOffsets.push(baseOffset + index);
-        };
-        for (let i = 0; i < str.length; i++) {
-            const c = str[i];
-            const next = i + 1 < str.length ? str[i + 1] : '';
-            if (inLineComment) {
-                if (c === '\n' || c === '\r') {
-                    inLineComment = false;
-                    appendCurrent(c, i);
-                }
-                continue;
-            }
-            if (inBlockComment) {
-                if (c === '*' && next === '/') {
-                    inBlockComment = false;
-                    i++;
-                } else if (c === '\n' || c === '\r') {
-                    appendCurrent(c, i);
-                }
-                continue;
-            }
-            if (inStr) {
-                if (c === strCh && !isEscapedQuote(str, i, escapeChar)) inStr = false;
-                appendCurrent(c, i);
-                continue;
-            }
-            if (c === '/' && next === '/') {
-                inLineComment = true;
-                appendCurrent(' ', i);
-                i++;
-                continue;
-            }
-            if (c === '/' && next === '*') {
-                inBlockComment = true;
-                appendCurrent(' ', i);
-                i++;
-                continue;
-            }
-            if (c === '"' || c === "'") {
-                inStr = true;
-                strCh = c;
-                appendCurrent(c, i);
-                continue;
-            }
-            if ('[({'.includes(c)) {
-                d++;
-                appendCurrent(c, i);
-            }
-            else if ('])}'.includes(c)) {
-                d--;
-                appendCurrent(c, i);
-            }
-            else if (c === ',' && d === 0) {
-                pushPart();
-                start = i + 1;
-            } else {
-                appendCurrent(c, i);
-            }
-        }
-        pushPart();
-        return parts;
+        return splitTopLevelCore(str, baseOffset, escapeChar, keepEmpty, true);
     }
 
     function unwrapOuterParens(str, escapeChar = getActiveCtrlChar()) {

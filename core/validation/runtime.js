@@ -113,10 +113,17 @@ function createValidationCore(deps) {
         }
         return offset;
     };
-    const isImplicitBoolToScalarCompat = (expectedTag, actualTag, actualDims) =>
-        !String(expectedTag || '').trim() &&
-        !String(actualDims || '').trim() &&
-        String(actualTag || '').toLowerCase() === 'bool';
+    const isBoolTagName = value => normalizePawnTagName(value).toLowerCase() === 'bool';
+    const isImplicitBoolToScalarCompat = (expectedTag, actualTag, actualDims) => {
+        if (String(actualDims || '').trim()) return false;
+        const expected = normalizePawnTagName(expectedTag);
+        const actual = normalizePawnTagName(actualTag);
+        return (
+            (!expected || expected === '_') && isBoolTagName(actual)
+        ) || (
+            isBoolTagName(expected) && (!actual || actual === '_')
+        );
+    };
     const normalizeEnumName = normalizePawnTagName;
     const normalizeTagName = normalizePawnTagName;
     const isAnyTagName = isAnyPawnTagName;
@@ -991,6 +998,9 @@ function createValidationCore(deps) {
             });
         }
 
+        const earlyBinaryType = inferTopLevelBinaryExprType(s, allDecls, analysisCache);
+        if (earlyBinaryType) return finish(earlyBinaryType);
+
         if (
             s === 'cellmin' ||
             s === 'cellmax' ||
@@ -1102,8 +1112,6 @@ function createValidationCore(deps) {
                 }
             }
         }
-        const binaryType = inferTopLevelBinaryExprType(s, allDecls, analysisCache);
-        if (binaryType) return finish(binaryType);
         if (evaluatePawnNumericExpr(s, allDecls, new Set(), analysisCache) != null) {
             return finish({ tag: '', dims: '' });
         }
@@ -1472,8 +1480,10 @@ function createValidationCore(deps) {
         const actual = normalizeTagName(actualTag);
         if (!expected || expected === '_') {
             if (!actual || actual === '_' || isAnyTagName(actual)) return true;
+            if (isBoolTagName(actual)) return true;
             return !!allowCoerce && !isFixedPawnTagName(actual);
         }
+        if (isBoolTagName(expected) && (!actual || actual === '_')) return true;
         if (isAnyTagName(expected) || isAnyTagName(actual)) return true;
         return expected === actual;
     }

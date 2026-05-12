@@ -1,5 +1,9 @@
 const { readPawnIdentifierAt } = require('./identifiers');
 const { PAWN_STRUCTURAL_KEYWORD_SET } = require('./keywords');
+const {
+    findTopLevelChar: findTopLevelCharCore,
+    findTopLevelSequence
+} = require('./top-level');
 
 function createStatementClassifier(deps) {
     const {
@@ -86,71 +90,11 @@ function createStatementClassifier(deps) {
     }
 
     function findTopLevelChar(source, targetChar, startIndex = 0) {
-        const text = String(source || '');
-        let parenDepth = 0;
-        let bracketDepth = 0;
-        let braceDepth = 0;
-        let inStr = false;
-        let strCh = '';
-        for (let index = Math.max(0, startIndex); index < text.length; index++) {
-            const char = text[index];
-            if (inStr) {
-                if (char === strCh && !isEscapedQuote(text, index)) inStr = false;
-                continue;
-            }
-            if (char === '"' || char === "'") {
-                inStr = true;
-                strCh = char;
-                continue;
-            }
-            if (char === '(') parenDepth++;
-            else if (char === ')') parenDepth = Math.max(0, parenDepth - 1);
-            else if (char === '[') bracketDepth++;
-            else if (char === ']') bracketDepth = Math.max(0, bracketDepth - 1);
-            else if (char === '{') braceDepth++;
-            else if (char === '}') braceDepth = Math.max(0, braceDepth - 1);
-            else if (char === targetChar && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
-                return index;
-            }
-        }
-        return -1;
+        return findTopLevelCharCore(source, targetChar, { startIndex, isEscapedQuote });
     }
 
     function findTopLevelRangeOperator(source) {
-        const text = String(source || '');
-        let parenDepth = 0;
-        let bracketDepth = 0;
-        let braceDepth = 0;
-        let inStr = false;
-        let strCh = '';
-        for (let index = 0; index < text.length - 1; index++) {
-            const char = text[index];
-            if (inStr) {
-                if (char === strCh && !isEscapedQuote(text, index)) inStr = false;
-                continue;
-            }
-            if (char === '"' || char === "'") {
-                inStr = true;
-                strCh = char;
-                continue;
-            }
-            if (char === '(') parenDepth++;
-            else if (char === ')') parenDepth = Math.max(0, parenDepth - 1);
-            else if (char === '[') bracketDepth++;
-            else if (char === ']') bracketDepth = Math.max(0, bracketDepth - 1);
-            else if (char === '{') braceDepth++;
-            else if (char === '}') braceDepth = Math.max(0, braceDepth - 1);
-            else if (
-                char === '.' &&
-                text[index + 1] === '.' &&
-                parenDepth === 0 &&
-                bracketDepth === 0 &&
-                braceDepth === 0
-            ) {
-                return index;
-            }
-        }
-        return -1;
+        return findTopLevelSequence(source, '..', { isEscapedQuote });
     }
 
     function parseSwitchLabelAt(source, startIndex = 0) {

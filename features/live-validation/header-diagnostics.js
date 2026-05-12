@@ -1,3 +1,5 @@
+const { getTypeAnalysisSourceDecls } = require('../../core/validation/type-analysis-cache');
+
 function createHeaderDiagnostics(deps) {
     const {
         areWarningDiagnosticsEnabled,
@@ -85,7 +87,7 @@ function createHeaderDiagnostics(deps) {
             ctx.resolver.ctrlCharAtOffset(openOffset)
         );
         const localArgs = localArgPieces.map(item => item.text);
-        const analysisDecls = analysisCache ? [] : ctx.allDecls;
+        const analysisDecls = getTypeAnalysisSourceDecls(ctx, analysisCache);
 
         const buildHeaderMismatchDiagnostic = message => {
             const range = localArgPieces[0]
@@ -228,6 +230,7 @@ function createHeaderDiagnostics(deps) {
             parentDecl?.type === 'forward';
         const shouldValidateIncludeTwin =
             !!includeDecl &&
+            includeDecl.type !== 'define' &&
             !shouldSkipCompilerLikePublicForwardSignatureCheck(includeDecl);
         if (shouldValidateIncludeTwin) {
             if (!compareFunctionReturnByPrototype(includeDecl, functionDecl, ctx, analysisCache)) {

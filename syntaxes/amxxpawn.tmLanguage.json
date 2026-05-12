@@ -3,7 +3,10 @@
   "scopeName": "source.amxxpawn",
   "fileTypes": [
     "sma",
-    "inc"
+    "inc",
+    "i",
+    "p",
+    "pawn"
   ],
   "patterns": [
     {
@@ -252,17 +255,40 @@
           "begin": "^(\\s*)(#)\\s*(include)\\b",
           "beginCaptures": {
             "2": {
-              "name": "keyword.other.preprocessor.pawn"
+              "name": "punctuation.definition.directive.pawn"
             },
             "3": {
-              "name": "keyword.other.preprocessor.include.pawn"
+              "name": "keyword.control.directive.include.pawn"
             }
           },
           "end": "$",
           "patterns": [
             {
               "name": "string.quoted.other.include.pawn",
-              "match": "(?:\"[^\"\\n]*\"|<[^>\\n]*>|\\S+)"
+              "match": "(?:([\"])([^\"\\n]*)([\"])|(<)([^>\\n]*)(>)|(\\S+))",
+              "captures": {
+                "1": {
+                  "name": "punctuation.definition.string.begin.include.pawn"
+                },
+                "2": {
+                  "name": "entity.name.filename.include.pawn"
+                },
+                "3": {
+                  "name": "punctuation.definition.string.end.include.pawn"
+                },
+                "4": {
+                  "name": "punctuation.definition.string.begin.include.pawn"
+                },
+                "5": {
+                  "name": "entity.name.filename.include.pawn"
+                },
+                "6": {
+                  "name": "punctuation.definition.string.end.include.pawn"
+                },
+                "7": {
+                  "name": "entity.name.filename.include.pawn"
+                }
+              }
             },
             {
               "include": "#comments"
@@ -274,10 +300,10 @@
           "begin": "^(\\s*)(#)\\s*(define)\\s+([A-Za-z_][A-Za-z0-9_@]*)(?=\\()",
           "beginCaptures": {
             "2": {
-              "name": "keyword.other.preprocessor.pawn"
+              "name": "punctuation.definition.directive.pawn"
             },
             "3": {
-              "name": "keyword.other.preprocessor.define.pawn"
+              "name": "keyword.control.directive.define.pawn"
             },
             "4": {
               "name": "entity.name.function.preprocessor.pawn"
@@ -334,10 +360,10 @@
           "begin": "^(\\s*)(#)\\s*(define)\\s+([A-Za-z_][A-Za-z0-9_@]*)(?=\\s+-?(?:0[xX][0-9A-Fa-f]+|\\d+\\.\\d+(?:[eE][+-]?\\d+)?|\\d+)\\b)",
           "beginCaptures": {
             "2": {
-              "name": "keyword.other.preprocessor.pawn"
+              "name": "punctuation.definition.directive.pawn"
             },
             "3": {
-              "name": "keyword.other.preprocessor.define.pawn"
+              "name": "keyword.control.directive.define.pawn"
             },
             "4": {
               "name": "constant.numeric.preprocessor.pawn"
@@ -367,10 +393,10 @@
           "begin": "^(\\s*)(#)\\s*(define)\\s+(([A-Za-z_][^\\s]*)|(\\S+))",
           "beginCaptures": {
             "2": {
-              "name": "keyword.other.preprocessor.pawn"
+              "name": "punctuation.definition.directive.pawn"
             },
             "3": {
-              "name": "keyword.other.preprocessor.define.pawn"
+              "name": "keyword.control.directive.define.pawn"
             },
             "4": {
               "name": "constant.other.preprocessor.pawn"
@@ -403,10 +429,10 @@
           "begin": "^(\\s*)(#)\\s*(if|elseif|else|endif|ifdef|ifndef|endinput|undef|endscript|error|file|line|tryinclude|emit|pragma|assert)\\b",
           "beginCaptures": {
             "2": {
-              "name": "keyword.other.preprocessor.pawn"
+              "name": "punctuation.definition.directive.pawn"
             },
             "3": {
-              "name": "keyword.other.preprocessor.define.pawn"
+              "name": "keyword.control.directive.pawn"
             }
           },
           "end": "$",
@@ -670,18 +696,13 @@
       ]
     },
     "constants": {
-      "patterns": [
-        {
-          "name": "constant.numeric.symbol.pawn",
-          "match": "\\b[A-Z_][A-Z0-9_]*\\b"
-        }
-      ]
+      "patterns": []
     },
     "variables": {
       "patterns": [
         {
           "name": "variable.other.pawn",
-          "match": "\\b(?![A-Z_][A-Z0-9_]*\\b)(?!(?:public|stock|native|forward|static|new|const|enum|struct|if|else|switch|case|default|for|while|do|break|continue|return|goto|sizeof|charsmax|assert|Float|bool|any|char|state|true|false)\\b)[A-Za-z_@][A-Za-z0-9_@]*\\b(?!\\s*\\()"
+          "match": "\\b(?!(?:public|stock|native|forward|static|new|const|enum|struct|if|else|switch|case|default|for|while|do|break|continue|return|goto|sizeof|charsmax|assert|Float|bool|any|char|state|true|false)\\b)[A-Za-z_@][A-Za-z0-9_@]*\\b(?!\\s*\\()"
         }
       ]
     },

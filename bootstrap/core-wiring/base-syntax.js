@@ -27,7 +27,6 @@ function createBaseSyntaxRuntime(deps) {
     const {
         vscode,
         normalizeFsPath,
-        INCLUDE_LINE_RE,
         OPERATOR_SYMBOLS,
         commentAnalysisCache,
         ctrlCharStateCache,
@@ -56,7 +55,6 @@ function createBaseSyntaxRuntime(deps) {
         normalizeFsPath,
         getSearchPaths,
         resolveInclude,
-        INCLUDE_LINE_RE,
         ctrlCharStateCache,
         getCachedCommentAnalysis,
         setCachedCommentAnalysis,

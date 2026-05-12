@@ -1,12 +1,12 @@
 const { splitPawnLines } = require('./lines');
 const { skipPawnHorizontalWhitespace } = require('./whitespace');
+const { getPawnIncludeNameFromLine } = require('./includes');
 
 function createCtrlCharSyntaxCore(deps) {
     const {
         normalizeFsPath,
         getSearchPaths,
         resolveInclude,
-        INCLUDE_LINE_RE,
         ctrlCharStateCache,
         getCachedCommentAnalysis,
         setCachedCommentAnalysis,
@@ -14,10 +14,7 @@ function createCtrlCharSyntaxCore(deps) {
         readNormalizedFileContent
     } = deps;
 
-    const getIncludeNameFromLine = line => {
-        const match = String(line || '').match(INCLUDE_LINE_RE);
-        return match ? (match[1] || match[2] || match[3] || '') : '';
-    };
+    const getIncludeNameFromLine = getPawnIncludeNameFromLine;
 
     const DEFAULT_CTRL_CHAR = '^';
     const EMPTY_DIRECTIVE_CANDIDATE_LINES = [];

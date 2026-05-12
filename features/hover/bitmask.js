@@ -4,6 +4,11 @@ const {
     hasTrailingBackslashContinuation,
     removeTrailingBackslashContinuation
 } = require('../../core/syntax/continuation');
+const {
+    advanceTopLevelScannerState,
+    createTopLevelScannerState,
+    isTopLevelScannerState
+} = require('../../core/syntax/top-level');
 
 function createHoverBitmaskFeature(deps) {
     const {
@@ -193,11 +198,7 @@ function createHoverBitmaskFeature(deps) {
         const terms = [];
         let current = '';
         let currentStart = 0;
-        let parenDepth = 0;
-        let bracketDepth = 0;
-        let braceDepth = 0;
-        let inStr = false;
-        let strCh = '';
+        const scannerState = createTopLevelScannerState();
 
         const pushTerm = endIndex => {
             const raw = current;
@@ -223,28 +224,12 @@ function createHoverBitmaskFeature(deps) {
             const c = source[i];
             const next = source[i + 1] || '';
 
-            if (inStr) {
-                current += c;
-                if (c === strCh && !isEscapedQuote(source, i, escapeChar)) inStr = false;
-                continue;
-            }
-
-            if (c === '"' || c === "'") {
-                inStr = true;
-                strCh = c;
+            if (advanceTopLevelScannerState(source, i, scannerState, { isEscapedQuote, escapeChar })) {
                 current += c;
                 continue;
             }
 
-            if (c === '(') parenDepth++;
-            else if (c === ')') parenDepth = Math.max(0, parenDepth - 1);
-            else if (c === '[') bracketDepth++;
-            else if (c === ']') bracketDepth = Math.max(0, bracketDepth - 1);
-            else if (c === '{') braceDepth++;
-            else if (c === '}') braceDepth = Math.max(0, braceDepth - 1);
-
-            const topLevel = parenDepth === 0 && bracketDepth === 0 && braceDepth === 0;
-            const isBitwiseSeparator = topLevel &&
+            const isBitwiseSeparator = isTopLevelScannerState(scannerState) &&
                 (
                     (c === '|' && next !== '|' && next !== '=') ||
                     (c === '&' && next !== '&' && next !== '=') ||

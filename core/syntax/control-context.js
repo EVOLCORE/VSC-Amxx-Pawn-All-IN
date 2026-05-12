@@ -1,4 +1,8 @@
 const { isPawnIdentifierContinueChar } = require('./identifiers');
+const {
+    findNextNonEmptyLine: findNextNonEmptyLineCore,
+    isDoWhileClosingLine: isDoWhileClosingLineCore
+} = require('./control-lines');
 
 function createControlContextTracker(deps) {
     const {
@@ -16,30 +20,14 @@ function createControlContextTracker(deps) {
     const singleLineContexts = [];
     let currentLineDepth = 0;
 
-    const findNextNonEmptyLine = startLine => {
-        for (let probeLine = startLine; probeLine < strippedLines.length; probeLine++) {
-            if (String(strippedLines[probeLine] || '').trim()) return probeLine;
-        }
-        return startLine;
-    };
-
-    const findPreviousNonEmptyLine = startLine => {
-        for (let probeLine = startLine; probeLine >= 0; probeLine--) {
-            if (String(strippedLines[probeLine] || '').trim()) return probeLine;
-        }
-        return -1;
-    };
+    const findNextNonEmptyLine = startLine =>
+        findNextNonEmptyLineCore(strippedLines, startLine, { fallback: startLine });
 
     const isDoWhileClosingLine = lineNumber => {
         if (typeof providedIsDoWhileClosingLine === 'function') {
             return providedIsDoWhileClosingLine(lineNumber);
         }
-        const trimmedLine = String(strippedLines[lineNumber] || '').trim();
-        if (!/^while\s*\([^)]*\)\s*;?$/.test(trimmedLine)) return false;
-        const previousNonEmptyLine = findPreviousNonEmptyLine(lineNumber - 1);
-        if (previousNonEmptyLine < 0) return false;
-        const previousTrimmedLine = String(strippedLines[previousNonEmptyLine] || '').trim();
-        return /}\s*$/.test(previousTrimmedLine);
+        return isDoWhileClosingLineCore(strippedLines, depths, lineNumber);
     };
 
     const hasInlineContextBefore = (source, keywordIndex, keyword) => {

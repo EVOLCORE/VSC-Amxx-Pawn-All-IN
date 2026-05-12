@@ -1,3 +1,5 @@
+const { parsePawnIncludeDirectiveTarget } = require('../../core/syntax/includes');
+
 function createNavigationFeature(deps) {
     const {
         vscode,
@@ -14,32 +16,15 @@ function createNavigationFeature(deps) {
         findFirstNavigableDecl
     } = deps;
 
-    const INCLUDE_TARGET_RE = /^\s*#\s*(?:include|tryinclude)\s+(?:<([^>"]+)>|"([^"]+)"|([A-Za-z0-9_./\\-]+))/;
-
     function findIncludeTargetOnLine(lineText, lineNumber) {
         const text = String(lineText || '');
-        const match = text.match(INCLUDE_TARGET_RE);
-        if (!match) return null;
-
-        const delimitedName = match[1] || match[2] || '';
-        const bareName = match[3] || '';
-        const includeName = delimitedName || bareName;
-        if (!includeName) return null;
-
-        const matchedText = match[0] || '';
-        const nameStartInMatch = matchedText.lastIndexOf(includeName);
-        if (nameStartInMatch < 0) return null;
-
-        const nameStart = (match.index || 0) + nameStartInMatch;
-        const nameEnd = nameStart + includeName.length;
-        const isDelimited = !!delimitedName;
-        const clickStart = isDelimited ? Math.max(0, nameStart - 1) : nameStart;
-        const clickEnd = isDelimited ? Math.min(text.length, nameEnd + 1) : nameEnd;
+        const target = parsePawnIncludeDirectiveTarget(text);
+        if (!target) return null;
 
         return {
-            name: includeName,
-            range: new vscode.Range(lineNumber, nameStart, lineNumber, nameEnd),
-            clickRange: new vscode.Range(lineNumber, clickStart, lineNumber, clickEnd)
+            name: target.name,
+            range: new vscode.Range(lineNumber, target.nameStart, lineNumber, target.nameEnd),
+            clickRange: new vscode.Range(lineNumber, target.tokenStart, lineNumber, target.tokenEnd)
         };
     }
 

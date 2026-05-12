@@ -1,6 +1,12 @@
 const { isPreprocessorDirectiveLine } = require('../syntax/preprocessor-lines');
 const { hasTrailingBackslashContinuation } = require('../syntax/continuation');
 const { readPawnAssignmentOperatorAt } = require('../syntax/operators');
+const { getTypeAnalysisSourceDecls } = require('./type-analysis-cache');
+const {
+    advanceTopLevelScannerState,
+    createTopLevelScannerState,
+    isTopLevelScannerState
+} = require('../syntax/top-level');
 const {
     startsWithControlKeyword,
     startsWithDeclarationKeyword
@@ -87,51 +93,15 @@ function createSharedExpressionDiagnostics(deps) {
     function findTopLevelAssignmentOperatorIndex(lineText) {
         const source = String(lineText || '');
         if (source.indexOf('=') < 0) return -1;
-        let parenDepth = 0;
-        let braceDepth = 0;
-        let bracketDepth = 0;
-        let inStr = false;
-        let strCh = '';
+        const state = createTopLevelScannerState();
 
         for (let index = 0; index < source.length; index++) {
             const char = source[index];
             const next = source[index + 1] || '';
             const prev = source[index - 1] || '';
 
-            if (inStr) {
-                if (char === strCh) inStr = false;
-                continue;
-            }
-            if (char === '"' || char === "'") {
-                inStr = true;
-                strCh = char;
-                continue;
-            }
-            if (char === '(') {
-                parenDepth++;
-                continue;
-            }
-            if (char === ')') {
-                parenDepth = Math.max(0, parenDepth - 1);
-                continue;
-            }
-            if (char === '[') {
-                bracketDepth++;
-                continue;
-            }
-            if (char === ']') {
-                bracketDepth = Math.max(0, bracketDepth - 1);
-                continue;
-            }
-            if (char === '{') {
-                braceDepth++;
-                continue;
-            }
-            if (char === '}') {
-                braceDepth = Math.max(0, braceDepth - 1);
-                continue;
-            }
-            if (parenDepth > 0 || braceDepth > 0 || bracketDepth > 0) continue;
+            if (advanceTopLevelScannerState(source, index, state)) continue;
+            if (!isTopLevelScannerState(state)) continue;
             if (char !== '=') continue;
             if (prev === '=' || prev === '!' || next === '=') continue;
             if ((prev === '<' || prev === '>') && source[index - 2] !== prev) continue;
@@ -239,7 +209,7 @@ function createSharedExpressionDiagnostics(deps) {
 
     function compareFunctionDeclarationsByPrototype(expectedDecl, actualDecl, ctx, analysisCache) {
         if (!compareFunctionReturnByPrototype(expectedDecl, actualDecl, ctx, analysisCache)) return false;
-        const analysisDecls = analysisCache ? [] : ctx.allDecls;
+        const analysisDecls = getTypeAnalysisSourceDecls(ctx, analysisCache);
         const expectedParams = splitTopLevel(expectedDecl.args || '');
         const actualParams = splitTopLevel(actualDecl.args || '');
         if (expectedParams.length !== actualParams.length) return false;
@@ -257,7 +227,7 @@ function createSharedExpressionDiagnostics(deps) {
     function compareFunctionReturnByPrototype(expectedDecl, actualDecl, ctx, analysisCache) {
         if (!expectedDecl || !actualDecl) return false;
         if ((expectedDecl.typeTag || '') !== (actualDecl.typeTag || '')) return false;
-        const analysisDecls = analysisCache ? [] : ctx.allDecls;
+        const analysisDecls = getTypeAnalysisSourceDecls(ctx, analysisCache);
         const returnShapeIssue = getLiveArrayShapeIssue(
             expectedDecl.dims || '',
             actualDecl.dims || '',
@@ -309,7 +279,7 @@ function createSharedExpressionDiagnostics(deps) {
     function isIndeterminateSizeofDimPart(dimPart, ctx, analysisCache) {
         const raw = String(dimPart ?? '').trim();
         if (!raw) return true;
-        const decls = analysisCache ? [] : (ctx?.allDecls || []);
+        const decls = getTypeAnalysisSourceDecls(ctx, analysisCache);
         const spec = analysisCache?.getDimSpec?.(raw) ||
             parseDimSpec(raw, decls, new Set(), analysisCache);
         return !!spec?.raw && spec.capacity == null;
@@ -500,13 +470,9 @@ function createSharedExpressionDiagnostics(deps) {
         if ((text.indexOf('&') < 0 && text.indexOf('|') < 0) || !/[<>=!&|]/.test(text)) return [];
 
         const segmentStates = new Map();
-        let parenDepth = 0;
-        let bracketDepth = 0;
-        let braceDepth = 0;
-        let inStr = false;
-        let strCh = '';
+        const scannerState = createTopLevelScannerState();
 
-        const getStateKey = () => `${parenDepth}|${bracketDepth}|${braceDepth}`;
+        const getStateKey = () => `${scannerState.parenDepth}|${scannerState.bracketDepth}|${scannerState.braceDepth}`;
         const getState = () => {
             const key = getStateKey();
             let state = segmentStates.get(key);
@@ -528,39 +494,7 @@ function createSharedExpressionDiagnostics(deps) {
         const issues = [];
         for (let index = 0; index < text.length; index++) {
             const char = text[index];
-            if (inStr) {
-                if (char === strCh) inStr = false;
-                continue;
-            }
-            if (char === '"' || char === "'") {
-                inStr = true;
-                strCh = char;
-                continue;
-            }
-            if (char === '(') {
-                parenDepth++;
-                continue;
-            }
-            if (char === ')') {
-                parenDepth = Math.max(0, parenDepth - 1);
-                continue;
-            }
-            if (char === '[') {
-                bracketDepth++;
-                continue;
-            }
-            if (char === ']') {
-                bracketDepth = Math.max(0, bracketDepth - 1);
-                continue;
-            }
-            if (char === '{') {
-                braceDepth++;
-                continue;
-            }
-            if (char === '}') {
-                braceDepth = Math.max(0, braceDepth - 1);
-                continue;
-            }
+            if (advanceTopLevelScannerState(text, index, scannerState)) continue;
             if (char === ',' || char === ';') {
                 resetCurrentState();
                 continue;

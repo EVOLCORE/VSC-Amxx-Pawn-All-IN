@@ -1,3 +1,4 @@
+const fs = require('fs');
 const { createUtilityCore } = require('../utils');
 const { normalizePathKey } = require('../utils/path');
 const { createMacroExpansionSyntaxCore } = require('../syntax/macro-expander');
@@ -5,6 +6,11 @@ const { createVirtualExpandedLineContextCore } = require('../syntax/virtual-expa
 const { findBalancedGroupEnd } = require('../syntax/balanced');
 const { readPawnAssignmentOperatorAt } = require('../syntax/operators');
 const { splitPawnLines } = require('../syntax/lines');
+const {
+    advanceTopLevelScannerState,
+    createTopLevelScannerState,
+    isTopLevelScannerState
+} = require('../syntax/top-level');
 const {
     isPawnIdentifierStartCode: defaultIsIdentifierStartCode,
     isPawnIdentifierContinueCode: defaultIsIdentifierContinueCode
@@ -285,13 +291,19 @@ function createSymbolUsageDiagnostics(deps = {}) {
         return names;
     }
 
-    function collectSyntheticLocalDeclarationNames(source) {
+    function collectSyntheticLocalDeclarationInfo(source) {
         const names = new Set();
+        const ranges = new Set();
         const text = String(source || '');
         let inString = false;
         let stringCharCode = 0;
         let inBlockComment = false;
         let lineComment = false;
+        const addName = ident => {
+            if (!ident?.text) return;
+            names.add(ident.text);
+            ranges.add(`${ident.start}:${ident.end}`);
+        };
         const readIdentifier = start => {
             if (!isIdentifierStartCode(text.charCodeAt(start))) return null;
             let end = start + 1;
@@ -309,29 +321,11 @@ function createSymbolUsageDiagnostics(deps = {}) {
             return close >= 0 ? close + 1 : text.length;
         };
         const skipInitializer = start => {
-            let parenDepth = 0;
-            let bracketDepth = 0;
-            let braceDepth = 0;
-            let nestedString = false;
-            let nestedStringChar = '';
+            const scannerState = createTopLevelScannerState();
             for (let index = start; index < text.length; index++) {
                 const char = text[index];
-                if (nestedString) {
-                    if (char === nestedStringChar) nestedString = false;
-                    continue;
-                }
-                if (char === '"' || char === "'") {
-                    nestedString = true;
-                    nestedStringChar = char;
-                    continue;
-                }
-                if (char === '(') parenDepth++;
-                else if (char === ')' && parenDepth > 0) parenDepth--;
-                else if (char === '[') bracketDepth++;
-                else if (char === ']' && bracketDepth > 0) bracketDepth--;
-                else if (char === '{') braceDepth++;
-                else if (char === '}' && braceDepth > 0) braceDepth--;
-                if (parenDepth || bracketDepth || braceDepth) continue;
+                if (advanceTopLevelScannerState(text, index, scannerState, { isEscapedQuote })) continue;
+                if (!isTopLevelScannerState(scannerState)) continue;
                 if (char === ',' || char === ';') return index;
             }
             return text.length;
@@ -365,7 +359,7 @@ function createSymbolUsageDiagnostics(deps = {}) {
 
                 const nameIdent = readIdentifier(cursor);
                 if (!nameIdent) return cursor;
-                names.add(nameIdent.text);
+                addName(nameIdent);
                 cursor = nextNonWhitespace(nameIdent.end);
                 while (cursor >= 0 && text[cursor] === '[') {
                     cursor = nextNonWhitespace(skipBalanced(cursor, '[', ']'));
@@ -423,7 +417,7 @@ function createSymbolUsageDiagnostics(deps = {}) {
                 index = ident.end - 1;
             }
         }
-        return names;
+        return { names, ranges };
     }
 
     function getFunctionLikeDefineDeclMap(rootCtx) {
@@ -622,7 +616,7 @@ function createSymbolUsageDiagnostics(deps = {}) {
         };
 
         const markVariableOccurrence = (name, lineNumber, source, start, end, options = {}) => {
-            if (options.syntheticLocalNames?.has?.(name)) {
+            if (options.syntheticDeclarationRanges?.has?.(`${start}:${end}`)) {
                 return false;
             }
             if (
@@ -633,6 +627,7 @@ function createSymbolUsageDiagnostics(deps = {}) {
             }
             const variableEntry = resolveVariableEntry(name, lineNumber);
             if (!variableEntry) return false;
+            if (options.globalOnly && !variableEntry.global) return false;
             const occurrence = classifyVariableOccurrence(source, start, end);
             if (occurrence.skip) return false;
             if (occurrence.read) variableEntry.read = true;
@@ -711,9 +706,10 @@ function createSymbolUsageDiagnostics(deps = {}) {
             } else {
                 expansionSource = String(decl.value || '');
             }
+            const syntheticDeclarations = collectSyntheticLocalDeclarationInfo(expansionSource);
             scanVariableUsageSource(expansionSource, lineNumber, {
                 synthetic: true,
-                syntheticLocalNames: collectSyntheticLocalDeclarationNames(expansionSource)
+                syntheticDeclarationRanges: syntheticDeclarations.ranges
             });
         };
 
@@ -724,8 +720,8 @@ function createSymbolUsageDiagnostics(deps = {}) {
             if (activeUsageScopeLineCount <= 0) continue;
             const line = String(scanLines[lineNumber] || '');
             const rawLine = String(rawLines[lineNumber] || '');
-            const syntheticLocalNames = line !== rawLine
-                ? collectSyntheticLocalDeclarationNames(line)
+            const syntheticLocalDeclarations = line !== rawLine
+                ? collectSyntheticLocalDeclarationInfo(line)
                 : null;
             let inString = false;
             let stringCharCode = 0;
@@ -767,7 +763,6 @@ function createSymbolUsageDiagnostics(deps = {}) {
                 while (end < line.length && isIdentifierContinueCode(line.charCodeAt(end))) end++;
                 const name = line.slice(start, end);
                 index = end - 1;
-                if (syntheticLocalNames?.has(name)) continue;
                 const nextNonWhitespace = findNextNonWhitespaceIndex(line, end);
                 if (nextNonWhitespace >= 0 && line[nextNonWhitespace] === '(') {
                     const defineDecl = functionLikeDefinesByName.get(name);
@@ -788,9 +783,62 @@ function createSymbolUsageDiagnostics(deps = {}) {
                     continue;
                 }
                 if (code >= variableNameFirstCharCodes.length || !variableNameFirstCharCodes[code]) continue;
-                markVariableOccurrence(name, lineNumber, line, start, end);
+                markVariableOccurrence(name, lineNumber, line, start, end, {
+                    syntheticDeclarationRanges: syntheticLocalDeclarations?.ranges
+                });
             }
         }
+
+        const getIncludeLineNumber = entry => {
+            const line = entry?.lineNumber ?? entry?.line;
+            return Number.isInteger(line) ? line : -1;
+        };
+        const hasPotentialUnreadGlobalEntry = () => entries.some(entry =>
+            entry.global &&
+            !entry.stock &&
+            !entry.public &&
+            !entry.read
+        );
+        const includeUsageLinesByPath = new Map();
+        const readIncludeUsageLines = filePath => {
+            const normalized = normalizePath(filePath || '');
+            if (!normalized) return [];
+            if (includeUsageLinesByPath.has(normalized)) return includeUsageLinesByPath.get(normalized);
+            let lines = [];
+            try {
+                lines = splitPawnLines(fs.readFileSync(filePath, 'utf8'));
+            } catch {
+                lines = [];
+            }
+            includeUsageLinesByPath.set(normalized, lines);
+            return lines;
+        };
+        const scanDirectIncludeGlobalUsages = () => {
+            const includeEntries = Array.isArray(rootCtx?.includeEntries) ? rootCtx.includeEntries : [];
+            if (!includeEntries.length || !hasPotentialUnreadGlobalEntry()) return;
+            const scannedIncludePaths = new Set();
+            for (const includeEntry of includeEntries) {
+                if (!hasPotentialUnreadGlobalEntry()) break;
+                if ((includeEntry?.depth ?? 0) !== 0) continue;
+                const includePath = includeEntry?.filePath || '';
+                const normalizedIncludePath = normalizePath(includePath);
+                if (!normalizedIncludePath || normalizedIncludePath === documentPath) continue;
+                if (scannedIncludePaths.has(normalizedIncludePath)) continue;
+                const includeLineNumber = getIncludeLineNumber(includeEntry);
+                if (includeLineNumber < 0) continue;
+                scannedIncludePaths.add(normalizedIncludePath);
+                for (const includeLine of readIncludeUsageLines(includePath)) {
+                    const syntheticDeclarations = collectSyntheticLocalDeclarationInfo(includeLine);
+                    scanVariableUsageSource(includeLine, includeLineNumber, {
+                        synthetic: true,
+                        globalOnly: true,
+                        syntheticDeclarationRanges: syntheticDeclarations.ranges
+                    });
+                    if (!hasPotentialUnreadGlobalEntry()) break;
+                }
+            }
+        };
+        scanDirectIncludeGlobalUsages();
 
         const issues = [];
         for (const entry of entries) {

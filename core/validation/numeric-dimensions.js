@@ -198,6 +198,7 @@ function createNumericDimensionValidationCore(deps) {
                 }
                 if (
                     decl.type === 'variable' &&
+                    !decl.isArg &&
                     !decl.dims &&
                     Array.isArray(decl.modifiers) &&
                     decl.modifiers.includes('const')
