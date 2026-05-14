@@ -283,6 +283,11 @@ function isTopLevelFunctionDeclarationCompletionPrefix(prefixText) {
     return /^(?:(?:public|stock|static)\s+)*(?:[A-Za-z_@][A-Za-z0-9_@]*\s*:\s*)?$/i.test(prefix);
 }
 
+function isVariableDeclarationCompletionPrefix(prefixText) {
+    const prefix = String(prefixText || '').trimStart();
+    return /^(?:new|const|static)\b/i.test(prefix);
+}
+
 function getCompletionIntent(document, position, ctx) {
     const targetLine = Number.isInteger(position?.line) ? position.line : -1;
     if (targetLine < 0) return 'call';
@@ -290,6 +295,9 @@ function getCompletionIntent(document, position, ctx) {
     const lineText = getCompletionStructuralLine(document, ctx, targetLine);
     const tokenStart = getCompletionTokenStartCharacter(lineText, position?.character);
     const prefixBeforeToken = lineText.slice(0, tokenStart);
+    if (isVariableDeclarationCompletionPrefix(prefixBeforeToken)) {
+        return 'variable-declaration';
+    }
     if (!isTopLevelFunctionDeclarationCompletionPrefix(prefixBeforeToken)) {
         return 'call';
     }
@@ -380,5 +388,6 @@ function getCompletionControlContext(options) {
 module.exports = {
     createControlContextTracker,
     getCompletionIntent,
-    getCompletionControlContext
+    getCompletionControlContext,
+    isVariableDeclarationCompletionPrefix
 };

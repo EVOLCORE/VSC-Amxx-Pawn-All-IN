@@ -1,5 +1,6 @@
 const { createTagOverridePolicySyntaxCore } = require('../../core/syntax/tag-override-policy');
 const { getTypeAnalysisSourceDecls } = require('../../core/validation/type-analysis-cache');
+const { isPotentialEnumDeclarationLine } = require('../../core/declarations/line-utils');
 
 function createCallDiagnostics(deps) {
     const {
@@ -42,6 +43,9 @@ function createCallDiagnostics(deps) {
         const callLine = Number.isInteger(callLineNumber)
             ? callLineNumber
             : document.positionAt(callCtx.openOffset).line;
+        if (isPotentialEnumDeclarationLine((ctx.strippedLines || ctx.rawLines || [])[callLine] || '')) {
+            return diagnostics;
+        }
         if (isFunctionDefinitionHeaderCall(ctx, callCtx.funcName, callLine)) {
             return diagnostics;
         }

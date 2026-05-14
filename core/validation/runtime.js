@@ -200,6 +200,53 @@ function createValidationCore(deps) {
         return findDeclByNameFromList(decls, name, predicate);
     }
 
+    function isObjectAliasDefineDecl(decl) {
+        return !!decl && decl.type === 'define' && !decl.args && !decl.macroStyle;
+    }
+
+    function getObjectAliasTargetName(decl) {
+        if (!isObjectAliasDefineDecl(decl)) return '';
+        const targetName = getPawnIdentifierName(decl.value);
+        return targetName && targetName !== decl.name ? targetName : '';
+    }
+
+    function findObjectAliasTargetDeclByNameFromSources(decls = [], name = '', predicate = null, analysisCache = null, seen = new Set()) {
+        const aliasName = String(name || '').trim();
+        if (!aliasName || seen.has(aliasName)) return null;
+        seen.add(aliasName);
+        const aliasDefine = findAnyDeclByNameFromSources(
+            decls,
+            aliasName,
+            isObjectAliasDefineDecl,
+            analysisCache
+        );
+        const targetName = getObjectAliasTargetName(aliasDefine);
+        if (!targetName || seen.has(targetName)) return null;
+        const directTarget = findAnyDeclByNameFromSources(decls, targetName, predicate, analysisCache);
+        if (directTarget) return directTarget;
+        return findObjectAliasTargetDeclByNameFromSources(decls, targetName, predicate, analysisCache, seen);
+    }
+
+    function findVariableOrObjectAliasTargetDeclByNameFromSources(decls = [], name = '', analysisCache = null) {
+        return findVariableDeclByNameFromSources(decls, name, analysisCache) ||
+            findObjectAliasTargetDeclByNameFromSources(
+                decls,
+                name,
+                item => item?.type === 'variable',
+                analysisCache
+            );
+    }
+
+    function findFunctionLikeOrObjectAliasTargetDeclByNameFromSources(decls = [], name = '', analysisCache = null) {
+        return findAnyDeclByNameFromSources(decls, name, item => isFunctionLikeDecl(item), analysisCache) ||
+            findObjectAliasTargetDeclByNameFromSources(
+                decls,
+                name,
+                item => isFunctionLikeDecl(item),
+                analysisCache
+            );
+    }
+
     const arrayShapeCore = createArrayShapeCore({
         measurePawnStringLiteral,
         parseBraceArrayLiteralExpression,
@@ -303,7 +350,7 @@ function createValidationCore(deps) {
 
         const bareName = getPawnIdentifierName(source);
         if (bareName) {
-            const decl = findVariableDeclByNameFromSources(decls, bareName, analysisCache);
+            const decl = findVariableOrObjectAliasTargetDeclByNameFromSources(decls, bareName, analysisCache);
             if (!decl) {
                 return { isLValue: false, isConst: false, dims: '', baseDecl: null, name: bareName, isIndexedAccess: false };
             }
@@ -320,7 +367,7 @@ function createValidationCore(deps) {
 
         const indexedExpr = parseAssignableAccessExpression(source, escapeChar);
         if (indexedExpr?.baseName) {
-            const baseDecl = findVariableDeclByNameFromSources(decls, indexedExpr.baseName, analysisCache);
+            const baseDecl = findVariableOrObjectAliasTargetDeclByNameFromSources(decls, indexedExpr.baseName, analysisCache);
             if (!baseDecl) {
                 return {
                     isLValue: false,
@@ -735,29 +782,11 @@ function createValidationCore(deps) {
         const callExpr = parseWholeCallExpression(source);
         if (!callExpr) return cacheCallReturnTypeResult(null);
 
-        let decl = findAnyDeclByNameFromSources(
+        const decl = findFunctionLikeOrObjectAliasTargetDeclByNameFromSources(
             decls,
             callExpr.name,
-            item => isFunctionLikeDecl(item),
             analysisCache
         );
-        if (!decl) {
-            const aliasDefine = findAnyDeclByNameFromSources(
-                decls,
-                callExpr.name,
-                item => item.type === 'define' && !item.args,
-                analysisCache
-            );
-            const aliasTargetName = getPawnIdentifierName(aliasDefine?.value);
-            if (aliasTargetName) {
-                decl = findAnyDeclByNameFromSources(
-                    decls,
-                    aliasTargetName,
-                    item => isFunctionLikeDecl(item),
-                    analysisCache
-                );
-            }
-        }
         if (!decl) return cacheCallReturnTypeResult(null);
 
         if (decl.type === 'define' && decl.macroStyle === 'paren') {
@@ -1011,29 +1040,11 @@ function createValidationCore(deps) {
 
         const callExpr = parseWholeCallExpression(s);
         if (callExpr) {
-            let decl = findAnyDeclByNameFromSources(
+            const decl = findFunctionLikeOrObjectAliasTargetDeclByNameFromSources(
                 allDecls,
                 callExpr.name,
-                item => isFunctionLikeDecl(item),
                 analysisCache
             );
-            if (!decl) {
-                const aliasDefine = findAnyDeclByNameFromSources(
-                    allDecls,
-                    callExpr.name,
-                    item => item.type === 'define' && !item.args,
-                    analysisCache
-                );
-                const aliasTargetName = getPawnIdentifierName(aliasDefine?.value);
-                if (aliasTargetName) {
-                    decl = findAnyDeclByNameFromSources(
-                        allDecls,
-                        aliasTargetName,
-                        item => isFunctionLikeDecl(item),
-                        analysisCache
-                    );
-                }
-            }
             if (decl) {
                 if (decl.type === 'define' && decl.macroStyle === 'paren') {
                     const expandedDefineValue = expandFunctionLikeDefineCall(
@@ -1051,10 +1062,9 @@ function createValidationCore(deps) {
 
         const indexedBase = parseIndexedAccessExpression(s);
         if (indexedBase) {
-            const decl = findLocalDeclByNameFromSources(
+            const decl = findVariableOrObjectAliasTargetDeclByNameFromSources(
                 allDecls,
                 indexedBase.baseName,
-                item => item.type === 'variable',
                 analysisCache
             );
             if (decl) {
@@ -1615,17 +1625,12 @@ function createValidationCore(deps) {
                 : null;
             if (findAnyDeclByNameFromSources(decls, name, predicate, analysisCache)) return true;
             if (predicate) {
-                const aliasDefine = findAnyDeclByNameFromSources(
+                return !!findObjectAliasTargetDeclByNameFromSources(
                     decls,
                     name,
-                    item => item.type === 'define' && !item.args,
+                    predicate,
                     analysisCache
                 );
-                const aliasTargetName = getPawnIdentifierName(aliasDefine?.value);
-                if (aliasTargetName && findAnyDeclByNameFromSources(decls, aliasTargetName, predicate, analysisCache)) {
-                    return true;
-                }
-                return false;
             }
             return false;
         };

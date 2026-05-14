@@ -1,7 +1,7 @@
 # AMXX Pawn All-In
 
 AMXX Pawn All-In is a Visual Studio Code extension for AMX Mod X / Pawn development.
-It brings syntax highlighting, semantic hovers, completion, live diagnostics, include-aware analysis, and compiler integration into one focused workflow for AMXX Pawn projects.
+It brings syntax highlighting, semantic hovers, completion, rename support, live diagnostics, include-aware analysis, and compiler integration into one focused workflow for AMXX Pawn projects.
 
 Recommended AMX Mod X version: 1.9.0 or newer.
 
@@ -19,6 +19,7 @@ Recommended AMX Mod X version: 1.9.0 or newer.
 - Hover modes: normal hover, disabled hover, or experimental Ctrl/Shift/Alt-only modes for Windows.
 - Compact/full/signature-only hover content modes.
 - Optional Go to Definition links inside hover content.
+- Rename Symbol support for local variables and function arguments, with scope-aware reference matching.
 - Persistent hover support for regular symbols and diagnostic/error context.
 - Live validation in `edited` or `full` mode.
 - Live validation issue modes: errors only or errors and warnings.
@@ -207,7 +208,7 @@ When an include is written without an extension, for example `#include <test>`, 
 - `core/`
   Shared parsing, syntax, declaration, validation, include, and document-context logic.
 - `features/`
-  User-facing VS Code features such as hover, live validation, completion, and persistent hover.
+  User-facing VS Code features such as hover, live validation, completion, rename, and persistent hover.
 - `services/`
   Settings, localization, compiler integration, cache maintenance, and infrastructure.
 - `syntaxes/`

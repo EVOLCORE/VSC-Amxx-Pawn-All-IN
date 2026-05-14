@@ -60,6 +60,13 @@ function isExplicitDeclarationStartLine(line) {
     return !!word && PAWN_DECLARATION_KEYWORD_SET.has(word);
 }
 
+function isBareDeclarationKeywordLine(line) {
+    const text = String(line || '').trim();
+    if (!text || /[()[\]{}=,;]/.test(text)) return false;
+    const words = text.split(/\s+/).filter(Boolean);
+    return words.length > 0 && words.every(word => PAWN_DECLARATION_KEYWORD_SET.has(word));
+}
+
 const isWhitespaceCharCode = isPawnWhitespaceCode;
 
 const defaultEscapeRegExp = value =>
@@ -79,6 +86,7 @@ module.exports = {
     countLineBreaks,
     createPawnFunctionCallRegex,
     getPawnFunctionNameRegexSource,
+    isBareDeclarationKeywordLine,
     isExplicitDeclarationStartLine,
     isPawnIdentifierContinueCode,
     isPawnIdentifierStartCode,

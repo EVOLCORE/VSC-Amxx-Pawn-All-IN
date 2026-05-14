@@ -1,5 +1,6 @@
 const { createCompletionFeature } = require('../../features/completion');
 const { createNavigationFeature } = require('../../features/navigation');
+const { createRenameFeature } = require('../../features/rename');
 
 function buildCompletionNavigationFeatures(deps, support) {
     const {
@@ -18,6 +19,7 @@ function buildCompletionNavigationFeatures(deps, support) {
         getLookupTokenAtPosition,
         findHeaderFunctionByNameAtPosition,
         findDefinitionContext,
+        findVariableDeclarationSpanInRange,
         getPreferredFunctionHoverMatch,
         hasIncludeFunctionTwin,
         findFirstNavigableDecl,
@@ -32,7 +34,9 @@ function buildCompletionNavigationFeatures(deps, support) {
         countStructuralBraces,
         findFirstNonWhitespaceIndex,
         findKeywordOccurrences,
-        skipInlineControlHeader
+        skipInlineControlHeader,
+        computeFunctionRangeMaps,
+        isLinePositionInsideCommentOrString
     } = sharedRuntime;
 
     const completionFeature = createCompletionFeature({
@@ -73,9 +77,21 @@ function buildCompletionNavigationFeatures(deps, support) {
         findFirstNavigableDecl
     });
 
+    const renameFeature = createRenameFeature({
+        vscode,
+        getPawnDocumentContext,
+        getLookupTokenAtPosition,
+        computeFunctionRangeMaps,
+        findVariableDeclarationSpanInRange,
+        isLinePositionInsideCommentOrString,
+        isEscapedQuote,
+        isSameFilePath
+    });
+
     return {
         completionFeature,
-        navigationFeature
+        navigationFeature,
+        renameFeature
     };
 }
 

@@ -691,6 +691,59 @@ public main()
         'trailing declaration comma should not cascade into an unexpected token on the next declaration'
     );
 
+    const permissiveConstructsDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-permissive-constructs.sma'),
+        `
+new
+    globalOne, globalTwo
+
+enum Flags(<<=1) {
+    FLAG1 = 1,
+    FLAG2
+}
+
+new var3
+#define _var3 var3
+
+public main()
+{
+    new
+        localOne, localTwo
+
+    globalOne = FLAG2
+    globalTwo = globalOne
+    localOne = 1
+    localTwo = localOne
+    _var3 = localTwo
+    return globalTwo + _var3
+}
+`.trimStart()
+    );
+    const permissiveConstructsContext = coreRuntime.sharedRuntime.getPawnDocumentContext(
+        permissiveConstructsDocument,
+        undefined,
+        { preparseLocals: true }
+    );
+    const permissiveGlobals = permissiveConstructsContext.parsedDecls.globals;
+    const parsedLocals = permissiveConstructsContext.parsedDecls.locals;
+    assert(
+        permissiveGlobals.some(decl => decl.name === 'globalOne') &&
+        permissiveGlobals.some(decl => decl.name === 'globalTwo'),
+        'bare declaration keyword on its own line should continue into the next global declaration line'
+    );
+    assert(
+        parsedLocals.some(decl => decl.name === 'localOne') &&
+        parsedLocals.some(decl => decl.name === 'localTwo'),
+        'bare declaration keyword on its own line should continue into the next local declaration line'
+    );
+    const flag2 = permissiveGlobals.find(decl => decl.type === 'enum-item' && decl.name === 'FLAG2');
+    assert(flag2?.value === '2', `enum shift step should parse <<=1 and auto-value FLAG2 to 2, got: ${flag2?.value}`);
+    const permissiveConstructsDiagnostics = liveValidation.collectLiveValidationDiagnostics(permissiveConstructsDocument);
+    assert(
+        permissiveConstructsDiagnostics.length === 0,
+        `valid permissive Pawn constructs should not report diagnostics, got: ${permissiveConstructsDiagnostics.map(diagnostic => `${diagnostic.message} @ ${permissiveConstructsDocument.getText(diagnostic.range)}`).join(' | ')}`
+    );
+
     const missingFunctionBodyDocument = new MockDocument(
         path.join(workspaceRoot, 'feature-wiring-missing-function-body.sma'),
         `

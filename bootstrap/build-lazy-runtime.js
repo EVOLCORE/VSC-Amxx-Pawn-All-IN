@@ -100,6 +100,7 @@ function buildLazyActivationRuntime(deps, options = {}) {
         activeRuntime.hoverFeature.register(context);
         activeRuntime.completionFeature.register(context);
         activeRuntime.navigationFeature.register(context);
+        activeRuntime.renameFeature?.register?.(context);
         realRegistered = true;
         return activeRuntime;
     }
@@ -248,6 +249,20 @@ function buildLazyActivationRuntime(deps, options = {}) {
         }
     };
 
+    const proxyRenameFeature = {
+        register() {
+            if (typeof vscode.languages.registerRenameProvider !== 'function') return;
+            trackProxyDisposable(vscode.languages.registerRenameProvider('amxxpawn', {
+                prepareRename(document, position) {
+                    return ensureRegisteredRuntime().renameFeature?.prepareRename?.(document, position) || null;
+                },
+                provideRenameEdits(document, position, newName) {
+                    return ensureRegisteredRuntime().renameFeature?.provideRenameEdits?.(document, position, newName) || null;
+                }
+            }));
+        }
+    };
+
     const proxyPersistentHoverFeature = {
         register() {
             const schedule = (editor, delayMs, retryDelays) =>
@@ -292,6 +307,7 @@ function buildLazyActivationRuntime(deps, options = {}) {
         hoverFeature: proxyHoverFeature,
         completionFeature: proxyCompletionFeature,
         navigationFeature: proxyNavigationFeature,
+        renameFeature: proxyRenameFeature,
         buildHoverAtPosition(document, position) {
             return ensureRegisteredRuntime().buildHoverAtPosition(document, position);
         },

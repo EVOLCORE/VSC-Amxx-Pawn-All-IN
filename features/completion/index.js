@@ -414,6 +414,21 @@ function createCompletionFeature(deps) {
         return result;
     }
 
+    function filterCompletionCandidatesForIntent(candidates, completionIntent) {
+        if (!Array.isArray(candidates) || !candidates.length) return [];
+        if (completionIntent === 'variable-declaration') return [];
+        if (completionIntent === 'top-level-declaration') {
+            return candidates.filter(candidate =>
+                candidate?.d?.type === 'forward' &&
+                isFunctionLikeDecl(candidate.d)
+            );
+        }
+        if (completionIntent === 'call') {
+            return candidates.filter(candidate => candidate?.d?.type !== 'forward');
+        }
+        return candidates;
+    }
+
     function padSortNumber(value, width) {
         const safeValue = Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
         return String(safeValue).padStart(width, '0');
@@ -488,7 +503,7 @@ function createCompletionFeature(deps) {
             if (d.type !== 'variable' && d.type !== 'enum-item' && d.type !== 'enum' && d.type !== 'define') {
                 if (isFunctionLikeDecl(d)) {
                     const preferredIncludeFunc = lookup?.getPreferredFunctionMatch?.(d.name)?.data || null;
-                    if (preferredIncludeFunc && preferredIncludeFunc !== d) continue;
+                    if (d.type !== 'forward' && preferredIncludeFunc && preferredIncludeFunc !== d) continue;
                 }
                 candidates.push({ d, p: '011', i: getCompletionIdentity(d) });
             }
@@ -924,7 +939,8 @@ function createCompletionFeature(deps) {
                 };
 
                 const candidates = getBaseCompletionCandidates(ctx, line);
-                const filteredCandidates = filterCompletionCandidatesForPrefix(candidates, prefix);
+                const intentCandidates = filterCompletionCandidatesForIntent(candidates, completionIntent);
+                const filteredCandidates = filterCompletionCandidatesForPrefix(intentCandidates, prefix);
                 const completionCandidates = completionItemOptions.isForwardImplementationContext
                     ? getForwardImplementationCandidates(filteredCandidates.candidates, incDecls)
                     : filteredCandidates.candidates;
@@ -934,18 +950,20 @@ function createCompletionFeature(deps) {
                     replaceRange,
                     completionItemOptions
                 ).slice();
-                addServiceKeywordCompletions(
-                    items,
-                    document,
-                    position,
-                    replaceRange,
-                    ctx,
-                    prefix,
-                    filteredCandidates.startsWithCount > 0
-                );
+                if (completionIntent === 'call') {
+                    addServiceKeywordCompletions(
+                        items,
+                        document,
+                        position,
+                        replaceRange,
+                        ctx,
+                        prefix,
+                        filteredCandidates.startsWithCount > 0
+                    );
+                }
 
                 logCompletion(
-                    `items=${items.length}/${items.length} candidates=${filteredCandidates.candidates.length}/${candidates.length} ` +
+                    `items=${items.length}/${items.length} candidates=${filteredCandidates.candidates.length}/${intentCandidates.length}/${candidates.length} ` +
                     `prefix="${prefix}" mode=${filteredCandidates.mode} candidateMode=${filteredCandidates.mode} ` +
                     `startsWith=${filteredCandidates.startsWithCount} contains=${filteredCandidates.containsCount} ` +
                     `file=${fileName} pos=${line}:${character} ` +

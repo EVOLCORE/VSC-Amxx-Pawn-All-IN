@@ -117,6 +117,11 @@ function main() {
             wiringFile: 'bootstrap/feature-wiring/completion-navigation.js'
         },
         {
+            factoryFile: 'features/rename/index.js',
+            factoryName: 'createRenameFeature',
+            wiringFile: 'bootstrap/feature-wiring/completion-navigation.js'
+        },
+        {
             factoryFile: 'services/document-language.js',
             factoryName: 'createDocumentLanguageService',
             wiringFile: 'bootstrap/feature-wiring/support.js'

@@ -14,7 +14,8 @@ function buildFeatureActivationRuntime(deps) {
     } = buildHoverFeatures(deps, support);
     const {
         completionFeature,
-        navigationFeature
+        navigationFeature,
+        renameFeature
     } = buildCompletionNavigationFeatures(deps, support);
     const editorLifecycleFeature = buildEditorLifecycleFeature(deps, support, liveValidationRuntime);
 
@@ -24,7 +25,8 @@ function buildFeatureActivationRuntime(deps) {
         hoverFeature,
         buildHoverAtPosition,
         completionFeature,
-        navigationFeature
+        navigationFeature,
+        renameFeature
     };
 }
 

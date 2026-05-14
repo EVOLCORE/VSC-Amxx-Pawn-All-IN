@@ -125,10 +125,10 @@ function createHoverContentFeature(deps) {
         }
     }
 
-    function appendBitmaskHoverSection(md, bitmaskCtx, funcArgs, locals, globals, functions, incDecls, currentFilePath = '', lookup = null) {
+    function appendBitsHoverSection(md, bitmaskCtx, funcArgs, locals, globals, functions, incDecls, currentFilePath = '', lookup = null) {
         if (!bitmaskCtx) return;
 
-        md.appendMarkdown(`**${t('hover.combinedBits')}**\n\n`);
+        md.appendMarkdown(`**${t('hover.bits')}**\n\n`);
         md.appendCodeblock(`${bitmaskCtx.expr}\n= ${bitmaskCtx.value}`, 'amxxpawn');
 
         const infoLines = [`Value: ${bitmaskCtx.value}`];
@@ -164,20 +164,6 @@ function createHoverContentFeature(deps) {
         }
     }
 
-    function appendBitmaskPartHoverSection(md, bitmaskPartCtx) {
-        if (!bitmaskPartCtx) return;
-
-        md.appendMarkdown(`**Bit**\n\n`);
-        md.appendCodeblock(`${bitmaskPartCtx.expr}\n= ${bitmaskPartCtx.value}`, 'amxxpawn');
-
-        const infoLines = [`Value: ${bitmaskPartCtx.value}`];
-        const hexValue = formatBitmaskValueHex(bitmaskPartCtx.value);
-        if (hexValue) infoLines.push(`Hex: ${hexValue}`);
-        const setBits = formatBitmaskSetBits(bitmaskPartCtx.value);
-        if (setBits) infoLines.push(`Bits set: ${setBits}`);
-        md.appendMarkdown(`\n\n### ${t('hover.kind.info')}\n${infoLines.join('  \n')}`);
-    }
-
     function buildStructuredEnumFieldHover(
         enumDecl,
         member,
@@ -205,7 +191,7 @@ function createHoverContentFeature(deps) {
             md.appendMarkdown('\n\n---\n\n');
         }
         if (bitmaskCtx) {
-            appendBitmaskHoverSection(md, bitmaskCtx, funcArgs, locals, globals, functions, incDecls, currentFilePath);
+            appendBitsHoverSection(md, bitmaskCtx, funcArgs, locals, globals, functions, incDecls, currentFilePath);
         }
 
         if (prefixMatches.length || bitmaskCtx) {
@@ -423,11 +409,13 @@ function createHoverContentFeature(deps) {
             }
         }
 
-        if (bitmaskCtx) {
+        const effectiveBitmaskCtx = bitmaskCtx || bitmaskPartCtx;
+
+        if (effectiveBitmaskCtx) {
             if (matches.length) md.appendMarkdown('\n\n---\n\n');
-            appendBitmaskHoverSection(
+            appendBitsHoverSection(
                 md,
-                bitmaskCtx,
+                effectiveBitmaskCtx,
                 funcArgs,
                 locals,
                 globals,
@@ -438,13 +426,8 @@ function createHoverContentFeature(deps) {
             );
         }
 
-        if (bitmaskPartCtx) {
-            if (matches.length || bitmaskCtx) md.appendMarkdown('\n\n---\n\n');
-            appendBitmaskPartHoverSection(md, bitmaskPartCtx);
-        }
-
         if (!isSignatureOnlyMode && argHoverInfo) {
-            if (matches.length || bitmaskCtx || bitmaskPartCtx) md.appendMarkdown('\n\n---\n\n');
+            if (matches.length || effectiveBitmaskCtx) md.appendMarkdown('\n\n---\n\n');
             md.appendMarkdown(argHoverInfo);
         }
 

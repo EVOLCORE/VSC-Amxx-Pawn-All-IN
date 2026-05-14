@@ -1,4 +1,5 @@
 const {
+    isBareDeclarationKeywordLine,
     isExplicitDeclarationStartLine,
     isPreprocessorDirectiveLine
 } = require('./line-utils');
@@ -484,11 +485,13 @@ function createDeclarationScopeCore(deps) {
         const initialRawLine = rawLines[i] || '';
         const initialTrimmed = joined.trimEnd();
         const startsBraceInitializer = /=\s*$/.test(initialTrimmed);
+        const startsBareDeclarationKeyword = isBareDeclarationKeywordLine(initialTrimmed);
         if (
             joined.indexOf('(') < 0 &&
             joined.indexOf(')') < 0 &&
             !initialTrimmed.endsWith(',') &&
             !startsBraceInitializer &&
+            !startsBareDeclarationKeyword &&
             initialRawLine.indexOf('\\') < 0
         ) {
             return { text: joined, nextLine: i + 1 };
@@ -498,9 +501,10 @@ function createDeclarationScopeCore(deps) {
         let bd = depths.braceDepth;
         let hasLineContinuation = hasTrailingLineContinuation(rawLines[i] || '', escapeChar, sourceLines[i] || '');
         let awaitingBraceInitializer = startsBraceInitializer;
+        let awaitingBareDeclarationContinuation = startsBareDeclarationKeyword;
         i++;
 
-        while ((pd > 0 || bd > 0 || hasLineContinuation || awaitingBraceInitializer) && i < rawLines.length) {
+        while ((pd > 0 || bd > 0 || hasLineContinuation || awaitingBraceInitializer || awaitingBareDeclarationContinuation) && i < rawLines.length) {
             if (hasLineContinuation) {
                 joined = removeTrailingBackslashContinuation(joined).trimEnd();
             }
@@ -512,6 +516,7 @@ function createDeclarationScopeCore(deps) {
             bd += depths.braceDepth;
             hasLineContinuation = hasTrailingLineContinuation(rawLines[i] || '', escapeChar, sourceLines[i] || '');
             awaitingBraceInitializer = false;
+            awaitingBareDeclarationContinuation = false;
             i++;
         }
 
