@@ -1,4 +1,5 @@
 const { findTopLevelSimpleAssignmentOperator } = require('../syntax/top-level');
+const { readPawnIdentifierAt } = require('../syntax/identifiers');
 
 function createParamMetaCore(deps) {
     const {
@@ -35,8 +36,8 @@ function createParamMetaCore(deps) {
             expectedTag = tagM[1];
             source = source.slice(tagM[0].length);
         }
-        const nameMatch = source.match(/^([A-Za-z_@]\w*)/);
-        if (nameMatch) name = nameMatch[1];
+        const nameIdentifier = readPawnIdentifierAt(source, 0);
+        if (nameIdentifier) name = nameIdentifier.name;
         return {
             raw,
             name,

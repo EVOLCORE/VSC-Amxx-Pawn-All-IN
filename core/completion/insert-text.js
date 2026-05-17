@@ -3,6 +3,14 @@ function defaultIsEscapedQuote(source, index) {
 }
 
 const EXISTING_CALL_ARGUMENT_LOOKAHEAD_LINES = 8;
+const COMPLETION_CALL_ARGUMENT_MODE_ALL = 'all';
+const COMPLETION_CALL_ARGUMENT_MODE_REQUIRED_BEFORE_DEFAULT = 'required-before-default';
+
+function normalizeCompletionCallArgumentMode(value) {
+    const text = String(value || '').trim().toLowerCase();
+    if (text === COMPLETION_CALL_ARGUMENT_MODE_ALL) return COMPLETION_CALL_ARGUMENT_MODE_ALL;
+    return COMPLETION_CALL_ARGUMENT_MODE_REQUIRED_BEFORE_DEFAULT;
+}
 
 function createCompletionInsertTextCore(deps = {}) {
     const {
@@ -37,8 +45,25 @@ function createCompletionInsertTextCore(deps = {}) {
             .join(', ');
     }
 
+    function getCallSnippetArgs(argsText, options = {}) {
+        const args = splitArgs(argsText);
+        if (normalizeCompletionCallArgumentMode(options.callArgumentMode) === COMPLETION_CALL_ARGUMENT_MODE_ALL) {
+            return args;
+        }
+
+        const result = [];
+        for (const arg of args) {
+            const parsed = typeof parseParamMeta === 'function'
+                ? parseParamMeta(arg)
+                : null;
+            if (parsed?.hasDefault) break;
+            result.push(arg);
+        }
+        return result;
+    }
+
     function buildCallArgSnippetText(argsText, options = {}) {
-        return splitArgs(argsText)
+        return getCallSnippetArgs(argsText, options)
             .map((arg, index) => {
                 const placeholder = getCallParamPlaceholderName(arg, index, options);
                 return `\${${index + 1}:${escapeSnippetPlaceholderText(placeholder)}}`;
@@ -215,6 +240,7 @@ function createCompletionInsertTextCore(deps = {}) {
     return {
         buildCallArgSnippetText,
         buildDeclarationArgSnippetText,
+        getCallSnippetArgs,
         getCallParamPlaceholderName,
         getFunctionCompletionInsertionContext,
         findExistingCallArgumentBlockAfterCompletion,
@@ -223,4 +249,9 @@ function createCompletionInsertTextCore(deps = {}) {
     };
 }
 
-module.exports = { createCompletionInsertTextCore };
+module.exports = {
+    COMPLETION_CALL_ARGUMENT_MODE_ALL,
+    COMPLETION_CALL_ARGUMENT_MODE_REQUIRED_BEFORE_DEFAULT,
+    createCompletionInsertTextCore,
+    normalizeCompletionCallArgumentMode
+};

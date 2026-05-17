@@ -293,8 +293,11 @@ function createHoverContentFeature(deps) {
             hoveredWord = '',
             lookup = null,
             validateVariableAccess = true,
-            signatureArgLayout = null
+            signatureArgLayout = null,
+            suppressValidation = false
         } = options;
+        const shouldValidateSignatureArgs = !suppressValidation && validateSignatureArgs;
+        const shouldValidateVariableAccess = !suppressValidation && validateVariableAccess;
         const md = new vscode.MarkdownString();
         md.isTrusted = true;
         const hoverContentMode = getHoverContentMode();
@@ -328,7 +331,7 @@ function createHoverContentFeature(deps) {
                         variableAccessActiveIndex,
                         options.lookup || null,
                         {
-                            validateAccess: validateVariableAccess,
+                            validateAccess: shouldValidateVariableAccess,
                             includeWarnings: areHoverWarningIssuesEnabled()
                         }
                     )
@@ -344,7 +347,7 @@ function createHoverContentFeature(deps) {
 
             if (showColoredSignature) {
                 const signatureInfo = buildColoredSignatureLine(data, callArgIndex, callSiteArgs, allDecls, {
-                    validateArgs: validateSignatureArgs,
+                    validateArgs: shouldValidateSignatureArgs,
                     validationMode: signatureValidationMode,
                     lookup: options.lookup || null,
                     precomputedCallArgLayout: signatureArgLayout,

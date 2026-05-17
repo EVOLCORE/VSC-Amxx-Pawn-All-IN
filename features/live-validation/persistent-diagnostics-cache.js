@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { unrefTimer } = require('../../core/utils/timers');
 
 function createPersistentLiveDiagnosticsCache(deps) {
     const {
@@ -147,7 +148,7 @@ function createPersistentLiveDiagnosticsCache(deps) {
             payload.d = cacheEntry.diagnostics.map(serializeDiagnostic);
         }
 
-        setTimeout(() => {
+        unrefTimer(setTimeout(() => {
             if (!isEnabled()) return;
             if (document?.isDirty === true) return;
             const currentCacheDir = getCacheDir();
@@ -172,7 +173,7 @@ function createPersistentLiveDiagnosticsCache(deps) {
                     }
                 })
                 .catch(() => {});
-        }, 0);
+        }, 0));
     }
 
     return {

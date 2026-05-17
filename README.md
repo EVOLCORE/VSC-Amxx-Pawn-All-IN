@@ -7,42 +7,81 @@ Recommended AMX Mod X version: 1.9.0 or newer.
 
 ## Features
 
-- AMXX Pawn syntax highlighting for source files and compiler-recognized include files, with configurable file extensions.
-- Automatic Pawn language detection for custom file extensions when a file includes Pawn headers.
-- Include-aware declarations, symbols, functions, enums, stocks, natives, forwards, macros, and project/global include paths.
-- Fast completion for functions, variables, arguments, enum fields, compiler symbols, and include declarations.
-- Scope-aware completion that understands the current function/block, so local variables and arguments are suggested only where they are actually visible.
-- Completion ordering prefers active micro-scope locals from nested blocks, branches, and `for` declarations, then regular function locals, function arguments, globals, and include declarations.
-- Function-call completion avoids duplicating an already typed argument block, does not expand call snippets inside strings, and uses clean parameter-name placeholders for calls.
-- Forward completion can generate a new implementation body while preserving the full forward signature for declarations.
-- Semantic hover for globals, locals, function arguments, functions, includes, enum members, struct-like enum fields, bitmasks, array/indexed access, and call signatures.
-- Hover modes: normal hover, disabled hover, or experimental Ctrl/Shift/Alt-only modes for Windows.
-- Compact/full/signature-only hover content modes.
-- Optional Go to Definition links inside hover content.
-- Rename Symbol support for local variables and function arguments, with scope-aware reference matching.
-- Persistent hover support for regular symbols and diagnostic/error context.
-- Live validation in `edited` or `full` mode.
-- Live validation issue modes: errors only or errors and warnings.
-- Compiler-like diagnostics for common Pawn errors: missing/extra arguments, tag mismatches, array dimension issues, invalid indexed access, invalid statements, invalid characters, preprocessor issues, enum/initializer problems, lvalue/const issues, return-style problems, unreachable code, deprecated symbols, unused symbols, and more.
-- `#include`, `#define`, `#if/#elseif/#else/#endif`, `#pragma`, `#error`, and `#assert` analysis for live diagnostics.
-- Macro-aware local analysis for function-like macros that expand into common control/declaration patterns.
-- Detection of invalid non-Pawn characters outside strings/comments.
-- Dynamic stack usage warning that can suggest increasing `#pragma dynamic`.
-- Configurable include validation mode for balancing strict include checks with real-world AMXX include usage.
-- Configurable callback signature mode.
-- Configurable unused `stock` validation mode.
-- AMXX compiler integration with a toolbar command.
-- Configurable compiler path, output directory, compiler options, result toasts, output reveal behavior, and diagnostic reveal priority.
-- Include graph and diagnostics caches for faster repeated analysis.
-- External include watching, including tracked resolved includes.
-- Optional include document warmup for smoother first hovers/completions after opening a script.
-- Bundled color themes tuned for AMXX Pawn hovers and diagnostics:
-  - AmxxPawnAllIn Olive
-  - AmxxPawnAllIn Dark
-  - AmxxPawnAllIn Light
-  - AmxxPawnAllIn Graphite
-  - AmxxPawnAllIn Aurora
-- UI localization for English and Russian using the standard VS Code NLS mechanism.
+### Language & Syntax
+
+1. AMXX Pawn syntax highlighting for source files and compiler-recognized include files, with configurable file extensions.
+2. Automatic Pawn language detection for custom file extensions when a file includes Pawn headers.
+3. TextMate grammar support for AMXX Pawn declarations, enums, tags, macros, preprocessor directives, comments, strings, and compiler-style include forms.
+4. Built-in AMXX/Pawn compiler constants and preprocessor symbols such as `__FILE__` and `__LINE__` are understood in expression/preprocessor contexts.
+
+### Includes & Preprocessor
+
+1. Include-aware declarations, symbols, functions, enums, stocks, natives, forwards, macros, and project/global include paths.
+2. Compiler-style include resolution for `.inc`, `.p`, `.i`, `.pawn`, plus configurable extra include suffixes such as `.inl`.
+3. Correct quoted-vs-angle include search semantics: quoted includes prefer the current source directory first, while angle includes use configured/project include roots.
+4. `#include` and `#tryinclude` support for diagnostics, context, go to definition, and include path completion.
+5. `#define`, function-like macros, object-like macros, conditional `#if/#ifdef/#elseif/#else/#endif`, `#pragma`, `#error`, and `#assert` analysis for live diagnostics.
+6. Preprocessor directive completion after `#`, including AMXX Pawn `#pragma` variants with descriptions.
+7. Macro-aware local analysis for function-like macros that expand into common control/declaration patterns.
+
+### Completion
+
+1. Fast completion for functions, natives, variables, arguments, enum fields, compiler symbols, preprocessor directives, include paths, and include declarations.
+2. Scope-aware completion that understands the current function/block, so local variables and arguments are suggested only where they are actually visible.
+3. Context-aware filtering: top-level function declarations prefer forwards, function-call contexts hide declaration-only forwards, and declaration keywords avoid noisy duplicate suggestions.
+4. Completion ordering prefers active micro-scope locals from nested blocks, branches, and `for` declarations, then regular function locals, function arguments, globals, and include declarations.
+5. Function-call completion avoids duplicating an already typed argument block, does not expand call snippets inside strings, and uses clean parameter-name placeholders for calls.
+6. Configurable call snippet argument mode: insert all arguments or only required arguments before the first default value.
+7. Forward completion can generate a new implementation body while preserving the full forward signature for declarations.
+8. Deprecated declarations are marked in completion items when source metadata exposes them.
+
+### Hover & Navigation
+
+1. Semantic hover for globals, locals, function arguments, functions, includes, enum members, struct-like enum fields, bitmasks, array/indexed access, macro aliases, and call signatures.
+2. Hover can show inferred initializer/array shapes, enum-backed dimensions, bitmask values, function signatures, source include names, and validation context.
+3. Hover modes: normal hover, disabled hover, or experimental Ctrl/Shift/Alt-only modes for Windows.
+4. Compact/full/signature-only hover content modes.
+5. Optional Go to Definition links inside hover content.
+6. Go to Definition support for symbols and include declarations.
+
+### Refactor
+
+1. Rename Symbol support for local variables and function arguments.
+2. Scope-aware reference matching to avoid renaming unrelated symbols with the same name in another function/block.
+
+### Live Diagnostics
+
+1. Live validation in `edited` or `full` mode.
+2. Live validation issue modes: errors only or errors and warnings.
+3. Compiler-like diagnostics for common Pawn errors: missing/extra arguments, tag mismatches, array dimension issues, invalid indexed access, invalid statements, invalid characters, preprocessor issues, enum/initializer problems, lvalue/const issues, return-style problems, unreachable code, deprecated symbols, unused symbols, and more.
+4. Configurable include validation mode for balancing strict include checks with real-world AMXX include usage.
+5. Configurable callback signature mode for strict or compiler-like forward callback checks.
+6. Configurable unused `stock` validation mode.
+7. Detection of invalid non-Pawn characters outside strings/comments.
+8. Dynamic stack usage warning that can suggest increasing `#pragma dynamic`.
+
+### Compiler Integration
+
+1. AMXX compiler integration with a toolbar command.
+2. Configurable compiler path, output directory, compiler options, result toasts, output reveal behavior, and diagnostic reveal priority.
+
+### Performance & Caching
+
+1. Include graph and diagnostics caches for faster repeated analysis.
+2. Persistent include declaration cache with dependency stamps.
+3. External include watching, including tracked resolved includes.
+4. Optional include document warmup for smoother first hovers/completions after opening a script.
+5. Version-aware diagnostics/context caches to keep edited-file feedback responsive.
+
+### Themes & Localization
+
+1. Bundled color themes tuned for AMXX Pawn hovers and diagnostics:
+   - AmxxPawnAllIn Olive
+   - AmxxPawnAllIn Dark
+   - AmxxPawnAllIn Light
+   - AmxxPawnAllIn Graphite
+   - AmxxPawnAllIn Aurora
+2. UI localization for English and Russian using the standard VS Code NLS mechanism.
 
 ## Installation
 
@@ -149,6 +188,9 @@ Then use the `AMXX Pawn All-In: Compile Current File` command or the editor titl
 - `amxxPawnAllIn.completionForwardDeclarationStyle`
   Controls whether forward suggestions at top level insert only a signature, a same-line body, or a next-line body.
 
+- `amxxPawnAllIn.completionCallArgumentMode`
+  Controls whether call snippets insert all arguments or only the required arguments before the first default value.
+
 - `amxxPawnAllIn.callbackSignatureMode`
   `strict` keeps full forward-backed callback signature checks. `compiler-like` is more tolerant of partial callback signatures and unused forward callback parameters.
 
@@ -198,6 +240,8 @@ Primary file types:
 - `.pawn`
 
 When an include is written without an extension, for example `#include <test>`, AMXX Pawn All-In follows the compiler-style include suffix list and checks `.inc`, `.p`, `.i`, and `.pawn` before any extra configured suffixes. `.inl` is only a default extra include suffix and can be removed from `amxxPawnAllIn.includeFileExtensions`. Custom source and extra include extensions can be configured in VS Code settings.
+
+Include path completion follows the same search semantics: quoted includes prefer files relative to the current source before configured include roots, while angle includes use configured/project include roots.
 
 ## Repository Layout
 

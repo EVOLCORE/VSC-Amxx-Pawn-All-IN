@@ -1,3 +1,5 @@
+const { buildLineStartOffsets } = require('../../core/syntax/lines');
+
 function createScannerLineState({
     document,
     rootCtx,
@@ -12,14 +14,7 @@ function createScannerLineState({
         if (lineStartOffsets) return lineStartOffsets;
         lineStartOffsets = rootCtx.lineStartOffsets;
         if (!lineStartOffsets) {
-            const starts = [0];
-            const text = String(rootCtx.text || '');
-            for (let index = 0; index < text.length; index++) {
-                if (text.charCodeAt(index) === 10) {
-                    starts.push(index + 1);
-                }
-            }
-            lineStartOffsets = starts;
+            lineStartOffsets = buildLineStartOffsets(rootCtx.text || '');
         }
         if (rootCtx.semanticSession) {
             rootCtx.semanticSession.lineStartOffsets = lineStartOffsets;

@@ -9,10 +9,6 @@ function createStateSyntaxCore() {
 
     const isOperatorName = name => /^operator/.test(String(name || ''));
 
-    function readIdentifier(source, index) {
-        return readPawnIdentifierAt(source, index);
-    }
-
     function findMatchingGroupEnd(source, openIndex, openChar, closeChar) {
         return findBalancedGroupEnd(source, openIndex, openChar, closeChar, {
             isEscapedQuote: (text, index) => text[index - 1] === '\\'
@@ -35,7 +31,7 @@ function createStateSyntaxCore() {
             cursor = skipPawnWhitespace(source, cursor);
             if (cursor >= source.length) break;
 
-            const first = readIdentifier(source, cursor);
+            const first = readPawnIdentifierAt(source, cursor);
             if (!first) {
                 spec.issues.push({
                     kind: 'invalidStateSpecification',
@@ -57,7 +53,7 @@ function createStateSyntaxCore() {
                 automatonStart = first.start;
                 automatonEnd = first.end;
                 cursor = skipPawnWhitespace(source, cursor + 1);
-                const second = readIdentifier(source, cursor);
+                const second = readPawnIdentifierAt(source, cursor);
                 if (!second) {
                     spec.issues.push({
                         kind: 'invalidStateSpecification',
@@ -155,7 +151,7 @@ function createStateSyntaxCore() {
     function parseStateStatement(source) {
         const text = String(source || '');
         let cursor = skipPawnWhitespace(text, 0);
-        const stateKeyword = readIdentifier(text, cursor);
+        const stateKeyword = readPawnIdentifierAt(text, cursor);
         if (!stateKeyword || stateKeyword.text !== 'state') return null;
         cursor = skipPawnWhitespace(text, stateKeyword.end);
 
@@ -175,7 +171,7 @@ function createStateSyntaxCore() {
             cursor = skipPawnWhitespace(text, close + 1);
         }
 
-        const first = readIdentifier(text, cursor);
+        const first = readPawnIdentifierAt(text, cursor);
         if (!first) {
             return {
                 keywordStart: stateKeyword.start,
@@ -200,7 +196,7 @@ function createStateSyntaxCore() {
             automatonStart = first.start;
             automatonEnd = first.end;
             cursor = skipPawnWhitespace(text, cursor + 1);
-            const second = readIdentifier(text, cursor);
+            const second = readPawnIdentifierAt(text, cursor);
             if (!second) {
                 return {
                     keywordStart: stateKeyword.start,

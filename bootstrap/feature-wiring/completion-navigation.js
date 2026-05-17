@@ -13,7 +13,9 @@ function buildCompletionNavigationFeatures(deps, support) {
         t,
         normalizeFsPath,
         isSameFilePath,
+        isPawnDocument,
         getSearchPaths,
+        getIncludeCompletionEntries,
         resolveInclude,
         getPawnDocumentContext,
         getLookupTokenAtPosition,
@@ -51,6 +53,7 @@ function buildCompletionNavigationFeatures(deps, support) {
         isSameFilePath,
         BUILTIN_DECLS,
         buildSig,
+        getIncludeCompletionEntries,
         buildCommandLink: support.buildCommandLink,
         classifyPawnStatementLine,
         countStructuralBraces,
@@ -59,6 +62,7 @@ function buildCompletionNavigationFeatures(deps, support) {
         skipInlineControlHeader,
         isCompletionEnabled: () => settingsService?.isCompletionEnabled?.() !== false,
         getForwardCompletionBodyStyle: () => settingsService?.getCompletionForwardDeclarationStyle?.() || 'same-line',
+        getCompletionCallArgumentMode: () => settingsService?.getCompletionCallArgumentMode?.() || 'required-before-default',
         completionOutputChannel: liveValidationOutputChannel
     });
 
@@ -66,6 +70,7 @@ function buildCompletionNavigationFeatures(deps, support) {
         vscode,
         t,
         normalizeFsPath,
+        isPawnDocument,
         getSearchPaths,
         resolveInclude,
         getPawnDocumentContext,

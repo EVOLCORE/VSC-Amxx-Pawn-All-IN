@@ -228,6 +228,30 @@ function createLiveValidationScanner(deps) {
         const isPreprocessorDirectiveLine = lineNumber => {
             return isPreprocessorDirectiveTextLine(documentScanPlan.rawLines[lineNumber]);
         };
+        let sequentialContextBarrierPrefix = null;
+        const getSequentialContextBarrierPrefix = () => {
+            if (sequentialContextBarrierPrefix) return sequentialContextBarrierPrefix;
+            const lineCount = document.lineCount;
+            const prefix = new Uint32Array(lineCount + 1);
+            for (let lineNumber = 0; lineNumber < lineCount; lineNumber++) {
+                const hasBarrier = (
+                    isPreprocessorDirectiveLine(lineNumber) ||
+                    (lineNumber > 0 && isPreprocessorDirectiveLine(lineNumber - 1)) ||
+                    documentScanPlan.functionHeaderLines?.has(lineNumber) ||
+                    (lineNumber > 0 && documentScanPlan.functionHeaderLines?.has(lineNumber - 1))
+                );
+                prefix[lineNumber + 1] = prefix[lineNumber] + (hasBarrier ? 1 : 0);
+            }
+            sequentialContextBarrierPrefix = prefix;
+            return prefix;
+        };
+        const hasSequentialContextBarrier = (fromLine, toLine) => {
+            const startLine = Math.max(0, fromLine + 1);
+            const endLine = Math.min(document.lineCount - 1, toLine);
+            if (endLine < startLine) return false;
+            const prefix = getSequentialContextBarrierPrefix();
+            return prefix[endLine + 1] > prefix[startLine];
+        };
         const candidateLineNumbers = (() => {
             return documentScanPlan.lineIndex.expressionCandidateLines || [];
         })();
@@ -448,7 +472,8 @@ function createLiveValidationScanner(deps) {
             if (
                 sequentialScanContextState.ctx &&
                 lineNumber >= sequentialScanContextState.cursorLine &&
-                lineNumber <= sequentialScanContextState.validThroughLine
+                lineNumber <= sequentialScanContextState.validThroughLine &&
+                !hasSequentialContextBarrier(sequentialScanContextState.cursorLine, lineNumber)
             ) {
                 setCachedLineContext(lineNumber, sequentialScanContextState.ctx);
                 return sequentialScanContextState.ctx;
@@ -901,7 +926,9 @@ function createLiveValidationScanner(deps) {
                 lineNumbers,
                 {
                     getLineContext,
-                    getAnalysisCacheForLine
+                    getAnalysisCacheForLine,
+                    inactivePreprocessorLineFlags,
+                    isInactivePreprocessorLine
                 }
             );
             if (isFullScan && structuralDiagnosticsCache) {
@@ -911,6 +938,7 @@ function createLiveValidationScanner(deps) {
         };
         if (!hasUnresolvedRequiredIncludes) {
             for (const diagnostic of collectStructuralDiagnosticsForScan()) {
+                if (isInactivePreprocessorLine(diagnostic.range.start.line)) continue;
                 if (isDelimiterTaintedLine(diagnostic.range.start.line)) continue;
                 pushDiagnostic(diagnostic);
             }

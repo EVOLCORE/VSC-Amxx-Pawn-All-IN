@@ -1,3 +1,7 @@
+const PAWN_IDENTIFIER_SOURCE = '[A-Za-z_@][A-Za-z0-9_@]*';
+const PAWN_IDENTIFIER_RE = new RegExp(PAWN_IDENTIFIER_SOURCE);
+const PAWN_IDENTIFIER_NAME_RE = new RegExp(`^${PAWN_IDENTIFIER_SOURCE}$`);
+
 const isPawnIdentifierStartCode = code =>
     code === 95 ||
     code === 64 ||
@@ -62,6 +66,9 @@ function getPawnIdentifierName(value = '') {
 }
 
 module.exports = {
+    PAWN_IDENTIFIER_NAME_RE,
+    PAWN_IDENTIFIER_RE,
+    PAWN_IDENTIFIER_SOURCE,
     containsPawnIdentifierStartChar,
     getPawnIdentifierName,
     isPawnIdentifierBoundaryChar,

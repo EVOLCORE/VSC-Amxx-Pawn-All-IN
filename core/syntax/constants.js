@@ -1,4 +1,6 @@
 const { PAWN_INCLUDE_LINE_RE } = require('./includes');
+const { createCompilerBuiltinDecls } = require('./compiler-builtins');
+const { PAWN_IDENTIFIER_SOURCE } = require('./identifiers');
 
 function createSyntaxConstantCore(t) {
     const INCLUDE_LINE_RE = PAWN_INCLUDE_LINE_RE;
@@ -9,86 +11,7 @@ function createSyntaxConstantCore(t) {
         'goto','assert','sleep','exit','enum'
     ]);
 
-    const BUILTIN_DECLS = [
-        {
-            name: 'sizeof',
-            args: 'symbol',
-            type: 'builtin',
-            typeTag: '',
-            modifiers: [],
-            dims: '',
-            file: '',
-            filePath: '',
-            lineNumber: 0,
-            value: '',
-            docs: t('builtin.sizeof.docs')
-        },
-        {
-            name: 'true',
-            args: '',
-            type: 'builtin',
-            typeTag: 'bool',
-            modifiers: [],
-            dims: '',
-            file: '',
-            filePath: '',
-            lineNumber: 0,
-            value: '1',
-            docs: t('builtin.true.docs')
-        },
-        {
-            name: 'false',
-            args: '',
-            type: 'builtin',
-            typeTag: 'bool',
-            modifiers: [],
-            dims: '',
-            file: '',
-            filePath: '',
-            lineNumber: 0,
-            value: '0',
-            docs: t('builtin.false.docs')
-        },
-        {
-            name: 'cellmin',
-            args: '',
-            type: 'builtin',
-            typeTag: '',
-            modifiers: [],
-            dims: '',
-            file: '',
-            filePath: '',
-            lineNumber: 0,
-            value: '',
-            docs: t('builtin.cellmin.docs')
-        },
-        {
-            name: 'cellmax',
-            args: '',
-            type: 'builtin',
-            typeTag: '',
-            modifiers: [],
-            dims: '',
-            file: '',
-            filePath: '',
-            lineNumber: 0,
-            value: '',
-            docs: t('builtin.cellmax.docs')
-        },
-        {
-            name: 'EOS',
-            args: '',
-            type: 'builtin',
-            typeTag: '',
-            modifiers: [],
-            dims: '',
-            file: '',
-            filePath: '',
-            lineNumber: 0,
-            value: '0',
-            docs: ''
-        }
-    ];
+    const BUILTIN_DECLS = createCompilerBuiltinDecls(t);
 
     const VAR_MODS = new Set(['new','static','stock','public','const','private']);
     const OPERATOR_SYMBOLS = [
@@ -97,8 +20,8 @@ function createSyntaxConstantCore(t) {
     ];
 
     const MOD_RE  = /^(stock|public|static|new|const|native|forward|private)\s+/;
-    const TAG_RE  = /^((?:[A-Za-z_@]\w*)|(?:\{[^}]+\}))\s*:\s*/;
-    const NAME_RE = /^(operator(?:<<=|>>=|==|!=|<=|>=|\+\+|--|&&|\|\||<<|>>|[%*/+\-<>=!&|^~]+)|[A-Za-z_@]\w*)/;
+    const TAG_RE  = new RegExp(`^((?:${PAWN_IDENTIFIER_SOURCE})|(?:\\{[^}]+\\}))\\s*:\\s*`);
+    const NAME_RE = new RegExp(`^(operator(?:<<=|>>=|==|!=|<=|>=|\\+\\+|--|&&|\\|\\||<<|>>|[%*/+\\-<>=!&|^~]+)|${PAWN_IDENTIFIER_SOURCE})`);
 
     return {
         INCLUDE_LINE_RE,

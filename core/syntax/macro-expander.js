@@ -47,6 +47,45 @@ function createMacroExpansionSyntaxCore(deps = {}) {
         });
     }
 
+    function getBracketMacroIndexerSegmentCount(decl) {
+        const source = String(decl?.macroIndexer || '').trim();
+        if (!source) return 1;
+        return Math.max(1, source.split('][').length);
+    }
+
+    function readBracketMacroCallArgs(source, openIndex, decl, escapeChar = '') {
+        const text = String(source || '');
+        let cursor = Math.max(0, openIndex | 0);
+        const segmentCount = getBracketMacroIndexerSegmentCount(decl);
+        const parts = [];
+        for (let segment = 0; segment < segmentCount; segment++) {
+            while (segment > 0 && cursor < text.length && isWhitespace(text[cursor])) cursor++;
+            if (text[cursor] !== '[') return null;
+            const closeIndex = findMatchingBracketIndex(text, cursor, escapeChar);
+            if (closeIndex < 0) return null;
+            parts.push(text.slice(cursor + 1, closeIndex));
+            cursor = closeIndex + 1;
+        }
+        return {
+            argsText: parts.join(']['),
+            end: cursor
+        };
+    }
+
+    function readParameterizedDefineCallArgs(source, openIndex, decl, escapeChar = '') {
+        if (!decl || decl.type !== 'define') return null;
+        if (decl.macroStyle === 'paren') {
+            const closeIndex = findMatchingParenIndex(source, openIndex, escapeChar);
+            return closeIndex >= 0
+                ? { argsText: String(source || '').slice(openIndex + 1, closeIndex), end: closeIndex + 1 }
+                : null;
+        }
+        if (decl.macroStyle === 'bracket') {
+            return readBracketMacroCallArgs(source, openIndex, decl, escapeChar);
+        }
+        return null;
+    }
+
     function splitMacroArguments(source, escapeChar = '') {
         return splitTopLevel(String(source || ''), escapeChar, true);
     }
@@ -309,10 +348,8 @@ function createMacroExpansionSyntaxCore(deps = {}) {
             let replacement = '';
             let replacementEnd = identifier.end;
             if (isParameterizedCall) {
-                const closeIndex = callOpen === '('
-                    ? findMatchingParenIndex(text, next, escapeChar)
-                    : findMatchingBracketIndex(text, next, escapeChar);
-                if (closeIndex < 0) {
+                const callArgs = readParameterizedDefineCallArgs(text, next, decl, escapeChar);
+                if (!callArgs) {
                     index = identifier.end;
                     continue;
                 }
@@ -320,7 +357,7 @@ function createMacroExpansionSyntaxCore(deps = {}) {
                 nestedDisabled.add(identifier.name);
                 replacement = expandParameterizedDefineCall(
                     decl,
-                    text.slice(next + 1, closeIndex),
+                    callArgs.argsText,
                     {
                         ...options,
                         defineDecls,
@@ -331,7 +368,7 @@ function createMacroExpansionSyntaxCore(deps = {}) {
                     ...options,
                     disabledNames: nestedDisabled
                 }).text;
-                replacementEnd = closeIndex + 1;
+                replacementEnd = callArgs.end;
             } else {
                 replacement = String(decl.value || '').trim();
                 if (!replacement || replacement === identifier.name) {
@@ -391,6 +428,7 @@ function createMacroExpansionSyntaxCore(deps = {}) {
         expandMacros,
         findMatchingParenIndex,
         findMatchingBracketIndex,
+        readParameterizedDefineCallArgs,
         splitMacroArguments,
         replaceMacroParameters: appendOutsideStringReplacements
     };

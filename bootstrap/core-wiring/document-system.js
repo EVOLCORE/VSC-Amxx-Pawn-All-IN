@@ -189,6 +189,7 @@ function createDocumentSystemRuntime(deps) {
         clearIncludeDeclCacheForFile,
         clearIncludeFileTextCacheForFile,
         clearFileSnapshotCacheForFile,
+        clearIncludeCompletionSourceCache: includeSystemRuntime.clearIncludeCompletionSourceCache,
         clearScheduledWarmup: documentContextRuntime.clearScheduledWarmup,
         parsePreprocessorDirectiveLine,
         isExplicitDeclarationStartLine,

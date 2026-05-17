@@ -29,8 +29,25 @@ function countTextLines(source = '') {
     return countLineBreaks(source) + 1;
 }
 
+function buildLineStartOffsets(source = '') {
+    const text = String(source || '');
+    const offsets = [0];
+    for (let index = 0; index < text.length; index++) {
+        if (text.charCodeAt(index) === 10) offsets.push(index + 1);
+    }
+    return offsets;
+}
+
+function resolveLineStartOffset(lineStartOffsets, lineNumber, fallback = 0) {
+    const offset = Array.isArray(lineStartOffsets) ? lineStartOffsets[lineNumber] : undefined;
+    if (Number.isFinite(offset)) return offset;
+    return typeof fallback === 'function' ? fallback(lineNumber) : fallback;
+}
+
 module.exports = {
+    buildLineStartOffsets,
     countLineBreaks,
     countTextLines,
+    resolveLineStartOffset,
     splitPawnLines
 };

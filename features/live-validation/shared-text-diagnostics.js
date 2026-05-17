@@ -1,7 +1,10 @@
 const { makeLiveValidationDiagnosticKey } = require('./diagnostic-key');
 const { LIVE_INVALID_CODE_CHARACTER_DIAGNOSTIC_CODE } = require('./diagnostic-codes');
 const { createTextSyntaxDiagnosticsCore } = require('../../core/syntax');
-const { splitPawnLines } = require('../../core/syntax/lines');
+const {
+    resolveLineStartOffset,
+    splitPawnLines
+} = require('../../core/syntax/lines');
 const { isPreprocessorDirectiveLine } = require('../../core/syntax/preprocessor-lines');
 
 function createSharedTextDiagnostics(deps) {
@@ -96,8 +99,11 @@ function createSharedTextDiagnostics(deps) {
         );
         if (!issues.length) return [];
         return issues.map(issue => {
-            const lineStartOffset = lineStartOffsets?.[issue.lineNumber] ??
-                document.offsetAt(new vscode.Position(issue.lineNumber, 0));
+            const lineStartOffset = resolveLineStartOffset(
+                lineStartOffsets,
+                issue.lineNumber,
+                () => document.offsetAt(new vscode.Position(issue.lineNumber, 0))
+            );
             return createLiveValidationDiagnostic(
                 createOffsetRange(
                     document,

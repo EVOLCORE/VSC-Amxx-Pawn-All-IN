@@ -77,6 +77,7 @@ function createLiveValidationDiagnosticCore(deps) {
         collectPreprocessorDirectiveText,
         collectEnumMemberSyntaxIssues,
         collectVariableDeclarationSyntaxIssuesForLine,
+        collectDeclarationText,
         getPreferredFunctionHoverMatch,
         isFunctionLikeDecl,
         isFunctionLikeDefineDecl,
@@ -479,6 +480,7 @@ function createLiveValidationDiagnosticCore(deps) {
     } = createStructuralDiagnostics({
         areWarningDiagnosticsEnabled,
         classifyPawnStatementLine,
+        collectDeclarationText,
         countStructuralBraces,
         countTopLevelSemicolonStatements,
         createHoverTypeAnalysisCache,

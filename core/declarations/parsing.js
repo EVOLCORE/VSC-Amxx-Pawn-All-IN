@@ -24,6 +24,8 @@ const { startsWithLocalDeclarationKeyword } = require('../syntax/keywords');
 const { createMacroExpansionSyntaxCore } = require('../syntax/macro-expander');
 const { createVirtualExpandedLineContextCore } = require('../syntax/virtual-expanded-line-context');
 const { getPreprocessedCtrlCharState } = require('../syntax/preprocessed-state');
+const { attachLazyPrecomputedDeclBuckets } = require('../lookup/precomputed-buckets');
+const { maskPreprocessorDirectiveLines } = require('../syntax/preprocessor-lines');
 
 function createDeclarationParsingCore(deps) {
     const {
@@ -136,14 +138,27 @@ function createDeclarationParsingCore(deps) {
         );
     }
 
-    function parseFuncArgs(argsStr, filePath, fileName, lineNumber, escapeChar = getActiveCtrlChar()) {
-        if (!argsStr?.trim()) return [];
+    function expandDeclarationArgMacros(argsStr, defineDecls = [], escapeChar = getActiveCtrlChar()) {
+        const source = String(argsStr || '').trim();
+        if (!source || !Array.isArray(defineDecls) || !defineDecls.length) return source;
+        return splitTopLevel(source, escapeChar)
+            .map(piece => {
+                const part = String(piece || '').trim();
+                if (!part || part === '...') return part;
+                return expandDeclarationHeadMacro(part, defineDecls, escapeChar) || part;
+            })
+            .join(', ');
+    }
 
-        const cacheKey = getFuncArgsParseCacheKey(argsStr, filePath, lineNumber, escapeChar);
+    function parseFuncArgs(argsStr, filePath, fileName, lineNumber, escapeChar = getActiveCtrlChar(), options = {}) {
+        if (!argsStr?.trim()) return [];
+        const effectiveArgsStr = expandDeclarationArgMacros(argsStr, options.defineDecls, escapeChar);
+
+        const cacheKey = getFuncArgsParseCacheKey(effectiveArgsStr, filePath, lineNumber, escapeChar);
         const cached = funcArgsParseCache.get(cacheKey);
         if (cached) return cached;
 
-        const parsedArgs = splitTopLevel(argsStr, escapeChar).flatMap(piece => {
+        const parsedArgs = splitTopLevel(effectiveArgsStr, escapeChar).flatMap(piece => {
             piece = piece.trim();
             if (!piece || piece === '...') return [];
             const modifiers = [];
@@ -444,11 +459,12 @@ function createDeclarationParsingCore(deps) {
         const strippedBlockText = strippedBlockLines.join('\n');
         const strippedOpenIdx = strippedBlockText.indexOf('{');
         const strippedCloseIdx = strippedBlockText.lastIndexOf('}');
-        const body = (
+        const bodySource = (
             strippedOpenIdx >= 0 && strippedCloseIdx > strippedOpenIdx
                 ? strippedBlockText.slice(strippedOpenIdx + 1, strippedCloseIdx)
                 : text.slice(openIdx + 1, closeIdx).replace(/\/\*[\s\S]*?\*\//g, '')
         );
+        const body = maskPreprocessorDirectiveLines(bodySource);
         const bodyBlockOffset = strippedOpenIdx >= 0 ? strippedOpenIdx + 1 : openIdx + 1;
         const bodyStartLineOffset = countLineBreaks(strippedBlockText, 0, bodyBlockOffset);
 
@@ -784,12 +800,22 @@ function createDeclarationParsingCore(deps) {
             else if (modifiers.includes('public'))  type = 'public';
             else if (modifiers.includes('stock'))   type = 'stock';
             else if (modifiers.includes('static'))  type = 'static';
+            const normalizedArgs = argsRaw.replace(/\s+/g, ' ').trim();
+            const expandedArgs = expandDeclarationArgMacros(
+                argsRaw,
+                options.defineDecls,
+                options.escapeChar || getActiveCtrlChar()
+            ).replace(/\s+/g, ' ').trim();
             const functionDecl = {
-                name, args: argsRaw.replace(/\s+/g, ' ').trim(),
+                name, args: expandedArgs || normalizedArgs,
                 type, typeTag, modifiers, dims: leadingDims,
                 file: fileName, filePath, lineNumber, value: '',
                 stateSpec
             };
+            if (expandedArgs && expandedArgs !== normalizedArgs) {
+                functionDecl.rawArgs = normalizedArgs;
+                functionDecl.macroExpandedArgs = true;
+            }
             return [attachLazyDocs(functionDecl, 'docs', getDocs, mayHaveDocs)];
         }
 
@@ -908,6 +934,33 @@ function createDeclarationParsingCore(deps) {
         return nextStartLine;
     }
 
+    function getNextFunctionStartLineIndex(base) {
+        if (base?.nextFunctionStartLineByFunction) return base.nextFunctionStartLineByFunction;
+        const index = new Map();
+        const functions = Array.isArray(base?.functions) ? base.functions : [];
+        const sortedFunctions = functions
+            .filter(Boolean)
+            .slice()
+            .sort((left, right) =>
+                (left.startLine ?? left.lineNumber ?? -1) -
+                (right.startLine ?? right.lineNumber ?? -1)
+            );
+        for (let i = 0; i < sortedFunctions.length; i++) {
+            const next = sortedFunctions[i + 1] || null;
+            index.set(sortedFunctions[i], next ? (next.startLine ?? next.lineNumber ?? -1) : -1);
+        }
+        if (base) base.nextFunctionStartLineByFunction = index;
+        return index;
+    }
+
+    function getNextFunctionStartLine(base, func) {
+        if (!func) return -1;
+        const index = getNextFunctionStartLineIndex(base);
+        return index.has(func)
+            ? index.get(func)
+            : findNextFunctionStartLine(base?.functions || [], func);
+    }
+
     function findFunctionBodyRange(func, depths, scanMaxLine = null) {
         if (!func) return null;
         if (Number.isInteger(func.singleStatementBodyLine)) {
@@ -960,7 +1013,7 @@ function createDeclarationParsingCore(deps) {
                 }
             }
 
-            const nextFunctionStartLine = findNextFunctionStartLine(base.functions, func);
+            const nextFunctionStartLine = getNextFunctionStartLine(base, func);
             const bodyRange = findFunctionBodyRange(
                 func,
                 base.depths || [],
@@ -990,7 +1043,7 @@ function createDeclarationParsingCore(deps) {
         if (base.localDeclsByFunction.has(func)) {
             return base.localDeclsByFunction.get(func);
         }
-        const nextFunctionStartLine = findNextFunctionStartLine(base.functions, func);
+        const nextFunctionStartLine = getNextFunctionStartLine(base, func);
         const bodyEndLine = findFunctionBodyEndLine(
             func,
             base.depths || [],
@@ -1034,6 +1087,7 @@ function createDeclarationParsingCore(deps) {
         let activeDefineDeclsByLine = null;
         let activeDefineDeclsEventIndex = 0;
         let activeDefineDeclsAdvancedThrough = -1;
+        let activeDefineDeclsCache = null;
         const getActiveDefineDeclsBeforeLine = lineNumber => {
             const baseDefines = Array.isArray(baseDefineDecls) ? baseDefineDecls : [];
             if (!Array.isArray(defineDirectiveEvents) || !defineDirectiveEvents.length) return baseDefines;
@@ -1049,8 +1103,14 @@ function createDeclarationParsingCore(deps) {
                 );
                 activeDefineDeclsEventIndex = advanced.nextEventIndex;
                 activeDefineDeclsAdvancedThrough = targetLine;
+                if (advanced.changed) {
+                    activeDefineDeclsCache = null;
+                }
             }
-            return [...baseDefines, ...activeDefineDeclsByLine.values()];
+            if (!activeDefineDeclsCache) {
+                activeDefineDeclsCache = [...baseDefines, ...activeDefineDeclsByLine.values()];
+            }
+            return activeDefineDeclsCache;
         };
 
         const singleStatementDecls = parseSingleStatementBodyDecls(
@@ -1089,14 +1149,33 @@ function createDeclarationParsingCore(deps) {
             } else {
                 const trimmedStartLine = String(strippedLines[startK] || '').trim();
                 const escapeChar = lineCtrlChars[startK] || getActiveCtrlChar();
-                const activeDefineDecls = getActiveDefineDeclsBeforeLine(startK);
+                let activeDefineDeclsForLine = null;
+                const getActiveDefineDeclsForLine = () => {
+                    if (!activeDefineDeclsForLine) {
+                        activeDefineDeclsForLine = getActiveDefineDeclsBeforeLine(startK);
+                    }
+                    return activeDefineDeclsForLine;
+                };
                 let macroForLineText = '';
                 if (!/^for\s*\(/.test(trimmedStartLine) && !isPotentialLocalDeclarationStartLine(trimmedStartLine)) {
+                    const leadingMacroCall = virtualExpandedLineContextCore.readLeadingFunctionLikeDefineCall(trimmedStartLine);
+                    if (!leadingMacroCall) {
+                        continue;
+                    }
+                    const activeDefineDecls = getActiveDefineDeclsForLine();
+                    const defineDecl = virtualExpandedLineContextCore.findFunctionLikeDefineDecl(
+                        activeDefineDecls,
+                        leadingMacroCall.name
+                    );
+                    if (!defineDecl) {
+                        continue;
+                    }
                     const virtualLine = virtualExpandedLineContextCore.getVirtualExpandedLineContext(
                         trimmedStartLine,
                         activeDefineDecls,
                         {
                             escapeChar,
+                            defineDecl,
                             expandActualArgs: false,
                             maxOutputLength: 8192
                         }
@@ -1127,7 +1206,7 @@ function createDeclarationParsingCore(deps) {
                         startK,
                         escapeChar,
                         {
-                            defineDecls: activeDefineDecls
+                            defineDecls: getActiveDefineDeclsForLine()
                         }
                     );
                     if (macroForDecls) {
@@ -1138,7 +1217,7 @@ function createDeclarationParsingCore(deps) {
                         { text: lineText, startLine: startK },
                         rawLines, filePath, fileName, 'local',
                         {
-                            defineDecls: activeDefineDecls,
+                            defineDecls: getActiveDefineDeclsForLine(),
                             escapeChar
                         }
                     );
@@ -1794,10 +1873,10 @@ function createDeclarationParsingCore(deps) {
             }
 
             const parsedDecls = {
-                globals: resultGlobals,
-                functions: resultFunctions,
-                locals: scopedLocals,
-                funcArgs,
+                globals: attachLazyPrecomputedDeclBuckets(resultGlobals),
+                functions: attachLazyPrecomputedDeclBuckets(resultFunctions),
+                locals: attachLazyPrecomputedDeclBuckets(scopedLocals),
+                funcArgs: attachLazyPrecomputedDeclBuckets(funcArgs),
                 depths
             };
             if (useCursorCache && cursorLine !== undefined) {

@@ -1,10 +1,12 @@
 const { parsePawnIncludeDirectiveTarget } = require('../../core/syntax/includes');
+const { createLinkedDefinitionCore } = require('../../core/navigation');
 
 function createNavigationFeature(deps) {
     const {
         vscode,
         t,
         normalizeFsPath,
+        isPawnDocument,
         getSearchPaths,
         resolveInclude,
         getPawnDocumentContext,
@@ -15,6 +17,13 @@ function createNavigationFeature(deps) {
         getPreferredFunctionHoverMatch,
         findFirstNavigableDecl
     } = deps;
+    const linkedDefinitionCore = createLinkedDefinitionCore({
+        vscode,
+        normalizeFsPath,
+        isPawnDocument,
+        getPawnDocumentContext,
+        findFirstNavigableDecl
+    });
 
     function findIncludeTargetOnLine(lineText, lineNumber) {
         const text = String(lineText || '');
@@ -23,6 +32,7 @@ function createNavigationFeature(deps) {
 
         return {
             name: target.name,
+            delimiter: target.delimiter || '',
             range: new vscode.Range(lineNumber, target.nameStart, lineNumber, target.nameEnd),
             clickRange: new vscode.Range(lineNumber, target.tokenStart, lineNumber, target.tokenEnd)
         };
@@ -42,12 +52,14 @@ function createNavigationFeature(deps) {
         return isPositionInsideLineRange(position, target?.clickRange) ? target : null;
     }
 
-    function resolveIncludeFilePath(document, includeName, searchPaths = null) {
+    function resolveIncludeFilePath(document, includeName, searchPaths = null, options = {}) {
         if (!includeName || typeof resolveInclude !== 'function') return '';
         const paths = Array.isArray(searchPaths)
             ? searchPaths
             : (typeof getSearchPaths === 'function' ? getSearchPaths(document?.fileName || '') : []);
-        return resolveInclude(includeName, paths, document?.fileName || '') || '';
+        return resolveInclude(includeName, paths, document?.fileName || '', {
+            delimiter: options.delimiter || ''
+        }) || '';
     }
 
     function createIncludeLocation(filePath) {
@@ -61,7 +73,9 @@ function createNavigationFeature(deps) {
     function provideIncludeDefinition(document, position) {
         const target = getIncludeTargetAtPosition(document, position);
         if (!target) return null;
-        return createIncludeLocation(resolveIncludeFilePath(document, target.name));
+        return createIncludeLocation(resolveIncludeFilePath(document, target.name, null, {
+            delimiter: target.delimiter || ''
+        }));
     }
 
     function provideDefinition(document, position) {
@@ -104,7 +118,9 @@ function createNavigationFeature(deps) {
                 );
             }
 
-            const targetMatch = findFirstNavigableDecl(lookup, word);
+            const targetMatch =
+                findFirstNavigableDecl(lookup, word) ||
+                linkedDefinitionCore.findLinkedWorkspaceNavigableDecl(document, word);
             if (!targetMatch) return null;
 
             return new vscode.Location(
@@ -126,7 +142,9 @@ function createNavigationFeature(deps) {
                 const target = findIncludeTargetOnLine(document.lineAt(lineNumber)?.text || '', lineNumber);
                 if (!target) continue;
 
-                const filePath = resolveIncludeFilePath(document, target.name, searchPaths);
+                const filePath = resolveIncludeFilePath(document, target.name, searchPaths, {
+                    delimiter: target.delimiter || ''
+                });
                 if (!filePath) continue;
                 links.push(new vscode.DocumentLink(target.range, vscode.Uri.file(filePath)));
             }

@@ -1,4 +1,6 @@
 const {
+    PAWN_IDENTIFIER_NAME_RE,
+    PAWN_IDENTIFIER_SOURCE,
     containsPawnIdentifierStartChar,
     getPawnIdentifierName
 } = require('../../core/syntax/identifiers');
@@ -8,6 +10,10 @@ const {
 } = require('../../core/syntax/keywords');
 const { isPreprocessorDirectiveLine } = require('../../core/syntax/preprocessor-lines');
 const { getTypeAnalysisSourceDecls } = require('../../core/validation/type-analysis-cache');
+
+const DELIMITER_PREFIXED_IDENTIFIER_TAIL_RE = new RegExp(`^([)\\]}]+)((?:${PAWN_IDENTIFIER_SOURCE})|(?:[^\\x00-\\x7F]+))$`);
+const PREFIXED_INCREMENT_IDENTIFIER_RE = new RegExp(`^(?:\\+\\+|--)${PAWN_IDENTIFIER_SOURCE}$`);
+const SUFFIXED_INCREMENT_IDENTIFIER_RE = new RegExp(`^${PAWN_IDENTIFIER_SOURCE}(?:\\+\\+|--)$`);
 
 function createSymbolDiagnostics(deps) {
     const {
@@ -100,7 +106,7 @@ function createSymbolDiagnostics(deps) {
         const strippedScanText = String(strippedLineText || rawLineText);
         const canTrustStrippedScan = strippedScanText.length === rawLineText.length;
         const identifierScanText = canTrustStrippedScan ? strippedScanText : rawLineText;
-        const bareIdentifierMatch = trimmedLine.match(/^([A-Za-z_@][A-Za-z0-9_@]*)$/);
+        const bareIdentifierName = getPawnIdentifierName(trimmedLine);
         const stateStatement = parseStateStatement(strippedLineText || lineText);
         const isStateStatementSyntaxName = (start, end) => !!(
             stateStatement &&
@@ -127,19 +133,19 @@ function createSymbolDiagnostics(deps) {
             return true;
         };
 
-        if (bareIdentifierMatch && !ignoredUnknownSymbolNames.has(bareIdentifierMatch[1])) {
-            const startIndex = lineText.indexOf(bareIdentifierMatch[1]);
+        if (bareIdentifierName && !ignoredUnknownSymbolNames.has(bareIdentifierName)) {
+            const startIndex = lineText.indexOf(bareIdentifierName);
             if (startIndex >= 0) {
                 pushSymbolTruncationWarning(
-                    bareIdentifierMatch[1],
+                    bareIdentifierName,
                     startIndex,
-                    startIndex + bareIdentifierMatch[1].length
+                    startIndex + bareIdentifierName.length
                 );
             }
-            if (!findAnyDeclByName(bareIdentifierMatch[1])) {
+            if (!findAnyDeclByName(bareIdentifierName)) {
                 const analysisCache = getAnalysisCache();
                 const unresolved = findUnresolvedReferenceNames(
-                    bareIdentifierMatch[1],
+                    bareIdentifierName,
                     getTypeAnalysisSourceDecls(ctx, analysisCache),
                     analysisCache,
                     escapeChar
@@ -153,10 +159,10 @@ function createSymbolDiagnostics(deps) {
                             createOffsetRange(
                                 document,
                                 lineStartOffset + startIndex,
-                                lineStartOffset + startIndex + bareIdentifierMatch[1].length,
+                                lineStartOffset + startIndex + bareIdentifierName.length,
                                 docLength
                             ),
-                            t('validation.unknownSymbol', { symbols: unresolved.length ? unresolved.join(', ') : bareIdentifierMatch[1] })
+                            t('validation.unknownSymbol', { symbols: unresolved.length ? unresolved.join(', ') : bareIdentifierName })
                         )
                     );
                     return diagnostics;
@@ -353,7 +359,7 @@ function createSymbolDiagnostics(deps) {
         if (!singleTokenMatch) return diagnostics;
         const token = singleTokenMatch[1];
         if (token === '_') return diagnostics;
-        const delimiterPrefixedIdentifierTailMatch = token.match(/^([)\]}]+)((?:[A-Za-z_@][A-Za-z0-9_@]*)|(?:[^\x00-\x7F]+))$/);
+        const delimiterPrefixedIdentifierTailMatch = token.match(DELIMITER_PREFIXED_IDENTIFIER_TAIL_RE);
         if (delimiterPrefixedIdentifierTailMatch) {
             const tokenStart = lineText.indexOf(token);
             const suffix = delimiterPrefixedIdentifierTailMatch[2];
@@ -375,9 +381,9 @@ function createSymbolDiagnostics(deps) {
             }
             return diagnostics;
         }
-        if (/^[A-Za-z_@][A-Za-z0-9_@]*$/.test(token)) return diagnostics;
-        if (/^(?:\+\+|--)[A-Za-z_@][A-Za-z0-9_@]*$/.test(token)) return diagnostics;
-        if (/^[A-Za-z_@][A-Za-z0-9_@]*(?:\+\+|--)$/.test(token)) return diagnostics;
+        if (PAWN_IDENTIFIER_NAME_RE.test(token)) return diagnostics;
+        if (PREFIXED_INCREMENT_IDENTIFIER_RE.test(token)) return diagnostics;
+        if (SUFFIXED_INCREMENT_IDENTIFIER_RE.test(token)) return diagnostics;
         if (nonAsciiCharRe.test(token)) {
             return diagnostics;
         }

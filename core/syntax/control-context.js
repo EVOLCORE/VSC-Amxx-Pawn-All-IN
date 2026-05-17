@@ -1,8 +1,20 @@
-const { isPawnIdentifierContinueChar } = require('./identifiers');
+const {
+    PAWN_IDENTIFIER_SOURCE,
+    isPawnIdentifierContinueChar
+} = require('./identifiers');
+
+const TOP_LEVEL_FUNCTION_DECLARATION_PREFIX_RE = new RegExp(
+    `^(?:(?:public|stock|static)\\s+)*(?:${PAWN_IDENTIFIER_SOURCE}\\s*:\\s*)?$`,
+    'i'
+);
 const {
     findNextNonEmptyLine: findNextNonEmptyLineCore,
     isDoWhileClosingLine: isDoWhileClosingLineCore
 } = require('./control-lines');
+const {
+    findLastTopLevelChar,
+    findTopLevelSimpleAssignmentOperator
+} = require('./top-level');
 
 function createControlContextTracker(deps) {
     const {
@@ -280,12 +292,44 @@ function getCompletionBraceDepthBefore(document, position, ctx) {
 function isTopLevelFunctionDeclarationCompletionPrefix(prefixText) {
     const prefix = String(prefixText || '').trimStart();
     if (!prefix.trim()) return true;
-    return /^(?:(?:public|stock|static)\s+)*(?:[A-Za-z_@][A-Za-z0-9_@]*\s*:\s*)?$/i.test(prefix);
+    return TOP_LEVEL_FUNCTION_DECLARATION_PREFIX_RE.test(prefix);
+}
+
+function readVariableDeclarationCompletionPrefix(prefixText) {
+    const prefix = String(prefixText || '').trimStart();
+    const match = prefix.match(/^(new|const|static)\b/i);
+    if (!match) return null;
+    return {
+        prefix,
+        keyword: match[1],
+        body: prefix.slice(match[0].length)
+    };
+}
+
+function isVariableDeclarationInitializerCompletionPrefix(prefixText) {
+    const parsed = readVariableDeclarationCompletionPrefix(prefixText);
+    if (!parsed) return false;
+    const lastTopLevelComma = findLastTopLevelChar(parsed.body, ',');
+    const currentDeclaratorPrefix = parsed.body.slice(lastTopLevelComma + 1);
+    return findTopLevelSimpleAssignmentOperator(currentDeclaratorPrefix) >= 0;
 }
 
 function isVariableDeclarationCompletionPrefix(prefixText) {
-    const prefix = String(prefixText || '').trimStart();
-    return /^(?:new|const|static)\b/i.test(prefix);
+    return !!readVariableDeclarationCompletionPrefix(prefixText) &&
+        !isVariableDeclarationInitializerCompletionPrefix(prefixText);
+}
+
+function getCompletionLinePrefixIntent(prefixText) {
+    if (isVariableDeclarationInitializerCompletionPrefix(prefixText)) {
+        return 'call';
+    }
+    if (isVariableDeclarationCompletionPrefix(prefixText)) {
+        return 'variable-declaration';
+    }
+    if (!isTopLevelFunctionDeclarationCompletionPrefix(prefixText)) {
+        return 'call';
+    }
+    return 'maybe-top-level-declaration';
 }
 
 function getCompletionIntent(document, position, ctx) {
@@ -295,12 +339,8 @@ function getCompletionIntent(document, position, ctx) {
     const lineText = getCompletionStructuralLine(document, ctx, targetLine);
     const tokenStart = getCompletionTokenStartCharacter(lineText, position?.character);
     const prefixBeforeToken = lineText.slice(0, tokenStart);
-    if (isVariableDeclarationCompletionPrefix(prefixBeforeToken)) {
-        return 'variable-declaration';
-    }
-    if (!isTopLevelFunctionDeclarationCompletionPrefix(prefixBeforeToken)) {
-        return 'call';
-    }
+    const prefixIntent = getCompletionLinePrefixIntent(prefixBeforeToken);
+    if (prefixIntent !== 'maybe-top-level-declaration') return prefixIntent;
 
     const depths = Array.isArray(ctx?.parsedDecls?.depths) ? ctx.parsedDecls.depths : null;
     const lineDepth = depths && Number.isFinite(depths[targetLine]) ? depths[targetLine] : null;
@@ -387,7 +427,7 @@ function getCompletionControlContext(options) {
 
 module.exports = {
     createControlContextTracker,
+    getCompletionLinePrefixIntent,
     getCompletionIntent,
-    getCompletionControlContext,
-    isVariableDeclarationCompletionPrefix
+    getCompletionControlContext
 };

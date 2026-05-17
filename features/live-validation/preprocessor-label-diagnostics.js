@@ -1,5 +1,6 @@
 const { createPreprocessorLabelSyntaxCore } = require('../../core/syntax');
 const { LIVE_UNRESOLVED_INCLUDE_DIAGNOSTIC_CODE } = require('./diagnostic-codes');
+const { resolveLineStartOffset } = require('../../core/syntax/lines');
 
 function createPreprocessorLabelDiagnostics(deps) {
     const {
@@ -78,8 +79,11 @@ function createPreprocessorLabelDiagnostics(deps) {
         }
         const lineStartOffsets = rootCtx.lineStartOffsets || null;
         const createLineRange = (lineNumber, startIndex, length) => {
-            const lineStartOffset = lineStartOffsets?.[lineNumber] ??
-                document.offsetAt(new vscode.Position(lineNumber, 0));
+            const lineStartOffset = resolveLineStartOffset(
+                lineStartOffsets,
+                lineNumber,
+                () => document.offsetAt(new vscode.Position(lineNumber, 0))
+            );
             return createOffsetRange(
                 document,
                 lineStartOffset + Math.max(0, startIndex),

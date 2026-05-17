@@ -1,5 +1,6 @@
 const { spawn } = require('child_process');
 const path = require('path');
+const { unrefTimer } = require('../../core/utils/timers');
 const {
     getHoverModifierHackKey,
     isHoverModifierHackMode
@@ -39,6 +40,7 @@ function createHoverFeature(deps) {
         let restartTimer = null;
         let restartDelayMs = MODIFIER_HACK_RESTART_MIN_DELAY_MS;
         let disposed = false;
+        let processExitHandler = null;
         const powershellPath = path.join(
             process.env.SystemRoot || 'C:\\Windows',
             'System32',
@@ -54,6 +56,28 @@ function createHoverFeature(deps) {
             }
         };
 
+        const attachProcessExitHandler = () => {
+            if (processExitHandler) return;
+            processExitHandler = () => {
+                try {
+                    trackerProcess?.kill?.();
+                } catch {
+                    // Process is already exiting; best-effort child cleanup only.
+                }
+            };
+            process.once('exit', processExitHandler);
+        };
+
+        const detachProcessExitHandler = () => {
+            if (!processExitHandler) return;
+            if (typeof process.off === 'function') {
+                process.off('exit', processExitHandler);
+            } else {
+                process.removeListener('exit', processExitHandler);
+            }
+            processExitHandler = null;
+        };
+
         const emitState = nextState => {
             const normalized = !!nextState;
             if (normalized === modifierPressed) return;
@@ -64,6 +88,7 @@ function createHoverFeature(deps) {
         const stop = () => {
             disposed = true;
             clearRestartTimer();
+            detachProcessExitHandler();
             if (trackerProcess) {
                 trackerProcess.removeAllListeners();
                 trackerProcess.stdout?.removeAllListeners();
@@ -82,20 +107,25 @@ function createHoverFeature(deps) {
                 MODIFIER_HACK_RESTART_MAX_DELAY_MS,
                 restartDelayMs * 2
             );
-            restartTimer = setTimeout(() => {
+            restartTimer = unrefTimer(setTimeout(() => {
                 restartTimer = null;
                 start();
-            }, delayMs);
+            }, delayMs));
         };
 
         const start = () => {
             if (disposed || process.platform !== 'win32') return false;
             if (trackerProcess) return true;
 
+            const parentPid = Number(process.pid) || 0;
             const script = [
+                `$parentPid = ${parentPid}`,
+                '$parentCheckCounter = 0',
                 `Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class NativeKeyboardState { [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vKey); }'`,
                 '$last = $null',
                 'while ($true) {',
+                '    $parentCheckCounter = ($parentCheckCounter + 1) % 25',
+                '    if ($parentCheckCounter -eq 0 -and -not (Get-Process -Id $parentPid -ErrorAction SilentlyContinue)) { break }',
                 `    $pressed = ([NativeKeyboardState]::GetAsyncKeyState(${keySpec.vKey}) -band 0x8000) -ne 0`,
                 '    if ($pressed -ne $last) {',
                 '        if ($pressed) { [Console]::Out.WriteLine("1") } else { [Console]::Out.WriteLine("0") }',
@@ -115,6 +145,7 @@ function createHoverFeature(deps) {
                 trackerProcess = null;
                 return false;
             }
+            attachProcessExitHandler();
 
             trackerProcess.stdout?.setEncoding('utf8');
             trackerProcess.stdout?.on('data', chunk => {
@@ -216,12 +247,12 @@ function createHoverFeature(deps) {
                 undefined,
                 () => {}
             );
-            setTimeout(() => {
+            unrefTimer(setTimeout(() => {
                 vscode.commands.executeCommand('editor.action.closeHover').then(
                     undefined,
                     () => {}
                 );
-            }, 30);
+            }, 30));
         };
         const tryReplayModifierHackHover = () => {
             const state = lastModifierHackDeniedHover;
@@ -256,12 +287,12 @@ function createHoverFeature(deps) {
             activeEditor.selections = [temporarySelection];
             vscode.commands.executeCommand('editor.action.showHover').then(
                 () => {
-                    setTimeout(() => {
+                    unrefTimer(setTimeout(() => {
                         const editorNow = vscode.window.activeTextEditor;
                         if (!editorNow || editorNow !== activeEditor || editorNow.document !== state.document) return;
                         editorNow.selections = originalSelections;
                         editorNow.selection = originalSelections[0];
-                    }, MODIFIER_HACK_SELECTION_RESTORE_DELAY_MS);
+                    }, MODIFIER_HACK_SELECTION_RESTORE_DELAY_MS));
                 },
                 () => {
                     const editorNow = vscode.window.activeTextEditor;

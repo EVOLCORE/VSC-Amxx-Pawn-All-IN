@@ -1,11 +1,15 @@
 const { splitPawnLines } = require('./lines');
 const { skipPawnHorizontalWhitespace } = require('./whitespace');
-const { getPawnIncludeNameFromLine } = require('./includes');
+const {
+    getPawnIncludeNameFromLine,
+    parsePawnIncludeDirectiveTarget
+} = require('./includes');
 
 function createCtrlCharSyntaxCore(deps) {
     const {
         normalizeFsPath,
         getSearchPaths,
+        getNestedSearchPaths = null,
         resolveInclude,
         ctrlCharStateCache,
         getCachedCommentAnalysis,
@@ -67,12 +71,95 @@ function createCtrlCharSyntaxCore(deps) {
         ctrlCharStateCache.set(normalizedPath, filtered.slice(0, 3));
     };
 
+    const getCtrlCharGraphCacheKey = normalizedPath =>
+        normalizedPath ? `${normalizedPath}::ctrlchar-graph-presence` : '';
+
+    const getCachedCtrlCharGraphPresence = (normalizedPath, content) => {
+        const key = getCtrlCharGraphCacheKey(normalizedPath);
+        if (!key) return null;
+        const entries = ctrlCharStateCache.get(key);
+        if (!entries?.length) return null;
+        for (const entry of entries) {
+            if (entry.content === content) return entry.value;
+        }
+        return null;
+    };
+
+    const setCachedCtrlCharGraphPresence = (normalizedPath, content, value) => {
+        const key = getCtrlCharGraphCacheKey(normalizedPath);
+        if (!key) return;
+        const entries = ctrlCharStateCache.get(key) || [];
+        const filtered = entries.filter(entry => entry.content !== content);
+        filtered.unshift({ content, value: !!value });
+        ctrlCharStateCache.set(key, filtered.slice(0, 3));
+    };
+
+    const includeGraphMaySetCtrlChar = (
+        content,
+        fromFilePath = '',
+        strippedLines = null,
+        searchPaths = [],
+        visited = new Set()
+    ) => {
+        const text = String(content || '');
+        if (text.indexOf('ctrlchar') >= 0) return true;
+        if (text.indexOf('#') < 0 || text.indexOf('include') < 0) return false;
+
+        const currentPath = fromFilePath ? normalizeFsPath(fromFilePath) : '';
+        const cached = getCachedCtrlCharGraphPresence(currentPath, text);
+        if (cached != null) return cached;
+        if (currentPath) {
+            if (visited.has(currentPath)) return false;
+            visited.add(currentPath);
+        }
+
+        const lines = Array.isArray(strippedLines)
+            ? strippedLines
+            : splitPawnLines(text);
+        const directiveLines = collectDirectiveLineNumbers(lines);
+        let maySetCtrlChar = false;
+        for (const lineIndex of directiveLines) {
+            const includeTarget = parsePawnIncludeDirectiveTarget(String(lines[lineIndex] || '').trim());
+            const includeName = includeTarget?.name || '';
+            if (!includeName) continue;
+            const includePath = resolveInclude(includeName, searchPaths, fromFilePath, {
+                delimiter: includeTarget?.delimiter || ''
+            });
+            const normalizedIncludePath = normalizeFsPath(includePath);
+            if (!includePath || visited.has(normalizedIncludePath)) continue;
+            const includeContent = readNormalizedFileContent(includePath);
+            if (includeContent == null) continue;
+            const nestedSearchPaths = typeof getNestedSearchPaths === 'function'
+                ? getNestedSearchPaths(includePath, searchPaths)
+                : getSearchPaths(includePath);
+            if (includeGraphMaySetCtrlChar(
+                includeContent,
+                includePath,
+                null,
+                nestedSearchPaths,
+                visited
+            )) {
+                maySetCtrlChar = true;
+                break;
+            }
+        }
+        if (currentPath) visited.delete(currentPath);
+        setCachedCtrlCharGraphPresence(currentPath, text, maySetCtrlChar);
+        return maySetCtrlChar;
+    };
+
     // IMPORTANT:
     // Pawn ctrlchar is dynamic and may be redefined multiple times inside the same file
     // (and inside nested includes) during editing. Reuse of ctrlchar state is only safe
     // for the exact same immutable content snapshot. Do not promote this to a coarse
     // file-level cache that survives text changes, or hover/parse scopes will drift.
-    const getCtrlCharStateForContent = (content, fromFilePath = '', visited = new Set(), precomputedRawLines = null) => {
+    const getCtrlCharStateForContent = (
+        content,
+        fromFilePath = '',
+        visited = new Set(),
+        precomputedRawLines = null,
+        inheritedSearchPaths = []
+    ) => {
         let ctrlChar = DEFAULT_CTRL_CHAR;
         const currentPath = fromFilePath ? normalizeFsPath(fromFilePath) : '';
         const cachedState = getCachedCtrlCharState(currentPath, content);
@@ -112,7 +199,23 @@ function createCtrlCharSyntaxCore(deps) {
             })()
             : rawLines;
         const hasDirectiveMarker = content.indexOf('#') >= 0;
-        if (content.indexOf('ctrlchar') < 0 && content.indexOf('#include') < 0) {
+        const hasPotentialIncludeDirective = hasDirectiveMarker && content.indexOf('include') >= 0;
+        const searchPaths = typeof getNestedSearchPaths === 'function'
+            ? getNestedSearchPaths(fromFilePath, inheritedSearchPaths)
+            : getSearchPaths(fromFilePath);
+        if (
+            content.indexOf('ctrlchar') < 0 &&
+            (
+                !hasPotentialIncludeDirective ||
+                !includeGraphMaySetCtrlChar(
+                    content,
+                    fromFilePath,
+                    strippedLines,
+                    searchPaths,
+                    new Set(visited)
+                )
+            )
+        ) {
             const state = {
                 rawLines,
                 strippedLines,
@@ -125,7 +228,6 @@ function createCtrlCharSyntaxCore(deps) {
             setCachedCtrlCharState(currentPath, content, state);
             return state;
         }
-        const searchPaths = getSearchPaths(fromFilePath);
         const lineCtrlChars = [];
         let nextUnfilledLine = 0;
         const directiveCandidateLines = hasDirectiveMarker
@@ -141,16 +243,19 @@ function createCtrlCharSyntaxCore(deps) {
                 continue;
             }
 
-            const includeName = getIncludeNameFromLine(line);
+            const includeTarget = parsePawnIncludeDirectiveTarget(line);
+            const includeName = includeTarget?.name || '';
             if (!includeName) continue;
 
-            const includePath = resolveInclude(includeName, searchPaths, fromFilePath);
+            const includePath = resolveInclude(includeName, searchPaths, fromFilePath, {
+                delimiter: includeTarget?.delimiter || ''
+            });
             const normalizedIncludePath = normalizeFsPath(includePath);
             if (!includePath || visited.has(normalizedIncludePath)) continue;
 
             const includeContent = readNormalizedFileContent(includePath);
             if (includeContent == null) continue;
-            ctrlChar = getCtrlCharStateForContent(includeContent, includePath, visited).finalCtrlChar;
+            ctrlChar = getCtrlCharStateForContent(includeContent, includePath, visited, null, searchPaths).finalCtrlChar;
         }
         fillLineCtrlCharRange(lineCtrlChars, nextUnfilledLine, rawLines.length, ctrlChar);
 

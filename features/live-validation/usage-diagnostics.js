@@ -1,4 +1,5 @@
 const { LIVE_USAGE_DIAGNOSTIC_CODE } = require('./diagnostic-codes');
+const { resolveLineStartOffset } = require('../../core/syntax/lines');
 
 function createUsageDiagnostics(deps) {
     const {
@@ -28,7 +29,11 @@ function createUsageDiagnostics(deps) {
             return null;
         }
         const lineStartOffsets = rootCtx?.lineStartOffsets || null;
-        const lineStartOffset = lineStartOffsets?.[lineNumber] ?? document.offsetAt({ line: lineNumber, character: 0 });
+        const lineStartOffset = resolveLineStartOffset(
+            lineStartOffsets,
+            lineNumber,
+            () => document.offsetAt({ line: lineNumber, character: 0 })
+        );
         const lineText = String(rootCtx?.rawLines?.[lineNumber] ?? document.lineAt(lineNumber).text ?? '');
         const name = String(entry?.name || decl?.name || '').trim();
         let start = Number.isInteger(entry?.nameStart) ? entry.nameStart : -1;

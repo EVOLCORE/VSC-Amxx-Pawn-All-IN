@@ -13,7 +13,8 @@ const {
 } = require('../syntax/top-level');
 const {
     isPawnIdentifierStartCode: defaultIsIdentifierStartCode,
-    isPawnIdentifierContinueCode: defaultIsIdentifierContinueCode
+    isPawnIdentifierContinueCode: defaultIsIdentifierContinueCode,
+    readPawnIdentifierAt
 } = require('../syntax/identifiers');
 const {
     findNextNonWhitespaceIndex,
@@ -284,7 +285,7 @@ function createSymbolUsageDiagnostics(deps = {}) {
             const match = String(line || '').trim().match(/^#\s*pragma\s+unused\b([\s\S]*)$/i);
             if (!match) continue;
             for (const piece of match[1].split(',')) {
-                const name = piece.trim().match(/^([A-Za-z_@][A-Za-z0-9_@]*)/)?.[1] || '';
+                const name = readPawnIdentifierAt(piece.trim(), 0)?.name || '';
                 if (name) names.add(name);
             }
         }
@@ -420,21 +421,27 @@ function createSymbolUsageDiagnostics(deps = {}) {
         return { names, ranges };
     }
 
-    function getFunctionLikeDefineDeclMap(rootCtx) {
-        const map = new Map();
+    function getUsageDefineDeclMaps(rootCtx) {
+        const parameterizedDefinesByName = new Map();
+        const objectLikeDefinesByName = new Map();
         const defineDecls = rootCtx?.preprocessedState?.defineDecls || [];
-        if (!Array.isArray(defineDecls) || !defineDecls.length) return map;
+        if (!Array.isArray(defineDecls) || !defineDecls.length) {
+            return { defineDecls: [], parameterizedDefinesByName, objectLikeDefinesByName };
+        }
         for (const decl of defineDecls) {
+            if (decl?.type !== 'define' || !decl.name) continue;
+            if (decl.macroStyle === 'paren' || decl.macroStyle === 'bracket') {
+                parameterizedDefinesByName.set(decl.name, decl);
+                continue;
+            }
             if (
-                decl?.type !== 'define' ||
-                decl.macroStyle !== 'paren' ||
-                !decl.name
+                !String(decl.value || '').trim()
             ) {
                 continue;
             }
-            map.set(decl.name, decl);
+            objectLikeDefinesByName.set(decl.name, decl);
         }
-        return map;
+        return { defineDecls, parameterizedDefinesByName, objectLikeDefinesByName };
     }
 
     function collectSymbolUsageIssues(rootCtx, options = {}) {
@@ -450,10 +457,11 @@ function createSymbolUsageDiagnostics(deps = {}) {
         const functionRanges = options.functionRangeMaps || {};
         const functionBodyRangeByLine = functionRanges.byLine || [];
         const functionBodyRangeByFunction = functionRanges.byFunction || new Map();
-        const defineDecls = Array.isArray(rootCtx?.preprocessedState?.defineDecls)
-            ? rootCtx.preprocessedState.defineDecls
-            : [];
-        const functionLikeDefinesByName = getFunctionLikeDefineDeclMap(rootCtx);
+        const {
+            defineDecls,
+            parameterizedDefinesByName,
+            objectLikeDefinesByName
+        } = getUsageDefineDeclMaps(rootCtx);
         const callbackSignatureMode = String(options.callbackSignatureMode || 'strict');
         const compilerLikeForwardCallbackCache = new WeakMap();
         const isCompilerLikeForwardCallbackFunction = functionDecl => {
@@ -577,6 +585,78 @@ function createSymbolUsageDiagnostics(deps = {}) {
                 variableNameFirstCharCodes[firstCode] = 1;
             }
         }
+        const objectLikeDefineUsageRelevanceCache = new WeakMap();
+        const objectLikeDefineNameUsageRelevanceCache = new Map();
+        const scanDefineValueIdentifiers = (value, onIdentifier) => {
+            const text = String(value || '');
+            let inBlockComment = false;
+            let inString = false;
+            let stringCharCode = 0;
+            let lineComment = false;
+            for (let index = 0; index < text.length; index++) {
+                const code = text.charCodeAt(index);
+                const nextCode = index + 1 < text.length ? text.charCodeAt(index + 1) : 0;
+                if (inBlockComment) {
+                    if (code === 42 && nextCode === 47) {
+                        inBlockComment = false;
+                        index++;
+                    }
+                    continue;
+                }
+                if (lineComment) break;
+                if (inString) {
+                    if (code === stringCharCode) inString = false;
+                    continue;
+                }
+                if (code === 47 && nextCode === 47) {
+                    lineComment = true;
+                    continue;
+                }
+                if (code === 47 && nextCode === 42) {
+                    inBlockComment = true;
+                    index++;
+                    continue;
+                }
+                if (code === 34 || code === 39) {
+                    inString = true;
+                    stringCharCode = code;
+                    continue;
+                }
+                if (!isIdentifierStartCode(code)) continue;
+                if (index > 0 && isIdentifierContinueCode(text.charCodeAt(index - 1))) continue;
+
+                const start = index;
+                let end = index + 1;
+                while (end < text.length && isIdentifierContinueCode(text.charCodeAt(end))) end++;
+                if (onIdentifier(text.slice(start, end)) === true) return true;
+                index = end - 1;
+            }
+            return false;
+        };
+        const objectLikeDefineMayReferenceTrackedVariable = (decl, visited = new Set()) => {
+            if (!decl || decl.type !== 'define' || decl.args || decl.macroStyle) return false;
+            if (objectLikeDefineUsageRelevanceCache.has(decl)) {
+                return objectLikeDefineUsageRelevanceCache.get(decl);
+            }
+            const name = String(decl.name || '');
+            if (name) {
+                if (objectLikeDefineNameUsageRelevanceCache.has(name)) {
+                    return objectLikeDefineNameUsageRelevanceCache.get(name);
+                }
+                if (visited.has(name)) return false;
+                visited.add(name);
+            }
+            const value = String(decl.value || '');
+            const relevant = scanDefineValueIdentifiers(value, identifier => {
+                if (variableEntriesByName.has(identifier)) return true;
+                const nestedDefine = objectLikeDefinesByName.get(identifier);
+                return !!nestedDefine && objectLikeDefineMayReferenceTrackedVariable(nestedDefine, visited);
+            });
+            objectLikeDefineUsageRelevanceCache.set(decl, relevant);
+            if (name) objectLikeDefineNameUsageRelevanceCache.set(name, relevant);
+            if (name) visited.delete(name);
+            return relevant;
+        };
         const usageScopeLineDiff = entries.length ? new Int32Array(scanLines.length + 1) : null;
         if (usageScopeLineDiff) {
             for (const entry of entries) {
@@ -688,14 +768,17 @@ function createSymbolUsageDiagnostics(deps = {}) {
             }
         };
 
-        const applyFunctionLikeDefineUsage = (decl, line, lineNumber, start, openIndex, closeIndex) => {
-            if (!decl || !line || openIndex < 0) return;
+        const applyParameterizedDefineUsage = (decl, line, lineNumber, start, openIndex) => {
+            if (!decl || !line || openIndex < 0) return false;
             const escapeChar = rootCtx?.lineCtrlChars?.[lineNumber] || '';
+            const callArgs = macroExpansionCore.readParameterizedDefineCallArgs?.(line, openIndex, decl, escapeChar);
+            if (!callArgs) return false;
+            const invocation = line.slice(start, callArgs.end);
             let expansionSource = '';
-            if (closeIndex >= 0) {
-                const invocation = line.slice(start, closeIndex + 1);
+            if (decl.macroStyle === 'paren') {
                 const virtualLine = virtualExpandedLineContextCore.getVirtualExpandedLineContext(invocation, defineDecls, {
                     escapeChar,
+                    defineDecl: decl,
                     expandActualArgs: false,
                     fallbackToFunctionLikeCall: true,
                     maxOutputLength: 8192
@@ -703,14 +786,52 @@ function createSymbolUsageDiagnostics(deps = {}) {
                 expansionSource = virtualLine.hasExpansion
                     ? virtualLine.expandedText
                     : '';
-            } else {
-                expansionSource = String(decl.value || '');
+            }
+            if (!expansionSource) {
+                const expanded = macroExpansionCore.expandMacros(invocation, defineDecls, {
+                    escapeChar,
+                    expandActualArgs: false,
+                    maxOutputLength: 8192
+                });
+                expansionSource = expanded.complete && expanded.changed
+                    ? expanded.text
+                    : '';
+            }
+            if (!expansionSource) return false;
+            const syntheticDeclarations = collectSyntheticLocalDeclarationInfo(expansionSource);
+            scanVariableUsageSource(expansionSource, lineNumber, {
+                synthetic: true,
+                syntheticDeclarationRanges: syntheticDeclarations.ranges
+            });
+            return true;
+        };
+        const expandedObjectLikeUsageLines = new Map();
+        const applyObjectLikeDefineUsage = (decl, line, lineNumber) => {
+            if (!decl || !line) return false;
+            const cacheKey = `${lineNumber}:${line}`;
+            if (expandedObjectLikeUsageLines.has(cacheKey)) {
+                return expandedObjectLikeUsageLines.get(cacheKey);
+            }
+            const escapeChar = rootCtx?.lineCtrlChars?.[lineNumber] || '';
+            const expanded = macroExpansionCore.expandMacros(line, defineDecls, {
+                escapeChar,
+                expandActualArgs: false,
+                maxOutputLength: 8192
+            });
+            const expansionSource = expanded.complete && expanded.changed
+                ? String(expanded.text || '')
+                : '';
+            if (!expansionSource || expansionSource === line) {
+                expandedObjectLikeUsageLines.set(cacheKey, false);
+                return false;
             }
             const syntheticDeclarations = collectSyntheticLocalDeclarationInfo(expansionSource);
             scanVariableUsageSource(expansionSource, lineNumber, {
                 synthetic: true,
                 syntheticDeclarationRanges: syntheticDeclarations.ranges
             });
+            expandedObjectLikeUsageLines.set(cacheKey, true);
+            return true;
         };
 
         let inBlockComment = false;
@@ -764,22 +885,28 @@ function createSymbolUsageDiagnostics(deps = {}) {
                 const name = line.slice(start, end);
                 index = end - 1;
                 const nextNonWhitespace = findNextNonWhitespaceIndex(line, end);
-                if (nextNonWhitespace >= 0 && line[nextNonWhitespace] === '(') {
-                    const defineDecl = functionLikeDefinesByName.get(name);
-                    if (defineDecl) {
-                        applyFunctionLikeDefineUsage(
-                            defineDecl,
-                            line,
-                            lineNumber,
-                            start,
-                            nextNonWhitespace,
-                            macroExpansionCore.findMatchingParenIndex(
-                                line,
-                                nextNonWhitespace,
-                                rootCtx?.lineCtrlChars?.[lineNumber] || ''
-                            )
-                        );
+                if (
+                    nextNonWhitespace >= 0 &&
+                    (line[nextNonWhitespace] === '(' || line[nextNonWhitespace] === '[')
+                ) {
+                    const defineDecl = parameterizedDefinesByName.get(name);
+                    if (defineDecl && applyParameterizedDefineUsage(
+                        defineDecl,
+                        line,
+                        lineNumber,
+                        start,
+                        nextNonWhitespace
+                    )) {
+                        continue;
                     }
+                    if (line[nextNonWhitespace] === '(') continue;
+                }
+                const objectLikeDefineDecl = objectLikeDefinesByName.get(name);
+                if (
+                    objectLikeDefineDecl &&
+                    objectLikeDefineMayReferenceTrackedVariable(objectLikeDefineDecl) &&
+                    applyObjectLikeDefineUsage(objectLikeDefineDecl, line, lineNumber)
+                ) {
                     continue;
                 }
                 if (code >= variableNameFirstCharCodes.length || !variableNameFirstCharCodes[code]) continue;

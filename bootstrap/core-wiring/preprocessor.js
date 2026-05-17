@@ -2,10 +2,10 @@ const { createPreprocessorSyntaxCore } = require('../../core/syntax/index');
 
 function createPreprocessorRuntime(deps) {
     const {
-        cloneDefineDecls,
         normalizeFsPath,
         getDefineStateKey,
         getSearchPaths,
+        getNestedSearchPaths,
         resolveInclude,
         getIncludeNameFromLine,
         collectDeclarationText,
@@ -24,10 +24,10 @@ function createPreprocessorRuntime(deps) {
     let preprocessPawnContent = null;
     const runtime = createPreprocessorSyntaxCore({
         evaluatePawnNumericExpr,
-        cloneDefineDecls,
         normalizeFsPath,
         getDefineStateKey,
         getSearchPaths,
+        getNestedSearchPaths,
         resolveInclude,
         getIncludeNameFromLine,
         collectDeclarationText,

@@ -100,7 +100,7 @@ function createRenderCore(deps) {
         if (data.type === 'builtin') {
             return data.args
                 ? `${displayName}(${data.args})`
-                : `${tag}${displayName}${data.value ? ` = ${data.value}` : ''}`;
+                : `${tag}${displayName}${data.dims || ''}${data.value ? ` = ${data.value}` : ''}`;
         }
         if (data.type === 'enum') {
             const enumDisplay = data.enumDisplayName || data.name;

@@ -4,7 +4,7 @@ function createDeclarationPredicateCore() {
     }
 
     function isObjectLikeDefineDecl(data) {
-        return !!data && data.type === 'define' && !data.macroStyle;
+        return !!data && data.type === 'define' && data.macroStyle !== 'paren';
     }
 
     function isFunctionLikeDecl(data) {

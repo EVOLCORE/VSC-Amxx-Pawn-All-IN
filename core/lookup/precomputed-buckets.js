@@ -52,11 +52,43 @@ function attachBuiltPrecomputedDeclBuckets(decls) {
     return attachPrecomputedDeclBuckets(decls, built.nameBuckets, built.variableBuckets);
 }
 
+function attachLazyPrecomputedDeclBuckets(decls) {
+    if (!Array.isArray(decls)) return decls;
+    if (decls.length <= 1) return decls;
+    if (getPrecomputedDeclNameBuckets(decls) && getPrecomputedVariableNameBuckets(decls)) {
+        return decls;
+    }
+
+    let built = null;
+    const ensureBuilt = () => {
+        if (!built) built = buildDeclBuckets(decls);
+        attachPrecomputedDeclBuckets(decls, built.nameBuckets, built.variableBuckets);
+        return built;
+    };
+
+    Object.defineProperties(decls, {
+        [PRECOMPUTED_DECL_NAME_BUCKETS]: {
+            configurable: true,
+            get() {
+                return ensureBuilt().nameBuckets;
+            }
+        },
+        [PRECOMPUTED_VARIABLE_NAME_BUCKETS]: {
+            configurable: true,
+            get() {
+                return ensureBuilt().variableBuckets;
+            }
+        }
+    });
+    return decls;
+}
+
 module.exports = {
     PRECOMPUTED_DECL_NAME_BUCKETS,
     PRECOMPUTED_VARIABLE_NAME_BUCKETS,
     attachPrecomputedDeclBuckets,
     attachBuiltPrecomputedDeclBuckets,
+    attachLazyPrecomputedDeclBuckets,
     buildDeclBuckets,
     getPrecomputedDeclNameBuckets,
     getPrecomputedVariableNameBuckets

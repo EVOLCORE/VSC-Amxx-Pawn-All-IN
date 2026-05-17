@@ -1,5 +1,6 @@
 const { LIVE_DYNAMIC_USAGE_DIAGNOSTIC_CODE } = require('./diagnostic-codes');
 const { isPawnIdentifierContinueChar } = require('../../core/syntax/identifiers');
+const { resolveLineStartOffset } = require('../../core/syntax/lines');
 
 function createDynamicUsageLiveDiagnostics(deps) {
     const {
@@ -47,7 +48,11 @@ function createDynamicUsageLiveDiagnostics(deps) {
             return null;
         }
         const lineStartOffsets = rootCtx?.lineStartOffsets || null;
-        const lineStartOffset = lineStartOffsets?.[lineNumber] ?? document.offsetAt({ line: lineNumber, character: 0 });
+        const lineStartOffset = resolveLineStartOffset(
+            lineStartOffsets,
+            lineNumber,
+            () => document.offsetAt({ line: lineNumber, character: 0 })
+        );
         const lineText = String(rootCtx?.rawLines?.[lineNumber] ?? document.lineAt(lineNumber).text ?? '');
         const name = String(decl?.name || '').trim();
         if (!name) return null;

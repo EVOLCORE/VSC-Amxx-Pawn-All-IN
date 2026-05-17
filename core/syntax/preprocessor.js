@@ -1,11 +1,21 @@
 const { getDefineStateSignature } = require('../utils/signature');
 const { createMacroExpansionSyntaxCore } = require('./macro-expander');
+const { isCompilerPredefinedConstantName } = require('./compiler-builtins');
+const { PREPROCESSOR_DIRECTIVE_NAMES } = require('./preprocessor-directives');
 const { createRationalPolicySyntaxCore } = require('./rational-policy');
+const { parsePawnIncludeDirectiveTarget } = require('./includes');
+const {
+    isPawnIdentifierContinueCode,
+    isPawnIdentifierStartCode
+} = require('./identifiers');
 
 // Shared Pawn preprocessor helpers. These are language/runtime mechanics used
 // by document context, include scanning, and declaration parsing.
 const { splitPawnLines } = require('./lines');
-const { skipPawnHorizontalWhitespace } = require('./whitespace');
+const {
+    isPawnHorizontalWhitespaceCode,
+    skipPawnHorizontalWhitespace
+} = require('./whitespace');
 const {
     hasTrailingBackslashContinuation,
     removeTrailingBackslashContinuation
@@ -14,10 +24,10 @@ const {
 function createPreprocessorSyntaxCore(deps) {
     const {
         evaluatePawnNumericExpr,
-        cloneDefineDecls,
         normalizeFsPath,
         getDefineStateKey,
         getSearchPaths,
+        getNestedSearchPaths = null,
         resolveInclude,
         getIncludeNameFromLine,
         collectDeclarationText,
@@ -33,41 +43,13 @@ function createPreprocessorSyntaxCore(deps) {
         readCachedIncludePreprocessedState,
         writeCachedIncludePreprocessedState
     } = deps;
-    const PREPROCESSOR_DIRECTIVE_NAMES = Object.freeze([
-        'assert',
-        'define',
-        'else',
-        'elseif',
-        'emit',
-        'endif',
-        'endinput',
-        'error',
-        'file',
-        'elif',
-        'if',
-        'ifdef',
-        'ifndef',
-        'include',
-        'line',
-        'pragma',
-        'section',
-        'tryinclude',
-        'undef'
-    ]);
     const knownPreprocessorDirectives = new Set(PREPROCESSOR_DIRECTIVE_NAMES);
-    const isHorizontalSpace = charCode => charCode === 32 || charCode === 9;
-    const isDirectiveIdentifierStartCode = charCode =>
-        charCode === 95 || charCode === 64 ||
-        (charCode >= 65 && charCode <= 90) ||
-        (charCode >= 97 && charCode <= 122);
-    const isDirectiveIdentifierContinueCode = charCode =>
-        isDirectiveIdentifierStartCode(charCode) ||
-        (charCode >= 48 && charCode <= 57);
     const getIncludePreprocessedStateKey = (filePath, defineStateKey = '', defineDecls = []) =>
         `${normalizeFsPath(filePath)}::${getDefineStateSignature(defineDecls, defineStateKey)}`;
     const rationalPolicy = createRationalPolicySyntaxCore({
         evaluatePawnNumericExpr
     });
+    const defineDeclLookupCache = new WeakMap();
     const macroExpansion = createMacroExpansionSyntaxCore({
         isEscapedQuote: (source, index, escapeChar) => {
             if (!escapeChar) return false;
@@ -75,25 +57,25 @@ function createPreprocessorSyntaxCore(deps) {
             for (let cursor = index - 1; cursor >= 0 && source[cursor] === escapeChar; cursor--) count++;
             return (count % 2) === 1;
         },
-        isIdentifierStartChar: char => isDirectiveIdentifierStartCode(String(char || '').charCodeAt(0)),
-        isIdentifierContinueChar: char => isDirectiveIdentifierContinueCode(String(char || '').charCodeAt(0)),
+        isIdentifierStartChar: char => isPawnIdentifierStartCode(String(char || '').charCodeAt(0)),
+        isIdentifierContinueChar: char => isPawnIdentifierContinueCode(String(char || '').charCodeAt(0)),
         splitTopLevel
     });
 
     function skipDirectiveSpaces(source, cursor) {
         let index = Math.max(0, cursor | 0);
-        while (index < source.length && isHorizontalSpace(source.charCodeAt(index))) index++;
+        while (index < source.length && isPawnHorizontalWhitespaceCode(source.charCodeAt(index))) index++;
         return index;
     }
 
     function readDirectiveIdentifier(source, cursor = 0) {
         const start = skipDirectiveSpaces(String(source || ''), cursor);
         const text = String(source || '');
-        if (start >= text.length || !isDirectiveIdentifierStartCode(text.charCodeAt(start))) {
+        if (start >= text.length || !isPawnIdentifierStartCode(text.charCodeAt(start))) {
             return null;
         }
         let end = start + 1;
-        while (end < text.length && isDirectiveIdentifierContinueCode(text.charCodeAt(end))) end++;
+        while (end < text.length && isPawnIdentifierContinueCode(text.charCodeAt(end))) end++;
         return {
             name: text.slice(start, end),
             start,
@@ -116,7 +98,7 @@ function createPreprocessorSyntaxCore(deps) {
             options.stripLineComment !== false
         );
         let hashIndex = 0;
-        while (hashIndex < directiveLine.length && isHorizontalSpace(directiveLine.charCodeAt(hashIndex))) hashIndex++;
+        while (hashIndex < directiveLine.length && isPawnHorizontalWhitespaceCode(directiveLine.charCodeAt(hashIndex))) hashIndex++;
         if (hashIndex >= directiveLine.length || directiveLine.charCodeAt(hashIndex) !== 35) return null;
 
         let cursor = skipDirectiveSpaces(directiveLine, hashIndex + 1);
@@ -127,7 +109,7 @@ function createPreprocessorSyntaxCore(deps) {
 
         let payloadStart = skipDirectiveSpaces(directiveLine, cursor);
         let payloadEnd = directiveLine.length;
-        while (payloadEnd > payloadStart && isHorizontalSpace(directiveLine.charCodeAt(payloadEnd - 1))) payloadEnd--;
+        while (payloadEnd > payloadStart && isPawnHorizontalWhitespaceCode(directiveLine.charCodeAt(payloadEnd - 1))) payloadEnd--;
 
         const keywordRaw = keywordInfo?.name || '';
         const keyword = keywordRaw.toLowerCase();
@@ -275,13 +257,25 @@ function createPreprocessorSyntaxCore(deps) {
         if (payload[cursor] === '(' || payload[cursor] === '[') {
             const opener = payload[cursor];
             const closer = opener === '(' ? ')' : ']';
-            const closeIndex = payload.indexOf(closer, cursor + 1);
-            if (closeIndex >= 0) {
-                macroStyle = opener === '(' ? 'paren' : 'bracket';
-                const body = payload.slice(cursor + 1, closeIndex).trim();
-                if (macroStyle === 'paren') args = body;
-                else macroIndexer = body;
-                cursor = closeIndex + 1;
+            if (opener === '[') {
+                const indexerParts = [];
+                while (payload[cursor] === '[') {
+                    const closeIndex = payload.indexOf(closer, cursor + 1);
+                    if (closeIndex < 0) break;
+                    indexerParts.push(payload.slice(cursor + 1, closeIndex).trim());
+                    cursor = closeIndex + 1;
+                }
+                if (indexerParts.length) {
+                    macroStyle = 'bracket';
+                    macroIndexer = indexerParts.join('][');
+                }
+            } else {
+                const closeIndex = payload.indexOf(closer, cursor + 1);
+                if (closeIndex >= 0) {
+                    macroStyle = 'paren';
+                    args = payload.slice(cursor + 1, closeIndex).trim();
+                    cursor = closeIndex + 1;
+                }
             }
         }
 
@@ -369,7 +363,9 @@ function createPreprocessorSyntaxCore(deps) {
                 payloadRange.start,
                 payloadRange.start + payloadRange.length
             );
-            const analysis = analyzePreprocessorConditionExpression(payload, defineDecls, defineLookup);
+            const analysis = analyzePreprocessorConditionExpression(payload, defineDecls, defineLookup, {
+                lineNumber: directive.lineNumber
+            });
             if (analysis?.valid === false) {
                 pushIssue('validation.mustBeConstantExpression', payloadRange);
             } else if (directiveName === 'assert' && activeBranch && !analysis?.value) {
@@ -406,29 +402,22 @@ function createPreprocessorSyntaxCore(deps) {
             if (opener !== '<' && opener !== '"') {
                 if (directiveName === 'include' || directiveName === 'tryinclude') {
                     const payloadRange = getPayloadRange();
-                    if (!payloadRange) {
+                    const includeTarget = parsePawnIncludeDirectiveTarget(directive.directiveLine);
+                    if (!payloadRange || !includeTarget || includeTarget.isDelimited) {
                         pushIssue('validation.invalidString', {
                             start: directive.payloadStart,
                             length: 1
                         });
                         return issues;
                     }
-                    const payload = line.slice(payloadRange.start, payloadRange.start + payloadRange.length);
-                    const bareMatch = payload.match(/^[A-Za-z0-9_./\\-]+/);
-                    if (bareMatch) {
-                        const restStart = payloadRange.start + bareMatch[0].length;
-                        if (line.slice(restStart, directive.payloadEnd).trim()) {
-                            pushIssue('validation.extraCharactersOnLine', getRestRangeFrom(
-                                restStart,
-                                directive.payloadEnd
-                            ));
-                        }
-                        return issues;
+                    const restStart = includeTarget.nameEnd;
+                    if (line.slice(restStart, directive.payloadEnd).trim()) {
+                        pushIssue('validation.extraCharactersOnLine', getRestRangeFrom(
+                            restStart,
+                            directive.payloadEnd
+                        ));
                     }
-                    pushIssue('validation.invalidString', getPayloadRange() || {
-                        start: directive.payloadStart,
-                        length: 1
-                    });
+                    return issues;
                 }
                 if (directiveName === 'file') {
                     pushIssue('validation.invalidString', getPayloadRange() || {
@@ -548,8 +537,11 @@ function createPreprocessorSyntaxCore(deps) {
         return { valid: true, normalized };
     }
 
-    function normalizePreprocessorRemainingIdentifiers(source) {
+    function normalizePreprocessorRemainingIdentifiers(source, options = {}) {
         const text = String(source || '');
+        const lineValue = Number.isInteger(options.lineNumber)
+            ? String(Math.max(1, options.lineNumber + 1))
+            : '1';
         let normalized = '';
         let inString = false;
         let stringChar = '';
@@ -579,6 +571,7 @@ function createPreprocessorSyntaxCore(deps) {
             }
             if (identifier.name === 'true') normalized += '1';
             else if (identifier.name === 'false') normalized += '0';
+            else if (identifier.name === '__LINE__') normalized += lineValue;
             else if (identifier.name === 'char') normalized += 'char';
             else if (identifier.name === 'cellmin') normalized += 'cellmin';
             else if (identifier.name === 'cellmax') normalized += 'cellmax';
@@ -588,8 +581,9 @@ function createPreprocessorSyntaxCore(deps) {
         return normalized;
     }
 
-    function analyzePreprocessorConditionExpression(expr, defineDecls = [], defineLookup = null) {
-        const hasDefine = name => defineLookup ? defineLookup.has(name) : defineDecls.some(d => d.name === name);
+    function analyzePreprocessorConditionExpression(expr, defineDecls = [], defineLookup = null, options = {}) {
+        const hasDefine = name => isCompilerPredefinedConstantName(name) ||
+            (defineLookup ? defineLookup.has(name) : defineDecls.some(d => d.name === name));
         const getDefine = name => defineLookup ? (defineLookup.get(name) || null) : (defineDecls.find(d => d.name === name) || null);
         const evalDecls = defineLookup ? [...defineLookup.values()] : defineDecls;
         const source = String(expr || '').trim();
@@ -607,15 +601,15 @@ function createPreprocessorSyntaxCore(deps) {
         if (!expanded.complete) {
             return { valid: false, value: null, normalized: expanded.text };
         }
-        const normalized = normalizePreprocessorRemainingIdentifiers(expanded.text);
+        const normalized = normalizePreprocessorRemainingIdentifiers(expanded.text, options);
         const evaluated = evaluatePawnNumericExpr(normalized, evalDecls);
         return evaluated == null
             ? { valid: false, value: null, normalized }
             : { valid: true, value: evaluated, normalized };
     }
 
-    function evaluatePreprocessorCondition(expr, defineDecls = [], defineLookup = null) {
-        return !!analyzePreprocessorConditionExpression(expr, defineDecls, defineLookup).value;
+    function evaluatePreprocessorCondition(expr, defineDecls = [], defineLookup = null, options = {}) {
+        return !!analyzePreprocessorConditionExpression(expr, defineDecls, defineLookup, options).value;
     }
 
     function preprocessPawnContent(content, options = {}) {
@@ -624,9 +618,11 @@ function createPreprocessorSyntaxCore(deps) {
         const rawLines = Array.isArray(options.rawLines)
             ? options.rawLines
             : splitPawnLines(contentText);
-        let defineDecls = Array.isArray(options.defineDecls)
-            ? options.defineDecls.slice()
-            : [];
+        const initialDefineDecls = Array.isArray(options.defineDecls)
+            ? options.defineDecls
+            : null;
+        let defineDecls = initialDefineDecls || [];
+        let ownsDefineDecls = !initialDefineDecls;
         let defineStateKey = String(options.precomputedDefineStateKey || '');
         let defineStateKeyDirty = !defineStateKey;
         const includePreprocessedStates = options.includePreprocessedStates instanceof Map
@@ -642,8 +638,6 @@ function createPreprocessorSyntaxCore(deps) {
         if (!hasDirectiveMarker) {
             if (options.returnState) {
                 const rationalState = options.rationalState || null;
-                let defineDeclMap = null;
-                let defineDeclIndexMap = null;
                 const state = {
                     content: contentText,
                     rawLines,
@@ -664,20 +658,42 @@ function createPreprocessorSyntaxCore(deps) {
             }
             return contentText;
         }
-        const buildDefineDeclMap = () => {
-            const map = new Map();
-            for (const decl of defineDecls) {
-                map.set(decl.name, decl);
+        const buildDefineDeclLookup = (includeIndexMap = false) => {
+            const cached = !ownsDefineDecls ? defineDeclLookupCache.get(defineDecls) : null;
+            if (cached && (!includeIndexMap || cached.indexMap)) {
+                return {
+                    map: cached.map,
+                    indexMap: cached.indexMap || null,
+                    sharedCache: true
+                };
             }
-            return map;
-        };
-        const buildDefineDeclIndexMap = () => {
             const map = new Map();
+            const indexMap = new Map();
             for (let index = 0; index < defineDecls.length; index++) {
                 const decl = defineDecls[index];
-                map.set(decl.name, index);
+                map.set(decl.name, decl);
+                indexMap.set(decl.name, index);
             }
-            return map;
+            if (!ownsDefineDecls) {
+                const entry = cached || { map, indexMap };
+                if (!cached) {
+                    defineDeclLookupCache.set(defineDecls, entry);
+                }
+                return {
+                    map: entry.map,
+                    indexMap: entry.indexMap || null,
+                    sharedCache: true
+                };
+            }
+            return { map, indexMap };
+        };
+        const buildDefineDeclIndexMap = () => {
+            const indexMap = new Map();
+            for (let index = 0; index < defineDecls.length; index++) {
+                const decl = defineDecls[index];
+                indexMap.set(decl.name, index);
+            }
+            return indexMap;
         };
         const createReturnedState = (contentValue, includeEntriesValue, processedRawLinesValue) => {
             let returnedDefineDeclMap = null;
@@ -695,13 +711,13 @@ function createPreprocessorSyntaxCore(deps) {
                 directiveCandidateLines,
                 get defineDeclMap() {
                     if (!returnedDefineDeclMap) {
-                        returnedDefineDeclMap = defineDeclMap || buildDefineDeclMap();
+                        returnedDefineDeclMap = ensureDefineDeclLookup().map;
                     }
                     return returnedDefineDeclMap;
                 },
                 get defineDeclIndexMap() {
                     if (!returnedDefineDeclIndexMap) {
-                        returnedDefineDeclIndexMap = defineDeclIndexMap || buildDefineDeclIndexMap();
+                        returnedDefineDeclIndexMap = ensureDefineDeclIndexMap();
                     }
                     return returnedDefineDeclIndexMap;
                 },
@@ -730,19 +746,37 @@ function createPreprocessorSyntaxCore(deps) {
         let outStrippedLines = null;
         let emittedLineCount = 0;
         let contentChanged = false;
-        let defineDeclMap = null;
-        let defineDeclIndexMap = null;
-        const ensureDefineDeclMap = () => {
-            if (!defineDeclMap) {
-                defineDeclMap = buildDefineDeclMap();
+        let defineDeclLookup = null;
+        const ensureMutableDefineDecls = () => {
+            if (ownsDefineDecls) return defineDecls;
+            defineDecls = defineDecls.slice();
+            ownsDefineDecls = true;
+            if (defineDeclLookup?.sharedCache) {
+                defineDeclLookup = {
+                    map: new Map(defineDeclLookup.map || []),
+                    indexMap: defineDeclLookup.indexMap
+                        ? new Map(defineDeclLookup.indexMap)
+                        : null
+                };
             }
-            return defineDeclMap;
+            return defineDecls;
+        };
+        const ensureDefineDeclLookup = () => {
+            if (!defineDeclLookup) {
+                defineDeclLookup = buildDefineDeclLookup(false);
+            }
+            return defineDeclLookup;
+        };
+        const ensureDefineDeclMap = () => {
+            return ensureDefineDeclLookup().map;
         };
         const ensureDefineDeclIndexMap = () => {
-            if (!defineDeclIndexMap) {
-                defineDeclIndexMap = buildDefineDeclIndexMap();
+            if (!defineDeclLookup) {
+                defineDeclLookup = buildDefineDeclLookup(true);
+            } else if (!defineDeclLookup.indexMap) {
+                defineDeclLookup.indexMap = buildDefineDeclIndexMap();
             }
-            return defineDeclIndexMap;
+            return defineDeclLookup.indexMap;
         };
         const stack = [];
         const includeEntries = [];
@@ -759,7 +793,7 @@ function createPreprocessorSyntaxCore(deps) {
             : (() => {
                 const candidates = [];
                 for (let lineNumber = 0; lineNumber < rawLines.length; lineNumber++) {
-                    const source = String(rawLines[lineNumber] || '');
+                    const source = String(strippedLines[lineNumber] || '');
                     if (source.indexOf('#') < 0) continue;
                     const cursor = skipPawnHorizontalWhitespace(source, 0);
                     if (cursor < source.length && source.charCodeAt(cursor) === 35) {
@@ -859,14 +893,15 @@ function createPreprocessorSyntaxCore(deps) {
 
         const processDirectiveLine = lineNumber => {
             const rawLine = rawLines[lineNumber];
+            const preparedLine = String(strippedLines[lineNumber] ?? '');
             const hasContinuation = hasTrailingBackslashContinuation(rawLine);
             const directiveSource = hasContinuation
                 ? collectPreprocessorDirectiveText(rawLines, lineNumber, strippedLines, false)
                 : null;
             const directiveText = directiveSource
                 ? directiveSource.text
-                : String(strippedLines[lineNumber] || rawLine || '');
-            const directive = parsePreprocessorDirectiveLine(directiveText);
+                : preparedLine;
+            const directive = parsePreprocessorDirectiveLine(directiveText, { stripLineComment: false });
             const trimmed = directive?.trimmed || '';
             const keyword = directive?.keyword || '';
             const rest = directive?.rest || '';
@@ -897,7 +932,9 @@ function createPreprocessorSyntaxCore(deps) {
 
             if (keyword === 'ifdef') {
                 const parentActive = isActive();
-                const cond = ensureDefineDeclMap().has(readDirectiveName(rest));
+                const directiveName = readDirectiveName(rest);
+                const cond = isCompilerPredefinedConstantName(directiveName) ||
+                    ensureDefineDeclMap().has(directiveName);
                 stack.push({ parentActive, branchTaken: parentActive && cond, active: parentActive && cond });
                 appendMaskedDirectiveLines();
                 return nextDirectiveLine;
@@ -905,7 +942,11 @@ function createPreprocessorSyntaxCore(deps) {
 
             if (keyword === 'ifndef') {
                 const parentActive = isActive();
-                const cond = !ensureDefineDeclMap().has(readDirectiveName(rest));
+                const directiveName = readDirectiveName(rest);
+                const cond = !(
+                    isCompilerPredefinedConstantName(directiveName) ||
+                    ensureDefineDeclMap().has(directiveName)
+                );
                 stack.push({ parentActive, branchTaken: parentActive && cond, active: parentActive && cond });
                 appendMaskedDirectiveLines();
                 return nextDirectiveLine;
@@ -913,7 +954,7 @@ function createPreprocessorSyntaxCore(deps) {
 
             if (keyword === 'if' && rest) {
                 const parentActive = isActive();
-                const cond = evaluatePreprocessorCondition(rest, defineDecls, ensureDefineDeclMap());
+                const cond = evaluatePreprocessorCondition(rest, defineDecls, ensureDefineDeclMap(), { lineNumber });
                 stack.push({ parentActive, branchTaken: parentActive && cond, active: parentActive && cond });
                 appendMaskedDirectiveLines();
                 return nextDirectiveLine;
@@ -923,7 +964,7 @@ function createPreprocessorSyntaxCore(deps) {
                 const frame = stack[stack.length - 1];
                 if (frame) {
                     const cond = frame.parentActive && !frame.branchTaken &&
-                        evaluatePreprocessorCondition(rest, defineDecls, ensureDefineDeclMap());
+                        evaluatePreprocessorCondition(rest, defineDecls, ensureDefineDeclMap(), { lineNumber });
                     frame.active = cond;
                     if (cond) frame.branchTaken = true;
                 }
@@ -971,6 +1012,7 @@ function createPreprocessorSyntaxCore(deps) {
                 const parsedDefine = parsePreprocessorDefineDirective(joinedDefine);
                 const parsed = parsedDefine?.valid ? parsedDefine : lineDefine;
                 const { name, args, macroStyle, macroIndexer, value } = parsed;
+                ensureMutableDefineDecls();
                 const defineIndexMap = ensureDefineDeclIndexMap();
                 const defineMap = ensureDefineDeclMap();
                 const existingIndex = defineIndexMap.has(name)
@@ -1004,6 +1046,7 @@ function createPreprocessorSyntaxCore(deps) {
 
             if (keyword === 'undef') {
                 const undefName = readDirectiveName(rest);
+                ensureMutableDefineDecls();
                 const defineIndexMap = ensureDefineDeclIndexMap();
                 const defineMap = ensureDefineDeclMap();
                 const idx = defineIndexMap.has(undefName)
@@ -1031,14 +1074,18 @@ function createPreprocessorSyntaxCore(deps) {
                 return nextDirectiveLine;
             }
 
-            if (keyword === 'include') {
-                const includeName = getIncludeNameFromLine(trimmed);
+            if (keyword === 'include' || keyword === 'tryinclude') {
+                const includeTarget = parsePawnIncludeDirectiveTarget(trimmed);
+                const includeName = includeTarget?.name || getIncludeNameFromLine(trimmed);
                 if (!includeName) {
                     appendRawDirectiveLines();
                     return nextDirectiveLine;
                 }
+                const includeRequired = keyword === 'include';
                 const fromFilePath = options.fromFilePath || '';
-                const includePath = resolveInclude(includeName, searchPaths, fromFilePath);
+                const includePath = resolveInclude(includeName, searchPaths, fromFilePath, {
+                    delimiter: includeTarget?.delimiter || ''
+                });
                 if (includePath) {
                     const activeDefineStateKey = ensureDefineStateKey();
                     const includeEntry = {
@@ -1047,14 +1094,17 @@ function createPreprocessorSyntaxCore(deps) {
                         defineDecls: defineDecls.slice(),
                         defineStateKey: activeDefineStateKey,
                         depth: includeDepth,
-                        lineNumber
+                        lineNumber,
+                        required: includeRequired
                     };
                     includeEntries.push(includeEntry);
 
                     const includeKey = normalizeFsPath(includePath);
                     if (includeKey && !activeFiles.has(includeKey)) {
                         const nestedIncludeDepth = includeDepth + 1;
-                        const nestedSearchPaths = getSearchPaths(includePath);
+                        const nestedSearchPaths = typeof getNestedSearchPaths === 'function'
+                            ? getNestedSearchPaths(includePath, searchPaths)
+                            : getSearchPaths(includePath);
                         let nestedState = !rationalState
                             ? readCachedIncludePreprocessedState(includePath, activeDefineStateKey, {
                                 activeFiles,
@@ -1135,14 +1185,14 @@ function createPreprocessorSyntaxCore(deps) {
                                 );
                             }
                             defineDecls = nestedState.defineDecls || [];
+                            ownsDefineDecls = false;
                             defineStateKey = String(nestedState.defineStateKey || '');
                             defineStateKeyDirty = !defineStateKey;
-                            defineDeclMap = null;
-                            defineDeclIndexMap = null;
+                            defineDeclLookup = null;
                             includeEntries.push(...nestedState.includeEntries);
                         }
                     }
-                } else {
+                } else if (includeRequired) {
                     unresolvedIncludeEntries.push({
                         name: includeName,
                         lineNumber,

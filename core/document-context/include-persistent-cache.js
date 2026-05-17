@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { getDefineStateSignature } = require('../utils/signature');
+const { unrefTimer } = require('../utils/timers');
 
 function createIncludePersistentCache(deps) {
     const {
@@ -112,7 +113,7 @@ function createIncludePersistentCache(deps) {
     }
 
     function schedulePersistentIncludeCacheWrite(cacheFilePath, payload) {
-        setTimeout(() => {
+        unrefTimer(setTimeout(() => {
             if (!isPersistentIncludeDeclCacheEnabled()) return;
             const currentCacheDir = getPersistentIncludeDeclCacheDirectory();
             if (!currentCacheDir || path.resolve(path.dirname(cacheFilePath)) !== path.resolve(currentCacheDir)) {
@@ -132,7 +133,7 @@ function createIncludePersistentCache(deps) {
                 .then(() => fs.promises.writeFile(cacheFilePath, payloadText, 'utf8'))
                 .then(() => prunePersistentIncludeDeclCache())
                 .catch(() => {});
-        }, 0);
+        }, 0));
     }
 
     function canUsePersistentIncludeDeclCache(fileStamp) {

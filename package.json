@@ -2,7 +2,7 @@
   "name": "amxx-pawn-all-in",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "publisher": "Faktor",
   "icon": "resources/icon.png",
   "repository": {
@@ -319,6 +319,17 @@
             "%config.completionForwardDeclarationStyle.enum.disabled%",
             "%config.completionForwardDeclarationStyle.enum.same-line%",
             "%config.completionForwardDeclarationStyle.enum.next-line%"
+          ]
+        },
+        "amxxPawnAllIn.completionCallArgumentMode": {
+          "type": "string",
+          "enum": ["required-before-default", "all"],
+          "default": "required-before-default",
+          "order": 89.95,
+          "markdownDescription": "%config.completionCallArgumentMode.markdownDescription%",
+          "enumDescriptions": [
+            "%config.completionCallArgumentMode.enum.required-before-default%",
+            "%config.completionCallArgumentMode.enum.all%"
           ]
         },
         "amxxPawnAllIn.hoverMode": {

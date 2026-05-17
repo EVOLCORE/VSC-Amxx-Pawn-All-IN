@@ -81,13 +81,11 @@ function buildCoreActivationRuntime(deps) {
         sharedDocumentContextCache,
         documentContextCache,
         documentContextVersionHistory,
-        documentContextFileLru,
         funcArgsParseCache,
         liveValidationFullResultCache,
         getDocumentContextCacheFileLimit
     });
     const {
-        cloneDefineDecls,
         getDefineStateKey,
         touchDocumentContextCacheFile,
         pruneDocumentContextCache,
@@ -115,7 +113,9 @@ function buildCoreActivationRuntime(deps) {
     } = documentStateRuntime;
 
     let getSearchPaths = null;
+    let getNestedSearchPaths = null;
     let resolveInclude = null;
+    let getIncludeCompletionEntries = null;
     let parseForInit = null;
     let parseEnumBlock = null;
     let isPotentialEnumDeclarationLine = null;
@@ -140,6 +140,9 @@ function buildCoreActivationRuntime(deps) {
         vscode,
         normalizeFsPath,
         getSearchPaths: (...args) => getSearchPaths(...args),
+        getNestedSearchPaths: (...args) => getNestedSearchPaths
+            ? getNestedSearchPaths(...args)
+            : getSearchPaths(args[0]),
         resolveInclude: (...args) => resolveInclude(...args),
         OPERATOR_SYMBOLS,
         commentAnalysisCache,
@@ -245,10 +248,12 @@ function buildCoreActivationRuntime(deps) {
     } = declarationSupportRuntime;
     const preprocessorRuntime = createPreprocessorRuntime({
         evaluatePawnNumericExpr: (...args) => evaluatePawnNumericExpr(...args),
-        cloneDefineDecls,
         normalizeFsPath,
         getDefineStateKey,
         getSearchPaths: (...args) => getSearchPaths(...args),
+        getNestedSearchPaths: (...args) => getNestedSearchPaths
+            ? getNestedSearchPaths(...args)
+            : getSearchPaths(args[0]),
         resolveInclude: (...args) => resolveInclude(...args),
         getIncludeNameFromLine,
         collectDeclarationText,
@@ -433,7 +438,9 @@ function buildCoreActivationRuntime(deps) {
     });
     ({
         getSearchPaths,
+        getNestedSearchPaths,
         resolveInclude,
+        getIncludeCompletionEntries,
         readPersistentIncludePreprocessedState,
         writePersistentIncludePreprocessedState
     } = documentSystemRuntime);

@@ -21,12 +21,15 @@ const {
 const {
     findNextNonEmptyLine,
     findPreviousNonEmptyLine,
+    getCompilerMultilineStatementRange,
     isDoWhileClosingLine,
+    isCompilerMultilineContinuationLine,
     isWhileConditionOnlyLine
 } = require('./control-lines');
 const { computeLineStartGroupContextFlags } = require('./group-context');
 const {
     PAWN_INCLUDE_LINE_RE,
+    getPawnIncludeCompletionContext,
     parsePawnIncludeDirectiveTarget,
     getPawnIncludeNameFromLine
 } = require('./includes');
@@ -34,6 +37,7 @@ const {
     advanceTopLevelScannerState,
     createTopLevelScannerState,
     findTopLevelChar,
+    findLastTopLevelChar,
     findTopLevelSequence,
     findTopLevelSimpleAssignmentOperator,
     isTopLevelScannerState
@@ -59,8 +63,11 @@ const {
     readPawnAssignmentOperatorAt
 } = require('./operators');
 const {
+    buildInactivePreprocessorLineFlags,
     getPreprocessorDirectiveStartIndex,
-    isPreprocessorDirectiveLine
+    isInactivePreprocessorMaskedLine,
+    isPreprocessorDirectiveLine,
+    maskPreprocessorDirectiveLines
 } = require('./preprocessor-lines');
 const {
     containsPawnIdentifierStartChar,
@@ -91,6 +98,8 @@ const {
     splitPawnLines
 } = require('./lines');
 const pawnKeywords = require('./keywords');
+const compilerBuiltins = require('./compiler-builtins');
+const preprocessorDirectives = require('./preprocessor-directives');
 
 module.exports = {
     createCommentAnalysisCore,
@@ -113,15 +122,19 @@ module.exports = {
     getCompletionControlContext,
     findNextNonEmptyLine,
     findPreviousNonEmptyLine,
+    getCompilerMultilineStatementRange,
     isDoWhileClosingLine,
+    isCompilerMultilineContinuationLine,
     isWhileConditionOnlyLine,
     computeLineStartGroupContextFlags,
     PAWN_INCLUDE_LINE_RE,
+    getPawnIncludeCompletionContext,
     parsePawnIncludeDirectiveTarget,
     getPawnIncludeNameFromLine,
     advanceTopLevelScannerState,
     createTopLevelScannerState,
     findTopLevelChar,
+    findLastTopLevelChar,
     findTopLevelSequence,
     findTopLevelSimpleAssignmentOperator,
     isTopLevelScannerState,
@@ -141,8 +154,11 @@ module.exports = {
     COMPOUND_PAWN_ASSIGNMENT_OPERATORS,
     isPawnAssignmentCompareNeighbor,
     readPawnAssignmentOperatorAt,
+    buildInactivePreprocessorLineFlags,
     getPreprocessorDirectiveStartIndex,
+    isInactivePreprocessorMaskedLine,
     isPreprocessorDirectiveLine,
+    maskPreprocessorDirectiveLines,
     containsPawnIdentifierStartChar,
     getPawnIdentifierName,
     isPawnIdentifierBoundaryChar,
@@ -165,5 +181,7 @@ module.exports = {
     countLineBreaks,
     countTextLines,
     splitPawnLines,
-    ...pawnKeywords
+    ...pawnKeywords,
+    ...compilerBuiltins,
+    ...preprocessorDirectives
 };

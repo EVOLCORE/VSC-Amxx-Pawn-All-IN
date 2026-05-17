@@ -1,3 +1,5 @@
+const { resolveLineStartOffset } = require('./lines');
+
 function createDelimiterSyntaxCore(deps) {
     const {
         isEscapedQuote
@@ -23,7 +25,7 @@ function createDelimiterSyntaxCore(deps) {
                 taintedLines[line] = 1;
             }
         };
-        const getLineStartOffset = lineNumber => lineStartOffsets?.[lineNumber] ?? 0;
+        const getLineStartOffset = lineNumber => resolveLineStartOffset(lineStartOffsets, lineNumber, 0);
         const pushIssue = (lineNumber, startOffset, endOffset, messageKey, params = {}) => {
             if (!shouldIncludeLine(lineNumber)) return;
             issues.push({ lineNumber, startOffset, endOffset, messageKey, params });

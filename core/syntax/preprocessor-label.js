@@ -1,4 +1,6 @@
 const { isPreprocessorDirectiveLine } = require('./preprocessor-lines');
+const { parsePawnIncludeDirectiveTarget } = require('./includes');
+const { readPawnIdentifierAt } = require('./identifiers');
 const { splitPawnLines } = require('./lines');
 
 function createPreprocessorLabelSyntaxCore(deps) {
@@ -180,7 +182,7 @@ function createPreprocessorLabelSyntaxCore(deps) {
             if (labelDeclarationIssueCache.has(labelName)) {
                 return labelDeclarationIssueCache.get(labelName);
             }
-            const result = getLabelDeclarationIssues(labelName, rootCtx.allDecls || []);
+            const result = getLabelDeclarationIssues(labelName, getKnownTagNames());
             labelDeclarationIssueCache.set(labelName, result);
             return result;
         };
@@ -206,30 +208,13 @@ function createPreprocessorLabelSyntaxCore(deps) {
             }
         };
         const readIncludeRequestFromDirective = directive => {
-            const payload = String(directive?.payload || '').trim();
-            const payloadOffset = String(directive?.payload || '').indexOf(payload);
-            const opener = payload[0] || '';
-            if (opener !== '<' && opener !== '"') {
-                const bareMatch = payload.match(/^([A-Za-z0-9_./\\-]+)/);
-                if (!bareMatch) return null;
-                const name = bareMatch[1] || '';
-                return {
-                    name,
-                    startIndex: (directive?.payloadStart || 0) + Math.max(0, payloadOffset),
-                    length: Math.max(1, name.length)
-                };
-            }
-            const closer = opener === '<' ? '>' : '"';
-            const closeIndex = payload.indexOf(closer, 1);
-            if (closeIndex <= 1) return null;
-            const inner = payload.slice(1, closeIndex);
-            const leftTrimmedLength = inner.length - inner.trimStart().length;
-            const name = inner.trim();
-            if (!name) return null;
+            const parsed = parsePawnIncludeDirectiveTarget(directive?.directiveLine || '');
+            const name = parsed?.name || '';
+            if (!parsed || !name) return null;
             return {
                 name,
-                startIndex: (directive?.payloadStart || 0) + Math.max(0, payloadOffset) + 1 + leftTrimmedLength,
-                length: Math.max(1, name.length)
+                startIndex: parsed.nameStart,
+                length: Math.max(1, parsed.nameEnd - parsed.nameStart)
             };
         };
         const readIncludeNameFromDirective = directive => {
@@ -292,11 +277,18 @@ function createPreprocessorLabelSyntaxCore(deps) {
             if (!directive) return true;
             const payload = String(directive.payload || '').trim();
             if (directive.keyword === 'ifdef' || directive.keyword === 'ifndef') {
-                const name = payload.match(/^([A-Za-z_@]\w*)/)?.[1] || '';
-                const isDefined = !!(name && activeDefinesByName.has(name));
+                const name = readPawnIdentifierAt(payload, 0)?.name || '';
+                const analysis = name
+                    ? analyzePreprocessorConditionExpression(`defined ${name}`, [], activeDefinesByName, {
+                        lineNumber: directive.lineNumber
+                    })
+                    : null;
+                const isDefined = analysis?.valid ? !!analysis.value : !!(name && activeDefinesByName.has(name));
                 return directive.keyword === 'ifdef' ? isDefined : !isDefined;
             }
-            const analysis = analyzePreprocessorConditionExpression(payload, [], activeDefinesByName);
+            const analysis = analyzePreprocessorConditionExpression(payload, [], activeDefinesByName, {
+                lineNumber: directive.lineNumber
+            });
             return analysis.valid ? !!analysis.value : true;
         };
         const pushPreprocessorBranchFrame = directive => {

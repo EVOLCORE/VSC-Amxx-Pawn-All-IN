@@ -42,11 +42,34 @@ function buildLazyActivationRuntime(deps, options = {}) {
     const shouldDetectPawnByIncludes = () =>
         typeof settingsService?.shouldDetectPawnLanguageByIncludes === 'function' &&
         settingsService.shouldDetectPawnLanguageByIncludes();
+    const hasPawnIncludeDirectiveCandidate = document => {
+        if (!document || shouldDetectPawnByIncludes() !== true) return false;
+        if (typeof document.lineAt !== 'function') return false;
+        const lineCount = Math.max(0, Math.min(Number(document.lineCount) || 0, 160));
+        try {
+            for (let lineNumber = 0; lineNumber < lineCount; lineNumber++) {
+                const lineText = String(document.lineAt(lineNumber)?.text || '');
+                if (/^\s*#\s*include\b/i.test(lineText)) return true;
+            }
+        } catch {
+            return false;
+        }
+        return false;
+    };
     const isLikelyPawnDocument = document =>
         !!document &&
         (document.languageId === 'amxxpawn' || hasConfiguredExtension(document.fileName || ''));
     const shouldEnsureForDocumentLifecycle = document =>
-        isLikelyPawnDocument(document) || shouldDetectPawnByIncludes();
+        isLikelyPawnDocument(document) || hasPawnIncludeDirectiveCandidate(document);
+    const shouldEnsureForAnyOpenDocument = () =>
+        (vscode.workspace.textDocuments || []).some(doc => shouldEnsureForDocumentLifecycle(doc)) ||
+        (vscode.window.visibleTextEditors || []).some(editor => shouldEnsureForDocumentLifecycle(editor?.document || null)) ||
+        shouldEnsureForDocumentLifecycle(vscode.window.activeTextEditor?.document || null);
+    const affectsExtensionConfiguration = event => {
+        if (!event || typeof settingsService?.affectsAnyConfiguration !== 'function') return false;
+        const keys = settingsService.SETTINGS_REFRESH_CONFIG_KEYS || [];
+        return Array.isArray(keys) && settingsService.affectsAnyConfiguration(event, keys);
+    };
 
     const trackProxyDisposable = disposable => {
         if (!disposable || typeof disposable.dispose !== 'function') return disposable;
@@ -136,12 +159,16 @@ function buildLazyActivationRuntime(deps, options = {}) {
             }
             trackProxyDisposable(vscode.workspace.onDidChangeConfiguration(event => {
                 if (!event) return;
+                const affectsOwnConfig = affectsExtensionConfiguration(event);
+                if (affectsOwnConfig) settingsService?.refresh?.();
+                if (!affectsOwnConfig && !shouldEnsureForAnyOpenDocument()) return;
+                if (affectsOwnConfig && !shouldEnsureForAnyOpenDocument()) return;
                 ensureRegisteredRuntime().editorLifecycleFeature.handleDidChangeConfiguration?.(event);
             }));
         },
         initialize() {
             const activeDoc = vscode.window.activeTextEditor?.document || null;
-            if (!shouldEnsureForDocumentLifecycle(activeDoc)) return;
+            if (!shouldEnsureForAnyOpenDocument()) return;
             initializeTimer = setTimeout(() => {
                 initializeTimer = null;
                 ensureRegisteredRuntime();
@@ -162,8 +189,10 @@ function buildLazyActivationRuntime(deps, options = {}) {
         register(proxyContext) {
             const hoverMode = settingsService?.getHoverMode?.();
             if (isHoverModifierHackMode(hoverMode)) {
-                ensureRegisteredRuntime();
-                return;
+                if (shouldEnsureForAnyOpenDocument()) {
+                    ensureRegisteredRuntime();
+                    return;
+                }
             }
             trackProxyDisposable(vscode.languages.registerHoverProvider('amxxpawn', {
                 provideHover(document, position) {
@@ -194,7 +223,7 @@ function buildLazyActivationRuntime(deps, options = {}) {
     const proxyCompletionFeature = {
         register() {
             const provider = {
-                provideCompletionItems(document, position) {
+                provideCompletionItems(document, position, token, completionContext) {
                     const startedAt = Date.now();
                     const fileName = String(document?.fileName || '');
                     const line = Number.isInteger(position?.line) ? position.line : -1;
@@ -204,7 +233,12 @@ function buildLazyActivationRuntime(deps, options = {}) {
                         return [];
                     }
                     logCompletion(`proxy-request file=${fileName} pos=${line}:${character} lang=${document?.languageId || ''}`);
-                    const items = ensureRegisteredRuntime().completionFeature.provideCompletionItems?.(document, position) || [];
+                    const items = ensureRegisteredRuntime().completionFeature.provideCompletionItems?.(
+                        document,
+                        position,
+                        token,
+                        completionContext
+                    ) || [];
                     logCompletion(
                         `proxy-result items=${Array.isArray(items) ? items.length : 'unknown'} ` +
                         `file=${fileName} ms=${Date.now() - startedAt}`
@@ -266,6 +300,7 @@ function buildLazyActivationRuntime(deps, options = {}) {
     const proxyPersistentHoverFeature = {
         register() {
             const schedule = (editor, delayMs, retryDelays) =>
+                shouldEnsureForDocumentLifecycle(editor?.document || null) &&
                 ensureRegisteredRuntime().persistentHoverFeature.schedulePersistentHover?.(editor, delayMs, retryDelays);
             trackProxyDisposable(vscode.window.onDidChangeTextEditorSelection(event => {
                 if (!shouldSchedulePersistentHoverForSelectionEvent(vscode, event)) return;
@@ -290,6 +325,7 @@ function buildLazyActivationRuntime(deps, options = {}) {
                 schedule(activeEditor, 30, [180, 360]);
             }));
             trackProxyDisposable(vscode.workspace.onDidChangeConfiguration(() => {
+                if (!shouldEnsureForAnyOpenDocument()) return;
                 schedule(vscode.window.activeTextEditor || null, 30, [180, 360]);
             }));
             if (typeof vscode.window.onDidChangeTextEditorVisibleRanges === 'function') {

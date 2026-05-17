@@ -10,6 +10,8 @@ const {
 } = require('../../core/document-context/edit-impact');
 const { createFastFunctionRangeCore } = require('../../core/syntax/function-ranges');
 
+const { unrefTimer } = require('../../core/utils/timers');
+
 function createLiveValidationScheduler(deps) {
     const {
         vscode,
@@ -305,7 +307,7 @@ function createLiveValidationScheduler(deps) {
         const mergedLines = new Set(existing?.lines || []);
         for (const line of incomingLines) mergedLines.add(line);
         if (existing?.timer) clearTimeout(existing.timer);
-        const timer = setTimeout(() => {
+        const timer = unrefTimer(setTimeout(() => {
             liveValidationTimers.delete(normalized);
             const runStartedAt = Date.now();
             logScheduler(
@@ -453,7 +455,7 @@ function createLiveValidationScheduler(deps) {
                 logScheduler(`error reason=${reason} file=${document?.fileName || ''} ${errorText}`);
                 console.error('scheduleLiveValidation:', error);
             }
-        }, delayMs);
+        }, delayMs));
 
         liveValidationTimers.set(normalized, {
             timer,

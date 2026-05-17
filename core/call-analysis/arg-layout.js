@@ -1,4 +1,9 @@
-const { getPawnIdentifierName } = require('../syntax/identifiers');
+const {
+    PAWN_IDENTIFIER_SOURCE,
+    getPawnIdentifierName
+} = require('../syntax/identifiers');
+
+const NAMED_ARGUMENT_RE = new RegExp(`^\\.\\s*(${PAWN_IDENTIFIER_SOURCE})\\s*=\\s*([\\s\\S]*)$`);
 
 function createCallArgLayoutCore(deps) {
     const {
@@ -124,7 +129,7 @@ function createCallArgLayoutCore(deps) {
         for (let rawIndex = 0; rawIndex < (rawCallSiteArgs?.length || 0); rawIndex++) {
             const originalExpr = rawCallSiteArgs[rawIndex] ?? '';
             const trimmedExpr = String(originalExpr).trim();
-            const namedArg = trimmedExpr.match(/^\.\s*([A-Za-z_@][A-Za-z0-9_@]*)\s*=\s*([\s\S]*)$/);
+            const namedArg = trimmedExpr.match(NAMED_ARGUMENT_RE);
 
             if (namedArg) {
                 sawNamedArgument = true;

@@ -1,6 +1,9 @@
 const { isBodyDeclarationContextChangeLine } = require('../../core/syntax/line-index');
-const { splitPawnLines } = require('../../core/syntax/lines');
-const { isPreprocessorDirectiveLine } = require('../../core/syntax/preprocessor-lines');
+const {
+    resolveLineStartOffset,
+    splitPawnLines
+} = require('../../core/syntax/lines');
+const { buildInactivePreprocessorLineFlags } = require('../../core/syntax/preprocessor-lines');
 const { createLineMembership } = require('../../core/utils/line-membership');
 
 const EMPTY_INLINE_CALLS = [];
@@ -9,29 +12,6 @@ function createFilledLineMap(lineCount, value) {
     const map = new Int32Array(Math.max(0, lineCount) + 1);
     map.fill(value);
     return map;
-}
-
-function buildInactivePreprocessorLineFlags(rawLines = [], preprocessedRawLines = [], lineCount = 0) {
-    if (!Array.isArray(rawLines) || !Array.isArray(preprocessedRawLines) || rawLines === preprocessedRawLines) {
-        return null;
-    }
-
-    const flags = new Uint8Array(Math.max(0, lineCount));
-    let hasInactiveLine = false;
-    const limit = Math.min(flags.length, rawLines.length, preprocessedRawLines.length);
-    for (let line = 0; line < limit; line++) {
-        const rawLine = String(rawLines[line] || '');
-        if (!rawLine.trim()) continue;
-        if (isPreprocessorDirectiveLine(rawLine)) continue;
-
-        const preprocessedLine = String(preprocessedRawLines[line] || '');
-        if (preprocessedLine.trim()) continue;
-
-        flags[line] = 1;
-        hasInactiveLine = true;
-    }
-
-    return hasInactiveLine ? flags : null;
 }
 
 function createDocumentScanPlanBuilder(deps = {}) {
@@ -233,7 +213,7 @@ function createDocumentScanPlanBuilder(deps = {}) {
                 reachableFunctionFlags[index] = 1;
                 pendingFunctions.push(functions[index]);
             }
-            const getLineStartOffset = lineNumber => rootCtx.lineStartOffsets?.[lineNumber] ?? 0;
+            const getLineStartOffset = lineNumber => resolveLineStartOffset(rootCtx.lineStartOffsets, lineNumber, 0);
             const collectReachabilityCallsForLine = lineNumber => {
                 const cachedInlineCalls = structuralPlan.inlineCallsByLine[lineNumber];
                 if (cachedInlineCalls !== undefined) return cachedInlineCalls;

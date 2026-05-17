@@ -5,6 +5,7 @@ const {
     getPrecomputedDeclNameBuckets,
     getPrecomputedVariableNameBuckets
 } = require('./precomputed-buckets');
+const { getObjectAliasTargetName } = require('../declarations/aliases');
 
 function createDeclLookupCore(deps) {
     const {
@@ -15,10 +16,42 @@ function createDeclLookupCore(deps) {
     } = deps;
     const variableNameBucketCache = new WeakMap();
     const objectAliasTargetNameCache = new WeakMap();
-    const ALIAS_TARGET_RE = /^([A-Za-z_@]\w*)$/;
+    const EMPTY_DECL_NAME_BUCKETS = new Map();
+    const EMPTY_VARIABLE_NAME_BUCKETS = new Map();
+
+    const findDeclInNameBuckets = (buckets, name, predicate = null) => {
+        const matches = buckets.get(name);
+        if (!matches?.length) return null;
+        if (!predicate) return matches[0];
+        for (const decl of matches) {
+            if (predicate(decl)) return decl;
+        }
+        return null;
+    };
+
+    const filterDeclsInNameBuckets = (buckets, name, predicate = null) => {
+        const matches = buckets.get(name) || [];
+        return predicate ? matches.filter(predicate) : [...matches];
+    };
+
+    const findBestDeclInNameBuckets = (buckets, name, predicate = null, score = null) => {
+        const matches = buckets.get(name);
+        if (!matches?.length) return null;
+        let best = null;
+        let bestScore = -Infinity;
+        for (const decl of matches) {
+            if (predicate && !predicate(decl)) continue;
+            const currentScore = score ? score(decl) : 0;
+            if (!best || currentScore > bestScore) {
+                best = decl;
+                bestScore = currentScore;
+            }
+        }
+        return best;
+    };
 
     const getDeclNameBuckets = decls => {
-        if (!Array.isArray(decls)) return new Map();
+        if (!Array.isArray(decls) || decls.length === 0) return EMPTY_DECL_NAME_BUCKETS;
         const cached = declNameBucketCache.get(decls);
         if (cached) return cached;
         const precomputed = getPrecomputedDeclNameBuckets(decls);
@@ -50,49 +83,29 @@ function createDeclLookupCore(deps) {
     };
 
     const findDeclByNameCached = (decls, name, predicate = null) => {
-        const matches = getDeclNameBuckets(decls).get(name);
-        if (!matches?.length) return null;
-        if (!predicate) return matches[0];
-        for (const decl of matches) {
-            if (predicate(decl)) return decl;
-        }
-        return null;
+        return findDeclInNameBuckets(getDeclNameBuckets(decls), name, predicate);
     };
 
     const filterDeclsByNameCached = (decls, name, predicate = null) => {
-        const matches = getDeclNameBuckets(decls).get(name) || [];
-        return predicate ? matches.filter(predicate) : [...matches];
+        return filterDeclsInNameBuckets(getDeclNameBuckets(decls), name, predicate);
     };
 
     const findBestDeclByNameCached = (decls, name, predicate = null, score = null) => {
-        const matches = getDeclNameBuckets(decls).get(name);
-        if (!matches?.length) return null;
-        let best = null;
-        let bestScore = -Infinity;
-        for (const decl of matches) {
-            if (predicate && !predicate(decl)) continue;
-            const currentScore = score ? score(decl) : 0;
-            if (!best || currentScore > bestScore) {
-                best = decl;
-                bestScore = currentScore;
-            }
-        }
-        return best;
+        return findBestDeclInNameBuckets(getDeclNameBuckets(decls), name, predicate, score);
     };
 
-    function getObjectAliasTargetName(decl) {
+    function getCachedObjectAliasTargetName(decl) {
         if (!decl || decl.type !== 'define' || decl.args || decl.macroStyle) return '';
         if (objectAliasTargetNameCache.has(decl)) {
             return objectAliasTargetNameCache.get(decl);
         }
-        const targetName = String(decl.value || '').trim().match(ALIAS_TARGET_RE)?.[1] || '';
-        const result = targetName && targetName !== decl.name ? targetName : '';
+        const result = getObjectAliasTargetName(decl);
         objectAliasTargetNameCache.set(decl, result);
         return result;
     }
 
     function isObjectFunctionAliasDefine(decl) {
-        return !!getObjectAliasTargetName(decl);
+        return !!getCachedObjectAliasTargetName(decl);
     }
 
     function createFunctionAliasMatch(match, aliasDefine, aliasName, immediateTargetName) {
@@ -114,7 +127,7 @@ function createDeclLookupCore(deps) {
     }
 
     const getVariableNameBuckets = decls => {
-        if (!Array.isArray(decls)) return new Map();
+        if (!Array.isArray(decls) || decls.length === 0) return EMPTY_VARIABLE_NAME_BUCKETS;
         const cached = variableNameBucketCache.get(decls);
         if (cached) return cached;
         const precomputed = getPrecomputedVariableNameBuckets(decls);
@@ -166,6 +179,12 @@ function createDeclLookupCore(deps) {
         let localVariables = null;
         let globalVariables = null;
         let includeVariables = null;
+        let funcArgNameBuckets = null;
+        let localNameBuckets = null;
+        let globalNameBuckets = null;
+        let functionNameBuckets = null;
+        let includeNameBuckets = null;
+        let builtinNameBuckets = null;
         const getArgSet = () => (argSet ||= new Set(funcArgs));
         const getLocalSet = () => (localSet ||= new Set(locals));
         const getGlobalSet = () => (globalSet ||= new Set(globals));
@@ -174,19 +193,25 @@ function createDeclLookupCore(deps) {
         const getLocalVariables = () => (localVariables ||= getVariableNameBuckets(locals));
         const getGlobalVariables = () => (globalVariables ||= getVariableNameBuckets(globals));
         const getIncludeVariables = () => (includeVariables ||= getVariableNameBuckets(incDecls));
+        const getFuncArgNameBuckets = () => (funcArgNameBuckets ||= getDeclNameBuckets(funcArgs));
+        const getLocalNameBuckets = () => (localNameBuckets ||= getDeclNameBuckets(locals));
+        const getGlobalNameBuckets = () => (globalNameBuckets ||= getDeclNameBuckets(globals));
+        const getFunctionNameBuckets = () => (functionNameBuckets ||= getDeclNameBuckets(functions));
+        const getIncludeNameBuckets = () => (includeNameBuckets ||= getDeclNameBuckets(incDecls));
+        const getBuiltinNameBuckets = () => (builtinNameBuckets ||= getDeclNameBuckets(BUILTIN_DECLS));
 
         const findObjectFunctionAliasDefine = name =>
-            findDeclByNameCached(funcArgs, name, isObjectFunctionAliasDefine) ||
-            findDeclByNameCached(locals, name, isObjectFunctionAliasDefine) ||
-            findDeclByNameCached(globals, name, isObjectFunctionAliasDefine) ||
-            findDeclByNameCached(functions, name, isObjectFunctionAliasDefine) ||
-            findDeclByNameCached(incDecls, name, isObjectFunctionAliasDefine) ||
-            findDeclByNameCached(BUILTIN_DECLS, name, isObjectFunctionAliasDefine);
+            findDeclInNameBuckets(getFuncArgNameBuckets(), name, isObjectFunctionAliasDefine) ||
+            findDeclInNameBuckets(getLocalNameBuckets(), name, isObjectFunctionAliasDefine) ||
+            findDeclInNameBuckets(getGlobalNameBuckets(), name, isObjectFunctionAliasDefine) ||
+            findDeclInNameBuckets(getFunctionNameBuckets(), name, isObjectFunctionAliasDefine) ||
+            findDeclInNameBuckets(getIncludeNameBuckets(), name, isObjectFunctionAliasDefine) ||
+            findDeclInNameBuckets(getBuiltinNameBuckets(), name, isObjectFunctionAliasDefine);
 
         const getDirectPreferredFunctionMatch = (name, preferInclude = false) => {
-            const localFunc = findDeclByNameCached(functions, name);
-            const includeFunc = findBestDeclByNameCached(
-                incDecls,
+            const localFunc = findDeclInNameBuckets(getFunctionNameBuckets(), name);
+            const includeFunc = findBestDeclInNameBuckets(
+                getIncludeNameBuckets(),
                 name,
                 isFunctionLikeDecl,
                 candidate => candidate.lineNumber ?? -1
@@ -207,7 +232,7 @@ function createDeclLookupCore(deps) {
             if (!name || visited.has(name)) return null;
             visited.add(name);
             const aliasDefine = findObjectFunctionAliasDefine(name);
-            const targetName = getObjectAliasTargetName(aliasDefine);
+            const targetName = getCachedObjectAliasTargetName(aliasDefine);
             if (!targetName || visited.has(targetName)) return null;
             const preferInclude = !!options.preferInclude;
             const targetMatch =
@@ -235,21 +260,21 @@ function createDeclLookupCore(deps) {
         };
 
         const lookup = {
-            findFuncArg: name => findDeclByNameCached(funcArgs, name),
-            findLocal: name => findDeclByNameCached(locals, name),
-            findGlobal: name => findDeclByNameCached(globals, name),
-            findFunction: name => findDeclByNameCached(functions, name),
+            findFuncArg: name => findDeclInNameBuckets(getFuncArgNameBuckets(), name),
+            findLocal: name => findDeclInNameBuckets(getLocalNameBuckets(), name),
+            findGlobal: name => findDeclInNameBuckets(getGlobalNameBuckets(), name),
+            findFunction: name => findDeclInNameBuckets(getFunctionNameBuckets(), name),
             findAnyLocalDeclByName(name, predicate = null) {
-                return findDeclByNameCached(funcArgs, name, predicate) ||
-                    findDeclByNameCached(locals, name, predicate) ||
-                    findDeclByNameCached(globals, name, predicate) ||
-                    (predicate ? findDeclByNameCached(functions, name, predicate) : null) ||
-                    findDeclByNameCached(incDecls, name, predicate);
+                return findDeclInNameBuckets(getFuncArgNameBuckets(), name, predicate) ||
+                    findDeclInNameBuckets(getLocalNameBuckets(), name, predicate) ||
+                    findDeclInNameBuckets(getGlobalNameBuckets(), name, predicate) ||
+                    (predicate ? findDeclInNameBuckets(getFunctionNameBuckets(), name, predicate) : null) ||
+                    findDeclInNameBuckets(getIncludeNameBuckets(), name, predicate);
             },
             findAnyDeclByName(name, predicate = null) {
                 const localDecl = this.findAnyLocalDeclByName(name, predicate);
                 if (localDecl) return localDecl;
-                return findDeclByNameCached(BUILTIN_DECLS, name, predicate);
+                return findDeclInNameBuckets(getBuiltinNameBuckets(), name, predicate);
             },
             findVariable: name =>
                 getFuncArgVariables().get(name) ||
@@ -257,18 +282,18 @@ function createDeclLookupCore(deps) {
                 getGlobalVariables().get(name) ||
                 getIncludeVariables().get(name) ||
                 null,
-            findInclude: (name, predicate = null) => findDeclByNameCached(incDecls, name, predicate),
-            filterIncludes: (name, predicate = null) => filterDeclsByNameCached(incDecls, name, predicate),
-            filterBuiltins: (name, predicate = null) => filterDeclsByNameCached(BUILTIN_DECLS, name, predicate),
-            hasIncludeFunctionTwin: name => !!findDeclByNameCached(incDecls, name, isFunctionLikeDecl),
+            findInclude: (name, predicate = null) => findDeclInNameBuckets(getIncludeNameBuckets(), name, predicate),
+            filterIncludes: (name, predicate = null) => filterDeclsInNameBuckets(getIncludeNameBuckets(), name, predicate),
+            filterBuiltins: (name, predicate = null) => filterDeclsInNameBuckets(getBuiltinNameBuckets(), name, predicate),
+            hasIncludeFunctionTwin: name => !!findDeclInNameBuckets(getIncludeNameBuckets(), name, isFunctionLikeDecl),
             getPreferredFunctionMatch,
             collectWordDecls: name => [
-                ...filterDeclsByNameCached(funcArgs, name),
-                ...filterDeclsByNameCached(locals, name),
-                ...filterDeclsByNameCached(globals, name),
-                ...filterDeclsByNameCached(functions, name),
-                ...filterDeclsByNameCached(incDecls, name),
-                ...filterDeclsByNameCached(BUILTIN_DECLS, name)
+                ...filterDeclsInNameBuckets(getFuncArgNameBuckets(), name),
+                ...filterDeclsInNameBuckets(getLocalNameBuckets(), name),
+                ...filterDeclsInNameBuckets(getGlobalNameBuckets(), name),
+                ...filterDeclsInNameBuckets(getFunctionNameBuckets(), name),
+                ...filterDeclsInNameBuckets(getIncludeNameBuckets(), name),
+                ...filterDeclsInNameBuckets(getBuiltinNameBuckets(), name)
             ]
         };
         Object.defineProperties(lookup, {

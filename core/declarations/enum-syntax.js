@@ -5,6 +5,7 @@ const {
     isPotentialEnumDeclarationLine,
     isWhitespaceCharCode
 } = require('./line-utils');
+const { maskPreprocessorDirectiveLines } = require('../syntax/preprocessor-lines');
 
 function createEnumSyntaxDiagnosticsCore(deps) {
     const {
@@ -208,7 +209,7 @@ function createEnumSyntaxDiagnosticsCore(deps) {
                 startLine = endLine;
                 continue;
             }
-            const body = strippedBlockText.slice(strippedOpenIdx + 1, strippedCloseIdx);
+            const body = maskPreprocessorDirectiveLines(strippedBlockText.slice(strippedOpenIdx + 1, strippedCloseIdx));
             const bodyBlockOffset = strippedOpenIdx + 1;
 
             for (const rawPart of splitTopLevelWithOffsets(body)) {

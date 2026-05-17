@@ -5,6 +5,7 @@ const {
     DEFAULT_CUSTOM_INCLUDE_FILE_EXTENSIONS,
     getEffectiveIncludeFileExtensions
 } = require('../core/include-extensions');
+const { normalizeCompletionCallArgumentMode } = require('../core/completion');
 
 const {
     normalizeLiveValidationIssueMode
@@ -32,6 +33,7 @@ function createSettingsService(vscode) {
         debugOutput: `${CONFIG_NAMESPACE}.debugOutput`,
         completionEnabled: `${CONFIG_NAMESPACE}.completionEnabled`,
         completionForwardDeclarationStyle: `${CONFIG_NAMESPACE}.completionForwardDeclarationStyle`,
+        completionCallArgumentMode: `${CONFIG_NAMESPACE}.completionCallArgumentMode`,
         hoverMode: `${CONFIG_NAMESPACE}.hoverMode`,
         hoverContentMode: `${CONFIG_NAMESPACE}.hoverContentMode`,
         showThemeRecommendation: `${CONFIG_NAMESPACE}.showThemeRecommendation`,
@@ -60,6 +62,7 @@ function createSettingsService(vscode) {
         CONFIG_KEYS.debugOutput,
         CONFIG_KEYS.completionEnabled,
         CONFIG_KEYS.completionForwardDeclarationStyle,
+        CONFIG_KEYS.completionCallArgumentMode,
         CONFIG_KEYS.hoverMode,
         CONFIG_KEYS.hoverContentMode,
         CONFIG_KEYS.showThemeRecommendation,
@@ -128,6 +131,7 @@ function createSettingsService(vscode) {
         debugOutput: false,
         completionEnabled: true,
         completionForwardDeclarationStyle: 'same-line',
+        completionCallArgumentMode: 'required-before-default',
         hoverMode: 'normal',
         hoverContentMode: 'full',
         showThemeRecommendation: true,
@@ -214,6 +218,9 @@ function createSettingsService(vscode) {
             rawCompletionForwardDeclarationStyle === 'disabled' || rawCompletionForwardDeclarationStyle === 'next-line'
                 ? rawCompletionForwardDeclarationStyle
                 : 'same-line';
+        settings.completionCallArgumentMode = normalizeCompletionCallArgumentMode(
+            config.get('completionCallArgumentMode', 'required-before-default')
+        );
 
         settings.hoverMode = normalizeHoverMode(config.get('hoverMode', 'normal'));
         const rawHoverContentMode = String(config.get('hoverContentMode', 'full') || 'full').trim().toLowerCase();
@@ -285,6 +292,7 @@ function createSettingsService(vscode) {
         isDebugOutputEnabled: () => settings.debugOutput,
         isCompletionEnabled: () => settings.completionEnabled,
         getCompletionForwardDeclarationStyle: () => settings.completionForwardDeclarationStyle,
+        getCompletionCallArgumentMode: () => settings.completionCallArgumentMode,
         getHoverMode: () => settings.hoverMode,
         getHoverContentMode: () => settings.hoverContentMode,
         shouldShowThemeRecommendation: () => settings.showThemeRecommendation,

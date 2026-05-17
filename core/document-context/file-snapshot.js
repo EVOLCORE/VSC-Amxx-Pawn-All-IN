@@ -2,7 +2,10 @@ const {
     createLineIndexCore,
     isBodyDeclarationContextChangeLine
 } = require('../syntax/line-index');
-const { splitPawnLines } = require('../syntax/lines');
+const {
+    buildLineStartOffsets,
+    splitPawnLines
+} = require('../syntax/lines');
 
 const defaultLineIndexCore = createLineIndexCore();
 
@@ -116,12 +119,7 @@ function createFileSnapshotCore(deps) {
                 configurable: true,
                 get() {
                     if (!lineStartOffsets) {
-                        lineStartOffsets = [0];
-                        for (let index = 0; index < sourceText.length; index++) {
-                            if (sourceText.charCodeAt(index) === 10) {
-                                lineStartOffsets.push(index + 1);
-                            }
-                        }
+                        lineStartOffsets = buildLineStartOffsets(sourceText);
                     }
                     return lineStartOffsets;
                 }

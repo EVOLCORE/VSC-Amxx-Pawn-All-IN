@@ -1,5 +1,6 @@
 const { createUtilityCore } = require('../../core/utils');
 const { getEffectiveIncludeFileExtensions } = require('../../core/include-extensions');
+const { unrefTimer } = require('../../core/utils/timers');
 
 const {
     getDocumentFingerprint: defaultGetDocumentFingerprint,
@@ -30,6 +31,7 @@ function createEditorLifecycleFeature(deps) {
         getPawnFileExtensions = () => ['.sma'],
         getIncludeFileExtensions = () => getEffectiveIncludeFileExtensions(),
         scheduleWarmDocumentContext,
+        clearAllScheduledWarmups = () => {},
         getLiveValidationMode,
         getLiveValidationTypingDelayMs = () => 700,
         shouldRunLiveValidationScanOnOpen,
@@ -66,6 +68,7 @@ function createEditorLifecycleFeature(deps) {
 
     const INCLUDE_GRAPH_WATCHER_REFRESH_DELAY_MS = 240;
     const WATCHER_CONTENT_STARTUP_NOISE_GRACE_MS = 1200;
+    let startupWarmupTimer = null;
     const getPawnSourceExtensions = () => normalizeExtensionList(getPawnFileExtensions(), ['.sma'], { useFallbackWhenEmpty: true });
     const getPawnIncludeExtensions = () => getEffectiveIncludeFileExtensions(
         normalizeExtensionList(getIncludeFileExtensions(), [], { useFallbackWhenEmpty: false })
@@ -314,7 +317,7 @@ function createEditorLifecycleFeature(deps) {
             scheduleWarmDocumentContext(next.document, 0);
         }
         if (idleVisibleWarmupState.queue.length) {
-            idleVisibleWarmupState.timer = setTimeout(runNextIdleVisibleWarmup, 0);
+            idleVisibleWarmupState.timer = unrefTimer(setTimeout(runNextIdleVisibleWarmup, 0));
             if (typeof idleVisibleWarmupState.timer.unref === 'function') {
                 idleVisibleWarmupState.timer.unref();
             }
@@ -325,7 +328,7 @@ function createEditorLifecycleFeature(deps) {
             queueVisibleDocumentWarmup(editor?.document || null);
         }
         if (!idleVisibleWarmupState.timer && idleVisibleWarmupState.queue.length) {
-            idleVisibleWarmupState.timer = setTimeout(runNextIdleVisibleWarmup, 0);
+            idleVisibleWarmupState.timer = unrefTimer(setTimeout(runNextIdleVisibleWarmup, 0));
             if (typeof idleVisibleWarmupState.timer.unref === 'function') {
                 idleVisibleWarmupState.timer.unref();
             }
@@ -613,11 +616,10 @@ function createEditorLifecycleFeature(deps) {
     const scheduleIncludeGraphWatcherRefresh = () => {
         if (typeof vscode.workspace.createFileSystemWatcher !== 'function') return;
         clearIncludeGraphWatcherRefreshTimer();
-        const timer = setTimeout(() => {
+        const timer = unrefTimer(setTimeout(() => {
             workspaceIncludeWatcherState.refreshTimer = null;
             ensureIncludeGraphWatchers();
-        }, INCLUDE_GRAPH_WATCHER_REFRESH_DELAY_MS);
-        if (typeof timer.unref === 'function') timer.unref();
+        }, INCLUDE_GRAPH_WATCHER_REFRESH_DELAY_MS));
         workspaceIncludeWatcherState.refreshTimer = timer;
     };
     const clearPersistentIncludeDeclCacheIfDisabled = () => {
@@ -1083,17 +1085,25 @@ function createEditorLifecycleFeature(deps) {
         ];
 
         context.subscriptions.push(...subscriptions);
-        context.subscriptions.push({
-            dispose() {
-                clearIdleVisibleWarmupTimer();
-                idleVisibleWarmupState.queue = [];
-                idleVisibleWarmupState.queuedKeys.clear();
-                pendingLineChangeValidations.clear();
-                lastKnownSelectionLineByPath.clear();
-                clearIncludeGraphWatcherRefreshTimer();
-                disposeRegisteredIncludeGraphWatchers();
-            }
-        });
+        context.subscriptions.push({ dispose: disposeLifecycleResources });
+    }
+
+    function disposeLifecycleResources() {
+        if (startupWarmupTimer) {
+            clearTimeout(startupWarmupTimer);
+            startupWarmupTimer = null;
+        }
+        clearIdleVisibleWarmupTimer();
+        idleVisibleWarmupState.queue = [];
+        idleVisibleWarmupState.queuedKeys.clear();
+        pendingLineChangeValidations.clear();
+        lastKnownSelectionLineByPath.clear();
+        clearIncludeGraphWatcherRefreshTimer();
+        disposeRegisteredIncludeGraphWatchers();
+        for (const filePath of [...liveValidationTimers.keys()]) {
+            clearScheduledLiveValidation(filePath);
+        }
+        clearAllScheduledWarmups();
     }
 
     function initialize() {
@@ -1117,14 +1127,16 @@ function createEditorLifecycleFeature(deps) {
         for (const editor of vscode.window.visibleTextEditors || []) {
             queueStartupDocument(editor?.document || null);
         }
-        setTimeout(() => {
+        if (startupWarmupTimer) clearTimeout(startupWarmupTimer);
+        startupWarmupTimer = unrefTimer(setTimeout(() => {
+            startupWarmupTimer = null;
             try {
                 ensureIncludeGraphWatchers();
                 warmWorkspaceIncludeSources(activeDoc?.fileName || '');
             } catch {
                 // Ignore include-source warmup failures so startup stays resilient.
             }
-        }, 40);
+        }, 40));
         clearPersistentIncludeDeclCacheIfDisabled();
         resetCachesAndWarmActiveDocument();
         scheduleVisibleDocumentWarmups();
@@ -1143,15 +1155,7 @@ function createEditorLifecycleFeature(deps) {
         handleDidChangeActiveTextEditor,
         handleDidChangeVisibleTextEditors,
         handleDidChangeConfiguration,
-        dispose() {
-            clearIdleVisibleWarmupTimer();
-            idleVisibleWarmupState.queue = [];
-            idleVisibleWarmupState.queuedKeys.clear();
-            pendingLineChangeValidations.clear();
-            lastKnownSelectionLineByPath.clear();
-            clearIncludeGraphWatcherRefreshTimer();
-            disposeRegisteredIncludeGraphWatchers();
-        }
+        dispose: disposeLifecycleResources
     };
 }
 

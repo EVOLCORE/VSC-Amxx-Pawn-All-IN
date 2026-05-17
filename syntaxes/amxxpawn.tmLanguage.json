@@ -252,7 +252,7 @@
       "patterns": [
         {
           "name": "meta.preprocessor.include.pawn",
-          "begin": "^(\\s*)(#)\\s*(include)\\b",
+          "begin": "^(\\s*)(#)\\s*(include|tryinclude)\\b",
           "beginCaptures": {
             "2": {
               "name": "punctuation.definition.directive.pawn"
@@ -559,7 +559,7 @@
             },
             {
               "name": "constant.other.enum.member.pawn",
-              "match": "\\b[A-Za-z_@][A-Za-z0-9_@]*\\b(?=\\s*(?:\\[|,|=|$))"
+              "match": "\\b[A-Za-z_@][A-Za-z0-9_@]*\\b(?=\\s*(?:\\[|,|=|\\}|$))"
             },
             {
               "include": "#operators"
@@ -640,7 +640,7 @@
       "patterns": [
         {
           "name": "constant.language",
-          "match": "\\b(?:true|false)\\b"
+          "match": "\\b(?:true|false|__BINARY__|__FILE__|__LINE__)\\b"
         },
         {
           "name": "meta.switch-case.pawn",

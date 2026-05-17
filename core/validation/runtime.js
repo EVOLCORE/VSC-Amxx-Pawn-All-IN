@@ -10,9 +10,14 @@ const {
     getPawnIdentifierName,
     isPawnIdentifierName
 } = require('../syntax/identifiers');
+const {
+    getObjectAliasTargetName,
+    isObjectAliasDefineDecl
+} = require('../declarations/aliases');
 const { findBalancedGroupEnd: findBalancedGroupEndCore } = require('../syntax/balanced');
 const { createSemanticSyntaxCore } = require('../syntax/semantic-classifier');
 const { createMacroExpansionSyntaxCore } = require('../syntax/macro-expander');
+const { getCompilerBuiltinTypeInfo } = require('../syntax/compiler-builtins');
 const {
     findPreviousNonWhitespaceIndex: findPreviousPawnNonWhitespaceIndex,
     skipPawnWhitespace
@@ -200,16 +205,6 @@ function createValidationCore(deps) {
         return findDeclByNameFromList(decls, name, predicate);
     }
 
-    function isObjectAliasDefineDecl(decl) {
-        return !!decl && decl.type === 'define' && !decl.args && !decl.macroStyle;
-    }
-
-    function getObjectAliasTargetName(decl) {
-        if (!isObjectAliasDefineDecl(decl)) return '';
-        const targetName = getPawnIdentifierName(decl.value);
-        return targetName && targetName !== decl.name ? targetName : '';
-    }
-
     function findObjectAliasTargetDeclByNameFromSources(decls = [], name = '', predicate = null, analysisCache = null, seen = new Set()) {
         const aliasName = String(name || '').trim();
         if (!aliasName || seen.has(aliasName)) return null;
@@ -346,6 +341,10 @@ function createValidationCore(deps) {
         const source = stripTagCastsForValidation(expr, escapeChar);
         if (!source) {
             return { isLValue: false, isConst: false, dims: '', baseDecl: null, name: '', isIndexedAccess: false };
+        }
+        const expandedSource = expandExpressionMacrosForTypeInference(source, decls, analysisCache);
+        if (expandedSource) {
+            return getExpressionAssignableInfo(expandedSource, decls, analysisCache, options);
         }
 
         const bareName = getPawnIdentifierName(source);
@@ -1083,6 +1082,17 @@ function createValidationCore(deps) {
         }
 
         if (isPawnIdentifierName(s)) {
+            const builtinDecl = findAnyDeclByNameFromSources(
+                allDecls,
+                s,
+                item => item.type === 'builtin',
+                analysisCache
+            );
+            const builtinTypeInfo = getCompilerBuiltinTypeInfo(builtinDecl);
+            if (builtinTypeInfo) {
+                return finish(builtinTypeInfo);
+            }
+
             const decl = findLocalDeclByNameFromSources(
                 allDecls,
                 s,
@@ -1615,6 +1625,12 @@ function createValidationCore(deps) {
         }
 
         const source = String(expr || '');
+        const expandedSource = expandExpressionMacrosForTypeInference(source, decls, analysisCache);
+        if (expandedSource) {
+            const expandedResult = findUnresolvedReferenceNames(expandedSource, decls, analysisCache, escapeChar);
+            if (analysisCache) analysisCache.unresolvedRefsByExpr.set(cacheKey, expandedResult);
+            return expandedResult;
+        }
         const unresolved = new Set();
         let inStr = false;
         let strCh = '';

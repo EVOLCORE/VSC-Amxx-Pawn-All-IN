@@ -1,4 +1,7 @@
-const { isPawnAssignmentCompareNeighbor } = require('./operators');
+const {
+    isPawnAssignmentCompareNeighbor,
+    readPawnAssignmentOperatorAt
+} = require('./operators');
 
 function createTopLevelScannerState() {
     return {
@@ -76,6 +79,21 @@ function findTopLevelChar(source = '', targetChar = '', options = {}) {
     return -1;
 }
 
+function findLastTopLevelChar(source = '', targetChar = '', options = {}) {
+    const text = String(source || '');
+    const state = createTopLevelScannerState();
+    const startIndex = Math.max(0, Number.isInteger(options.startIndex) ? options.startIndex : 0);
+    let lastIndex = -1;
+
+    for (let index = startIndex; index < text.length; index++) {
+        const char = text[index];
+        if (advanceTopLevelScannerState(text, index, state, options)) continue;
+        if (char === targetChar && isTopLevelScannerState(state)) lastIndex = index;
+    }
+
+    return lastIndex;
+}
+
 function findTopLevelSequence(source = '', target = '', options = {}) {
     const text = String(source || '');
     const needle = String(target || '');
@@ -108,10 +126,27 @@ function findTopLevelSimpleAssignmentOperator(source = '', options = {}) {
     return -1;
 }
 
+function findTopLevelAssignmentOperatorIndex(source = '', options = {}) {
+    const text = String(source || '');
+    if (text.indexOf('=') < 0) return -1;
+
+    const state = createTopLevelScannerState();
+    for (let index = 0; index < text.length; index++) {
+        if (advanceTopLevelScannerState(text, index, state, options)) continue;
+        if (!isTopLevelScannerState(state)) continue;
+        if (!readPawnAssignmentOperatorAt(text, index)) continue;
+        return index;
+    }
+
+    return -1;
+}
+
 module.exports = {
     advanceTopLevelScannerState,
     createTopLevelScannerState,
+    findTopLevelAssignmentOperatorIndex,
     findTopLevelChar,
+    findLastTopLevelChar,
     findTopLevelSequence,
     findTopLevelSimpleAssignmentOperator,
     isTopLevelScannerState

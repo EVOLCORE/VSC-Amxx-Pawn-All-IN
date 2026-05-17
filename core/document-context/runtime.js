@@ -5,6 +5,8 @@ const path = require('path');
 // live validation.
 const { splitPawnLines } = require('../syntax/lines');
 
+const { unrefTimer } = require('../utils/timers');
+
 function createDocumentContextCore(deps) {
     const {
         vscode,
@@ -44,6 +46,8 @@ function createDocumentContextCore(deps) {
             : (() => {});
     const documentIdentityByObject = new WeakMap();
     let nextDocumentIdentity = 1;
+    const includeDocumentWarmupStateByFile = new Map();
+    const INCLUDE_DOCUMENT_WARMUP_STATE_LIMIT = 64;
     const logContext = message => {
         try {
             debugOutputChannel?.appendLine?.(`[context] ${message}`);
@@ -575,6 +579,29 @@ function createDocumentContextCore(deps) {
         }
     }
 
+    function rememberIncludeDocumentWarmup(filePath = '', key = '') {
+        const normalized = normalizeFsPath(filePath);
+        if (!normalized || !key) return;
+        includeDocumentWarmupStateByFile.delete(normalized);
+        includeDocumentWarmupStateByFile.set(normalized, key);
+        while (includeDocumentWarmupStateByFile.size > INCLUDE_DOCUMENT_WARMUP_STATE_LIMIT) {
+            const oldestKey = includeDocumentWarmupStateByFile.keys().next().value;
+            includeDocumentWarmupStateByFile.delete(oldestKey);
+        }
+    }
+
+    function hasRecentIncludeDocumentWarmup(filePath = '', key = '') {
+        const normalized = normalizeFsPath(filePath);
+        if (!normalized || !key) return false;
+        return includeDocumentWarmupStateByFile.get(normalized) === key;
+    }
+
+    function clearAllScheduledWarmups() {
+        for (const filePath of [...documentWarmupTimers.keys()]) {
+            clearScheduledWarmup(filePath);
+        }
+    }
+
     function warmDocumentContext(document) {
         if (!isPawnDocument(document)) return;
 
@@ -589,6 +616,15 @@ function createDocumentContextCore(deps) {
         if (!isPawnDocument(document)) return;
         const maxFiles = getIncludeDocumentWarmupFileLimit();
         if (maxFiles === 0) return;
+        const searchPathSignature = (getSearchPaths(document.fileName) || [])
+            .map(item => normalizeFsPath(item))
+            .filter(Boolean)
+            .join('|');
+        const warmupKey = `v${document.version ?? 'unknown'}:limit:${maxFiles}:paths:${searchPathSignature}`;
+        if (hasRecentIncludeDocumentWarmup(document.fileName, warmupKey)) {
+            logContext(`warm-includes-skip file=${document.fileName || ''} cause=already-warmed limit=${maxFiles}`);
+            return;
+        }
         const documentFilePath = normalizeFsPath(document.fileName);
         const startedAt = Date.now();
         logContext(`warm-includes-start file=${document.fileName || ''} limit=${maxFiles}`);
@@ -600,7 +636,10 @@ function createDocumentContextCore(deps) {
             console.error('warmIncludedDocumentModels:', err);
             return;
         }
-        if (!ctx?.includeEntries?.length) return;
+        if (!ctx?.includeEntries?.length) {
+            rememberIncludeDocumentWarmup(document.fileName, warmupKey);
+            return;
+        }
 
         const directCandidates = [];
         const nestedCandidates = [];
@@ -635,6 +674,7 @@ function createDocumentContextCore(deps) {
             `direct=${directCandidates.length} nested=${nestedCandidates.length} opened=${opened} skipped=${skipped} ` +
             `ms=${Date.now() - startedAt}`
         );
+        rememberIncludeDocumentWarmup(document.fileName, warmupKey);
     }
 
     function scheduleWarmDocumentContext(document, delayMs = 120) {
@@ -643,11 +683,11 @@ function createDocumentContextCore(deps) {
         if (!normalized) return;
 
         clearScheduledWarmup(document.fileName);
-        const timer = setTimeout(() => {
+        const timer = unrefTimer(setTimeout(() => {
             documentWarmupTimers.delete(normalized);
             warmDocumentContext(document);
             warmIncludedDocumentModels(document);
-        }, delayMs);
+        }, delayMs));
         documentWarmupTimers.set(normalized, timer);
     }
 
@@ -655,6 +695,7 @@ function createDocumentContextCore(deps) {
         getPawnDocumentContext,
         createPawnDocumentContextSession,
         clearScheduledWarmup,
+        clearAllScheduledWarmups,
         warmDocumentContext,
         warmIncludedDocumentModels,
         scheduleWarmDocumentContext

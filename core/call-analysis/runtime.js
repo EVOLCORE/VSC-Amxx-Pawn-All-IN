@@ -4,6 +4,7 @@
 const { createCallArgLayoutCore } = require('./arg-layout');
 const { createPawnFunctionCallRegex } = require('../declarations/line-utils');
 const { getPawnIdentifierName } = require('../syntax/identifiers');
+const { buildLineStartOffsets } = require('../syntax/lines');
 
 function createCallAnalysisCore(deps) {
     const {
@@ -478,12 +479,7 @@ function createCallAnalysisCore(deps) {
             ? sharedLineStartOffsets
             : null;
         if (!lineStartOffsets) {
-            lineStartOffsets = [0];
-            for (let index = 0; index < source.length; index++) {
-                if (source.charCodeAt(index) === 10) {
-                    lineStartOffsets.push(index + 1);
-                }
-            }
+            lineStartOffsets = buildLineStartOffsets(source);
         }
 
         const lineStartSnapshots = new Array(lineStartOffsets.length);

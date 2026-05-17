@@ -53,9 +53,6 @@ function createDocumentContextStateCore(deps) {
         }
         return null;
     };
-    const cloneDefineDecls = (defineDecls = []) =>
-        defineDecls.map(item => ({ ...item }));
-
     const getDefineStateKey = (defineDecls = []) => {
         const count = Array.isArray(defineDecls) ? defineDecls.length : 0;
         if (count === 0) return '';
@@ -228,7 +225,6 @@ function createDocumentContextStateCore(deps) {
     };
 
     return {
-        cloneDefineDecls,
         getDefineStateKey,
         touchDocumentContextCacheFile,
         pruneDocumentContextCache,

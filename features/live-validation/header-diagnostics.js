@@ -1,4 +1,5 @@
 const { getTypeAnalysisSourceDecls } = require('../../core/validation/type-analysis-cache');
+const { resolveLineStartOffset } = require('../../core/syntax/lines');
 
 function createHeaderDiagnostics(deps) {
     const {
@@ -44,11 +45,18 @@ function createHeaderDiagnostics(deps) {
         );
 
         const lineStartOffsets = ctx.lineStartOffsets || null;
-        const startOffset = lineStartOffsets?.[functionDecl.startLine] ??
-            document.offsetAt(new vscode.Position(functionDecl.startLine, 0));
+        const startOffset = resolveLineStartOffset(
+            lineStartOffsets,
+            functionDecl.startLine,
+            () => document.offsetAt(new vscode.Position(functionDecl.startLine, 0))
+        );
         const endLine = functionDecl.headerEndLine ?? functionDecl.startLine;
         const endLineText = (ctx.rawLines || [])[endLine] ?? document.lineAt(endLine).text;
-        const endOffset = (lineStartOffsets?.[endLine] ?? document.offsetAt(new vscode.Position(endLine, 0))) + endLineText.length;
+        const endOffset = resolveLineStartOffset(
+            lineStartOffsets,
+            endLine,
+            () => document.offsetAt(new vscode.Position(endLine, 0))
+        ) + endLineText.length;
         const segment = ctx.text.slice(startOffset, endOffset);
         const nameIndex = segment.indexOf(functionDecl.name);
         if (nameIndex < 0) return diagnostics;
@@ -87,6 +95,9 @@ function createHeaderDiagnostics(deps) {
             ctx.resolver.ctrlCharAtOffset(openOffset)
         );
         const localArgs = localArgPieces.map(item => item.text);
+        const expandedLocalArgs = functionDecl.macroExpandedArgs
+            ? splitTopLevel(functionDecl.args || '', ctx.resolver.ctrlCharAtOffset(openOffset))
+            : null;
         const analysisDecls = getTypeAnalysisSourceDecls(ctx, analysisCache);
 
         const buildHeaderMismatchDiagnostic = message => {
@@ -112,8 +123,9 @@ function createHeaderDiagnostics(deps) {
             diagnostics.push(diagnostic);
         }
         const seenParamNames = new Set();
-        for (const piece of localArgPieces) {
-            const meta = getHeaderParamMeta(piece?.text || '', analysisCache);
+        for (let paramIndex = 0; paramIndex < localArgPieces.length; paramIndex++) {
+            const piece = localArgPieces[paramIndex];
+            const meta = getHeaderParamMeta(expandedLocalArgs?.[paramIndex] || piece?.text || '', analysisCache);
             const name = meta?.name || '';
             if (!name) continue;
             if (seenParamNames.has(name)) {

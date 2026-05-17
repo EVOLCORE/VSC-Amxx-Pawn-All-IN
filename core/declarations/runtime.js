@@ -3,10 +3,14 @@
 // declaration as "original" while another still tries to validate it.
 const {
     createPawnFunctionCallRegex,
+    isBareDeclarationKeywordLine,
     isPawnIdentifierContinueCode,
     isWhitespaceCharCode
 } = require('./line-utils');
-const { splitPawnLines } = require('../syntax/lines');
+const {
+    resolveLineStartOffset,
+    splitPawnLines
+} = require('../syntax/lines');
 
 function createDeclarationGuardsCore(deps) {
     const {
@@ -37,7 +41,11 @@ function createDeclarationGuardsCore(deps) {
         const dimsPattern = decl.dims ? `(?:\\s*${escapeRegExp(decl.dims)})?` : '';
         const declPattern = new RegExp(`\\b${escapeRegExp(decl.name)}\\b${dimsPattern}`);
         const getLineStartOffset = lineNumber =>
-            lineStartOffsets?.[lineNumber] ?? document.offsetAt(new vscode.Position(lineNumber, 0));
+            resolveLineStartOffset(
+                lineStartOffsets,
+                lineNumber,
+                () => document.offsetAt(new vscode.Position(lineNumber, 0))
+            );
         for (let lineNumber = decl.lineNumber; lineNumber < nextLine; lineNumber++) {
             const lineText = rawLines[lineNumber] || '';
             const lineMatch = declPattern.exec(lineText);
@@ -219,7 +227,11 @@ function createDeclarationGuardsCore(deps) {
         const strippedLines = sourceState?.strippedLines || null;
         const lineStartOffsets = sourceState?.lineStartOffsets || null;
         const getLineStartOffset = lineNumber =>
-            lineStartOffsets?.[lineNumber] ?? document.offsetAt(new vscode.Position(lineNumber, 0));
+            resolveLineStartOffset(
+                lineStartOffsets,
+                lineNumber,
+                () => document.offsetAt(new vscode.Position(lineNumber, 0))
+            );
         const start = Math.max(0, startOffset || 0);
         const end = Math.max(start, endOffset || start);
         const startLine = Number.isInteger(knownStartLine)
@@ -296,6 +308,7 @@ function createDeclarationGuardsCore(deps) {
                     declarationLine.indexOf(')') < 0 &&
                     !initialTrimmed.endsWith(',') &&
                     !/=\s*$/.test(initialTrimmed) &&
+                    !isBareDeclarationKeywordLine(initialTrimmed) &&
                     declarationLine.indexOf('\\') < 0
                 ) {
                     continue;

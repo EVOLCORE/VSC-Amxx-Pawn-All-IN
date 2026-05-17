@@ -1,6 +1,7 @@
 const { computeFunctionRangeMaps: defaultComputeFunctionRangeMaps } = require('../../core/declarations/scope');
 const { isHoverModifierHackMode } = require('../../core/hover-modes');
 const { shouldSchedulePersistentHoverForSelectionEvent } = require('../../core/persistent-hover/selection-events');
+const { unrefTimer } = require('../../core/utils/timers');
 
 // Persistent hover is a feature-level lifecycle wrapper around the built-in VS Code
 // hover widget. It is separate from hover content generation because it manages
@@ -134,13 +135,13 @@ function createPersistentHoverFeature(deps) {
         vscode.commands.executeCommand('editor.action.showHover').then(() => {
             state.hoverCommandSucceeded = true;
             if (!isPersistentHoverStateStillCurrent(state)) return;
-            setTimeout(() => {
+            unrefTimer(setTimeout(() => {
                 if (!isPersistentHoverStateStillCurrent(state)) return;
                 vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup').then(
                     undefined,
                     () => {}
                 );
-            }, 0);
+            }, 0));
         });
     }
 
@@ -190,19 +191,19 @@ function createPersistentHoverFeature(deps) {
         if (isPersistentHoverSuppressedByHoverMode()) return;
         if (isPersistentHoverTypingSuspended()) return;
 
-        persistentHoverShowTimer = setTimeout(() => {
+        persistentHoverShowTimer = unrefTimer(setTimeout(() => {
             persistentHoverShowTimer = null;
             const state = getPersistentHoverState(editor);
             if (!state) return;
             showPersistentHover(state);
             persistentHoverRetryTimers = retryDelays.map(retryDelay =>
-                setTimeout(() => {
+                unrefTimer(setTimeout(() => {
                     if (state.hoverCommandSucceeded) return;
                     if (!isPersistentHoverStateStillCurrent(state)) return;
                     showPersistentHover(state);
-                }, retryDelay)
+                }, retryDelay))
             );
-        }, delayMs);
+        }, delayMs));
     }
 
     function suspendPersistentHoverForTyping(editor, durationMs = 350) {
@@ -210,14 +211,14 @@ function createPersistentHoverFeature(deps) {
         clearPersistentHoverTimers();
         clearPersistentHoverTypingResumeTimer();
         closePersistentHover();
-        persistentHoverTypingResumeTimer = setTimeout(() => {
+        persistentHoverTypingResumeTimer = unrefTimer(setTimeout(() => {
             persistentHoverTypingResumeTimer = null;
             persistentHoverTypingSuspendUntil = 0;
             const activeEditor = vscode.window.activeTextEditor;
             if (!activeEditor || activeEditor !== editor) return;
             if (!isPawnDocument(activeEditor.document) || !activeEditor.selection.isEmpty) return;
             schedulePersistentHover(activeEditor, 0, [140, 300]);
-        }, durationMs + 10);
+        }, durationMs + 10));
     }
 
     function register(context) {
@@ -261,12 +262,19 @@ function createPersistentHoverFeature(deps) {
             vscode.window.onDidChangeTextEditorVisibleRanges(event => {
                 if (event.textEditor !== vscode.window.activeTextEditor) return;
                 if (persistentHoverScrollTimer) clearTimeout(persistentHoverScrollTimer);
-                persistentHoverScrollTimer = setTimeout(() => {
+                persistentHoverScrollTimer = unrefTimer(setTimeout(() => {
                     persistentHoverScrollTimer = null;
                     schedulePersistentHover(event.textEditor, 0, [140, 320, 520]);
-                }, 90);
+                }, 90));
             })
         );
+
+        context.subscriptions.push({
+            dispose() {
+                clearPersistentHoverTimers();
+                clearPersistentHoverTypingResumeTimer();
+            }
+        });
 
         if (!isPersistentHoverSuppressedByHoverMode()) {
             schedulePersistentHover(vscode.window.activeTextEditor || null, 20, [160, 320]);

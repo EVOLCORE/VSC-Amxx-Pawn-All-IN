@@ -3,6 +3,7 @@ const { createHoverCallPlanFeature } = require('./call-plan');
 const { createHoverCallContextCache } = require('./call-context-cache');
 const { createHoverSessionFactory } = require('./session');
 const { createHoverSemanticCache } = require('./semantic-cache');
+const { isInactivePreprocessorMaskedLine } = require('../../core/syntax/preprocessor-lines');
 
 function createHoverBuilderFeature(deps) {
     const {
@@ -27,8 +28,8 @@ function createHoverBuilderFeature(deps) {
         collectWordDeclMatches,
         BUILTIN_DECLS,
         buildStructuredEnumFieldHover,
-        buildHoverMarkdown,
-        buildArgHoverInfo,
+        buildHoverMarkdown: buildRawHoverMarkdown,
+        buildArgHoverInfo: buildRawArgHoverInfo,
         findDefinitionContext,
         findPreferredKnownCallContext,
         isNearbyCallContext,
@@ -90,6 +91,23 @@ function createHoverBuilderFeature(deps) {
                 document.positionAt(Math.max(startOffset + 1, endOffset))
             );
         };
+        let suppressHoverValidation = false;
+        const buildHoverMarkdown = (...args) => {
+            if (!suppressHoverValidation) return buildRawHoverMarkdown(...args);
+            const optionsIndex = 13;
+            const options = args[optionsIndex] || {};
+            args[optionsIndex] = { ...options, suppressValidation: true };
+            return buildRawHoverMarkdown(...args);
+        };
+        const buildArgHoverInfo = (matches, currentFilePath = '', includeDocs = true, options = {}) =>
+            buildRawArgHoverInfo(
+                matches,
+                currentFilePath,
+                includeDocs,
+                suppressHoverValidation
+                    ? { ...options, validateVariableAccess: false }
+                    : options
+            );
         const buildEnumDeclarationHeaderHover = enumDecl => {
             if (!enumDecl || enumDecl.type !== 'enum' || enumDecl.lineNumber !== position.line) return null;
             const lineText = document.lineAt(position.line).text;
@@ -149,6 +167,11 @@ function createHoverBuilderFeature(deps) {
             getRawIndexedExpressionsForLine,
             findIndexedAccessContextAtPositionCached
         } = hoverSession;
+        suppressHoverValidation = isInactivePreprocessorMaskedLine(
+            ctx.rawLines,
+            ctx.preprocessedState?.rawLines,
+            position.line
+        );
         const documentSemanticKey = getDocumentSemanticKey(
             document,
             ctx.semanticSession || null,

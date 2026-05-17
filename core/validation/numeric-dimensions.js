@@ -1,5 +1,11 @@
-const { containsPawnIdentifierStartChar } = require('../syntax/identifiers');
+const {
+    PAWN_IDENTIFIER_SOURCE,
+    containsPawnIdentifierStartChar
+} = require('../syntax/identifiers');
 const { createDimensionSyntaxCore } = require('../syntax/dimensions');
+
+const SIZEOF_IDENTIFIER_RE = new RegExp(`\\bsizeof\\s*\\(\\s*(${PAWN_IDENTIFIER_SOURCE})((?:\\s*\\[\\s*\\])*)\\s*\\)`, 'g');
+const PAWN_IDENTIFIER_WORD_RE = new RegExp(`\\b(${PAWN_IDENTIFIER_SOURCE})\\b`, 'g');
 
 function createNumericDimensionValidationCore(deps) {
     const {
@@ -20,10 +26,7 @@ function createNumericDimensionValidationCore(deps) {
     const PARSED_NUMERIC_EXPR_CACHE_MAX_CHARS = 512;
     const PAWN_CHARS_PER_CELL = 4;
     const dimensionSyntaxCore = createDimensionSyntaxCore();
-
-    function parseDimsParts(dimsStr) {
-        return dimensionSyntaxCore.parseDimsParts(dimsStr);
-    }
+    const parseDimsParts = dimensionSyntaxCore.parseDimsParts;
 
     function evaluateParsedPawnNumericExpr(source) {
         const input = String(source || '');
@@ -156,7 +159,7 @@ function createNumericDimensionValidationCore(deps) {
         source = expanded.text;
 
         if (containsPawnIdentifierStartChar(source)) {
-            source = source.replace(/\bsizeof\s*\(\s*([A-Za-z_@]\w*)((?:\s*\[\s*\])*)\s*\)/g, (_, name, emptyAccesses) => {
+            source = source.replace(SIZEOF_IDENTIFIER_RE, (_, name, emptyAccesses) => {
                 const decl = findAnyDeclByNameFromSources(decls, name, null, analysisCache);
                 if (!decl) return 'NaN';
                 if (decl.type === 'enum' && /^-?\d+$/.test(String(decl.value || ''))) {
@@ -174,7 +177,7 @@ function createNumericDimensionValidationCore(deps) {
                 return 'NaN';
             });
 
-            source = source.replace(/\b([A-Za-z_@][A-Za-z0-9_@]*)\b/g, (full, name) => {
+            source = source.replace(PAWN_IDENTIFIER_WORD_RE, (full, name) => {
                 if (FORBIDDEN.has(name)) return full;
                 if (seen.has(name)) return 'NaN';
 

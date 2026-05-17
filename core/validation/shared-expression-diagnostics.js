@@ -1,11 +1,12 @@
 const { isPreprocessorDirectiveLine } = require('../syntax/preprocessor-lines');
 const { hasTrailingBackslashContinuation } = require('../syntax/continuation');
 const { readPawnAssignmentOperatorAt } = require('../syntax/operators');
+const { PAWN_IDENTIFIER_SOURCE } = require('../syntax/identifiers');
 const { getTypeAnalysisSourceDecls } = require('./type-analysis-cache');
 const {
     advanceTopLevelScannerState,
     createTopLevelScannerState,
-    isTopLevelScannerState
+    findTopLevelAssignmentOperatorIndex: findTopLevelAssignmentOperatorIndexCore
 } = require('../syntax/top-level');
 const {
     startsWithControlKeyword,
@@ -61,10 +62,29 @@ function createSharedExpressionDiagnostics(deps) {
 
     function extractLeadingIdentifierName(source) {
         const text = String(source || '').trim();
-        const direct = text.match(/^([A-Za-z_@]\w*)/);
-        if (direct) return direct[1];
-        const tagged = text.match(/^(?:[A-Za-z_@]\w*)\s*:\s*([A-Za-z_@]\w*)/);
-        return tagged?.[1] || '';
+        const readNameAt = index => {
+            const ident = readIdentifierAt(text, index);
+            return ident ? { name: ident.text || ident.name || '', end: ident.end } : null;
+        };
+        const readTagTargetName = tagEnd => {
+            const colonIndex = findFirstNonWhitespaceIndex(text, tagEnd);
+            if (text[colonIndex] !== ':') return '';
+            const nameStart = findFirstNonWhitespaceIndex(text, colonIndex + 1);
+            return readNameAt(nameStart)?.name || '';
+        };
+
+        if (text.startsWith('{')) {
+            const tagEnd = findBalancedGroupEnd(text, 0, '{', '}');
+            if (tagEnd > 0) {
+                const taggedName = readTagTargetName(tagEnd + 1);
+                if (taggedName) return taggedName;
+            }
+        }
+
+        const leading = readNameAt(0);
+        if (!leading) return '';
+        const taggedName = readTagTargetName(leading.end);
+        return taggedName || leading.name;
     }
 
 
@@ -91,26 +111,7 @@ function createSharedExpressionDiagnostics(deps) {
 
 
     function findTopLevelAssignmentOperatorIndex(lineText) {
-        const source = String(lineText || '');
-        if (source.indexOf('=') < 0) return -1;
-        const state = createTopLevelScannerState();
-
-        for (let index = 0; index < source.length; index++) {
-            const char = source[index];
-            const next = source[index + 1] || '';
-            const prev = source[index - 1] || '';
-
-            if (advanceTopLevelScannerState(source, index, state)) continue;
-            if (!isTopLevelScannerState(state)) continue;
-            if (char !== '=') continue;
-            if (prev === '=' || prev === '!' || next === '=') continue;
-            if ((prev === '<' || prev === '>') && source[index - 2] !== prev) continue;
-            if (/[+\-*/%&|^]/.test(prev)) return index - 1;
-            if ((prev === '<' || prev === '>') && source[index - 2] === prev) return index - 2;
-            return index;
-        }
-
-        return -1;
+        return findTopLevelAssignmentOperatorIndexCore(lineText);
     }
 
 
@@ -192,8 +193,11 @@ function createSharedExpressionDiagnostics(deps) {
         if (!isFunctionLikeDefineDecl(decl)) return false;
         const valueText = String(decl?.value || '').trim();
         if (!valueText) return false;
-        const targetName = valueText.match(/^([A-Za-z_@]\w*)\s*\(/)?.[1] || '';
-        if (!targetName) return false;
+        const target = readIdentifierAt(valueText, 0);
+        if (!target) return false;
+        const openParenIndex = findFirstNonWhitespaceIndex(valueText, target.end);
+        if (valueText[openParenIndex] !== '(') return false;
+        const targetName = target.text || target.name || '';
         return targetName !== decl.name;
     }
 
@@ -202,7 +206,8 @@ function createSharedExpressionDiagnostics(deps) {
     function isSingleStatementForInitLine(lineText, declName = '') {
         const source = String(lineText || '').trim();
         if (!declName || !/^for\s*\(/.test(source)) return false;
-        return new RegExp(String.raw`^for\s*\(\s*new\s+(?:[A-Za-z_@]\w*\s*:\s*)?${declName}\b`).test(source);
+        const tagSource = `(?:${PAWN_IDENTIFIER_SOURCE}|\\{[^}]+\\})`;
+        return new RegExp(String.raw`^for\s*\(\s*new\s+(?:${tagSource}\s*:\s*)?${declName}\b`).test(source);
     }
 
 
@@ -344,10 +349,10 @@ function createSharedExpressionDiagnostics(deps) {
             if (closeIndex < 0) return null;
             const inner = text.slice(operandStart + 1, closeIndex);
             const stripped = stripOuterBalancedParens(inner);
-            const identMatch = stripped.text.match(/^([A-Za-z_@]\w*)/);
-            if (!identMatch) return null;
-            const name = identMatch[1];
-            const bracketInfo = parseSizeofOperandBrackets(stripped.text, identMatch[0].length);
+            const ident = readIdentifierAt(stripped.text, 0);
+            if (!ident) return null;
+            const name = ident.text || ident.name || '';
+            const bracketInfo = parseSizeofOperandBrackets(stripped.text, ident.end);
             if (stripped.text.slice(bracketInfo.end).trim()) return null;
             return {
                 operatorStart,

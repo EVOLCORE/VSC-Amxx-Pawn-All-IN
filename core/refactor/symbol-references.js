@@ -1,4 +1,8 @@
-const { isPawnIdentifierName } = require('../syntax/identifiers');
+const {
+    isPawnIdentifierContinueChar,
+    isPawnIdentifierName
+} = require('../syntax/identifiers');
+const { resolveLineStartOffset } = require('../syntax/lines');
 
 function createSymbolReferenceCore(deps) {
     const {
@@ -20,7 +24,11 @@ function createSymbolReferenceCore(deps) {
     }
 
     function getLineStartOffset(document, ctx, lineNumber) {
-        return ctx?.lineStartOffsets?.[lineNumber] ?? document.offsetAt(new vscode.Position(lineNumber, 0));
+        return resolveLineStartOffset(
+            ctx?.lineStartOffsets || null,
+            lineNumber,
+            () => document.offsetAt(new vscode.Position(lineNumber, 0))
+        );
     }
 
     function createRange(document, ctx, lineNumber, start, end) {
@@ -204,7 +212,10 @@ function createSymbolReferenceCore(deps) {
                 const before = found > 0 ? source[found - 1] : '';
                 const after = end < source.length ? source[end] : '';
                 index = end;
-                if ((before && /[A-Za-z0-9_@]/.test(before)) || (after && /[A-Za-z0-9_@]/.test(after))) {
+                if (
+                    (before && isPawnIdentifierContinueChar(before)) ||
+                    (after && isPawnIdentifierContinueChar(after))
+                ) {
                     continue;
                 }
                 if (!isRenameableOccurrence(ctx, lineNumber, source, found, end, name, escapeChar)) {

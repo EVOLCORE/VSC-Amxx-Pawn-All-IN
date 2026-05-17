@@ -33,6 +33,7 @@ function createBaseSyntaxRuntime(deps) {
         fileSnapshotCache,
         readNormalizedFileContent,
         getSearchPaths,
+        getNestedSearchPaths,
         resolveInclude
     } = deps;
 
@@ -54,6 +55,7 @@ function createBaseSyntaxRuntime(deps) {
     const ctrlCharRuntime = createCtrlCharSyntaxCore({
         normalizeFsPath,
         getSearchPaths,
+        getNestedSearchPaths,
         resolveInclude,
         ctrlCharStateCache,
         getCachedCommentAnalysis,

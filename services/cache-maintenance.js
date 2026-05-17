@@ -31,6 +31,7 @@ function createCacheMaintenanceService(deps) {
         clearIncludeDeclCacheForFile,
         clearIncludeFileTextCacheForFile,
         clearFileSnapshotCacheForFile,
+        clearIncludeCompletionSourceCache = null,
         clearScheduledWarmup,
         parsePreprocessorDirectiveLine,
         isExplicitDeclarationStartLine,
@@ -96,6 +97,9 @@ function createCacheMaintenanceService(deps) {
         funcArgsParseCache.clear();
         liveValidationFullResultCache.clear();
         includeDocumentModelWarmCache.clear();
+        if (typeof clearIncludeCompletionSourceCache === 'function') {
+            clearIncludeCompletionSourceCache();
+        }
         if (typeof bumpDependencyFreshnessVersion === 'function') {
             bumpDependencyFreshnessVersion();
         }

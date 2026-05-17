@@ -3,12 +3,20 @@ const { getStructuralScanBounds } = require('./structural-scan-bounds');
 const { createControlContextTracker } = require('../../core/syntax/control-context');
 const { getTypeAnalysisSourceDecls } = require('../../core/validation/type-analysis-cache');
 const {
-    areCompilerMultilineLinesConnected,
     findPreviousNonEmptyLine,
+    getCompilerMultilineStatementRange,
     isDoWhileClosingLine: isDoWhileClosingLineCore
 } = require('../../core/syntax/control-lines');
 const { computeLineStartGroupContextFlags } = require('../../core/syntax/group-context');
-const { splitPawnLines } = require('../../core/syntax/lines');
+const { PAWN_IDENTIFIER_SOURCE } = require('../../core/syntax/identifiers');
+const {
+    resolveLineStartOffset,
+    splitPawnLines
+} = require('../../core/syntax/lines');
+const { buildInactivePreprocessorLineFlags } = require('../../core/syntax/preprocessor-lines');
+
+const PAWN_IDENTIFIER_WORD_RE = new RegExp(`\\b${PAWN_IDENTIFIER_SOURCE}\\b`, 'g');
+const PAWN_IDENTIFIER_AT_START_RE = new RegExp(`^(${PAWN_IDENTIFIER_SOURCE})\\b`);
 
 function createStructuralDiagnostics(deps) {
     const {
@@ -16,6 +24,7 @@ function createStructuralDiagnostics(deps) {
         classifyPawnStatementLine,
         countStructuralBraces,
         countTopLevelSemicolonStatements,
+        collectDeclarationText,
         createHoverTypeAnalysisCache,
         createLiveValidationDiagnostic,
         createOffsetRange,
@@ -60,10 +69,34 @@ function createStructuralDiagnostics(deps) {
         const targetLines = targetLineNumbers instanceof Set ? targetLineNumbers : null;
         const rawLines = rootCtx.rawLines || splitPawnLines(rootCtx.text);
         const strippedLines = rootCtx.strippedLines || rawLines;
+        let fallbackInactivePreprocessorLineFlags = null;
+        const getInactivePreprocessorLineFlags = () => {
+            if (fallbackInactivePreprocessorLineFlags !== null) {
+                return fallbackInactivePreprocessorLineFlags;
+            }
+            fallbackInactivePreprocessorLineFlags = buildInactivePreprocessorLineFlags(
+                rawLines,
+                rootCtx.preprocessedState?.rawLines,
+                rawLines.length
+            ) || false;
+            return fallbackInactivePreprocessorLineFlags;
+        };
+        const isInactivePreprocessorLine = lineNumber => {
+            if (!Number.isInteger(lineNumber) || lineNumber < 0) return false;
+            if (typeof scanServices?.isInactivePreprocessorLine === 'function') {
+                return !!scanServices.isInactivePreprocessorLine(lineNumber);
+            }
+            const flags = scanServices?.inactivePreprocessorLineFlags || getInactivePreprocessorLineFlags();
+            return !!(flags && flags[lineNumber]);
+        };
         const depths = rootCtx.parsedDecls.depths || [];
         const lineStartOffsets = rootCtx.lineStartOffsets || null;
         const getLineStartOffset = lineNumber =>
-            lineStartOffsets?.[lineNumber] ?? document.offsetAt(new vscode.Position(lineNumber, 0));
+            resolveLineStartOffset(
+                lineStartOffsets,
+                lineNumber,
+                () => document.offsetAt(new vscode.Position(lineNumber, 0))
+            );
         const structuralCandidateLineNumbers = rootCtx.lineIndex.structuralDiagnosticCandidateLines || [];
         const unreachableCandidateLineNumbers = rootCtx.lineIndex.generalDiagnosticCandidateLines || [];
         const functionBodyRangeByLine = getFunctionBodyRangeByLine(rootCtx);
@@ -170,6 +203,17 @@ function createStructuralDiagnostics(deps) {
                 escapeChar: returnCtx?.resolver?.ctrlCharAtLine?.(lineNumber) || ''
             };
         };
+        const getEffectiveReturnInfo = (lineNumber, currentDepth, statement) => {
+            if (!statement?.returnInfo) return null;
+            const range = getCompilerMultilineRangeForLine(lineNumber, currentDepth);
+            if (!range || range.startLine !== lineNumber || !range.text) return statement.returnInfo;
+            const returnMatch = range.text.match(/\breturn\b/);
+            if (!returnMatch) return statement.returnInfo;
+            return {
+                ...statement.returnInfo,
+                valueText: stripTrailingSemicolon(range.text.slice(returnMatch.index + 'return'.length))
+            };
+        };
 
         const getPreviousNonEmptyLine = startLine =>
             findPreviousNonEmptyLine(strippedLines, startLine);
@@ -230,7 +274,7 @@ function createStructuralDiagnostics(deps) {
                 type = 'switch';
             }
             if (!type) {
-                for (const match of String(decl.value || '').matchAll(/\b[A-Za-z_@][A-Za-z0-9_@]*\b/g)) {
+                for (const match of String(decl.value || '').matchAll(PAWN_IDENTIFIER_WORD_RE)) {
                     const nestedDecl = functionLikeDefineDeclsByName.get(match[0]);
                     if (!nestedDecl || nestedDecl === decl) continue;
                     type = getMacroProvidedControlType(nestedDecl, seen);
@@ -245,7 +289,7 @@ function createStructuralDiagnostics(deps) {
             const text = String(source || '');
             const start = findFirstNonWhitespaceIndex(text, 0);
             if (start >= text.length) return null;
-            const match = text.slice(start).match(/^([A-Za-z_@][A-Za-z0-9_@]*)\b/);
+            const match = text.slice(start).match(PAWN_IDENTIFIER_AT_START_RE);
             if (!match) return null;
             const name = match[1];
             const decl = functionLikeDefineDeclsByName.get(name);
@@ -409,6 +453,10 @@ function createStructuralDiagnostics(deps) {
         const getStructuralLine = lineNumber => {
             const cached = structuralLineCache[lineNumber];
             if (cached !== undefined) return cached;
+            if (isInactivePreprocessorLine(lineNumber)) {
+                structuralLineCache[lineNumber] = '';
+                return '';
+            }
             const escapeChar = rootCtx.resolver?.ctrlCharAtLine?.(lineNumber) || '';
             const line = maskStringLiteralContent(String(strippedLines[lineNumber] || ''), escapeChar);
             structuralLineCache[lineNumber] = line;
@@ -424,12 +472,41 @@ function createStructuralDiagnostics(deps) {
         };
         const isInsideLineStartGroupContext = lineNumber =>
             !!getLineStartGroupContextFlags()[lineNumber];
+        let topLevelDeclarationContinuationLines = null;
+        const getTopLevelDeclarationContinuationLines = () => {
+            if (topLevelDeclarationContinuationLines) return topLevelDeclarationContinuationLines;
+            const lines = new Set();
+            const lineCtrlChars = rootCtx.lineCtrlChars || [];
+            for (const decl of rootCtx.parsedDecls.globals || []) {
+                if (!decl || (decl.type !== 'variable' && decl.type !== 'constant')) continue;
+                const declarationLine = decl.lineNumber ?? -1;
+                if (declarationLine < 0) continue;
+                const span = collectDeclarationText(rawLines, declarationLine, lineCtrlChars, strippedLines);
+                const nextLine = span?.nextLine ?? (declarationLine + 1);
+                for (let coveredLine = declarationLine + 1; coveredLine < nextLine; coveredLine++) {
+                    lines.add(coveredLine);
+                }
+            }
+            topLevelDeclarationContinuationLines = lines;
+            return lines;
+        };
+        const isTopLevelDeclarationContinuationLine = lineNumber =>
+            getTopLevelDeclarationContinuationLines().has(lineNumber);
         const getTrimmedStructuralLine = lineNumber =>
             String(getStructuralLine(lineNumber) || '').trim();
         const isCompilerLaststIgnoredLine = trimmedLine =>
             !trimmedLine ||
             /^[{}]+;?$/.test(trimmedLine) ||
             /^#/.test(trimmedLine);
+        const getCompilerMultilineRangeForLine = (lineNumber, baseDepth, endLine = scanBounds.end) =>
+            getCompilerMultilineStatementRange(strippedLines, lineNumber, {
+                startLine: scanBounds.start,
+                endLine,
+                baseDepth,
+                getLineText: getStructuralLine,
+                getLineDepth: getCompilerLineEffectiveDepth,
+                isIgnoredLine: isCompilerLaststIgnoredLine
+            });
         const findNextCompilerStatementLine = (startLine, endLine) => {
             for (let line = Math.max(0, startLine); line <= endLine; line++) {
                 const trimmed = getTrimmedStructuralLine(line);
@@ -527,55 +604,16 @@ function createStructuralDiagnostics(deps) {
             return Math.max(0, depth - getLeadingCloseBraceCount(trimmed));
         };
         const getMultilineTerminalKindEndingAt = (lineNumber, startLine, baseDepth) => {
-            const currentTrimmed = getTrimmedStructuralLine(lineNumber);
-            const previousLine = getPreviousNonEmptyLine(lineNumber - 1);
-            const previousTrimmed = previousLine >= 0 ? getTrimmedStructuralLine(previousLine) : '';
-            if (!areCompilerMultilineLinesConnected(previousTrimmed, currentTrimmed)) return '';
-
-            let parenNeed = 0;
-            let bracketNeed = 0;
-            let sawUnmatchedCloserOnLastLine = false;
-            let nextConnectedLine = lineNumber;
-            for (let line = lineNumber; line >= startLine; line--) {
-                const trimmedLine = getTrimmedStructuralLine(line);
-                if (!trimmedLine) continue;
-                if (getCompilerLineEffectiveDepth(line) !== baseDepth) break;
-                if (line < lineNumber) {
-                    if (!areCompilerMultilineLinesConnected(trimmedLine, getTrimmedStructuralLine(nextConnectedLine))) {
-                        break;
-                    }
-                }
-                const text = getStructuralLine(line);
-                for (let index = text.length - 1; index >= 0; index--) {
-                    const char = text[index];
-                    if (char === ')') {
-                        parenNeed++;
-                        if (line === lineNumber) sawUnmatchedCloserOnLastLine = true;
-                    } else if (char === '(') {
-                        if (parenNeed > 0) parenNeed--;
-                    } else if (char === ']') {
-                        bracketNeed++;
-                        if (line === lineNumber) sawUnmatchedCloserOnLastLine = true;
-                    } else if (char === '[') {
-                        if (bracketNeed > 0) bracketNeed--;
-                    }
-                }
-
-                if (line === lineNumber && !sawUnmatchedCloserOnLastLine) return '';
-
-                const terminalKind = getStatementTerminalKindFromText(trimmedLine);
-                if (terminalKind && parenNeed === 0 && bracketNeed === 0) return terminalKind;
-                if (
-                    line < lineNumber &&
-                    parenNeed === 0 &&
-                    bracketNeed === 0 &&
-                    /;\s*$/.test(trimmedLine)
-                ) {
-                    return '';
-                }
-                nextConnectedLine = line;
-            }
-            return '';
+            const range = getCompilerMultilineStatementRange(strippedLines, lineNumber, {
+                startLine,
+                endLine: scanBounds.end,
+                baseDepth,
+                getLineText: getStructuralLine,
+                getLineDepth: getCompilerLineEffectiveDepth,
+                isIgnoredLine: isCompilerLaststIgnoredLine
+            });
+            if (!range || range.startLine === lineNumber || range.endLine !== lineNumber) return '';
+            return getStatementTerminalKindFromText(range.text);
         };
         const findStructuralBlockEndLine = (startLine, endLine) => {
             let balance = 0;
@@ -733,14 +771,18 @@ function createStructuralDiagnostics(deps) {
                     return;
                 }
                 const currentDepth = getCompilerLineEffectiveDepth(lineNumber);
+                const multilineRange = getCompilerMultilineRangeForLine(lineNumber, currentDepth);
+                const isMultilineContinuation = !!multilineRange && multilineRange.startLine < lineNumber;
                 for (const depth of [...terminalLineByFunctionDepth.keys()]) {
                     if (depth > currentDepth) terminalLineByFunctionDepth.delete(depth);
                 }
                 if (isUnreachableResetLine(trimmedLine)) {
                     terminalLineByFunctionDepth.delete(currentDepth);
                 }
+                const terminalKind = getWholeLineTerminalKind(lineNumber, trimmedLine, currentDepth);
                 const terminalLine = terminalLineByFunctionDepth.get(currentDepth);
                 if (
+                    !isMultilineContinuation &&
                     terminalLine != null &&
                     terminalLine < lineNumber &&
                     !isSingleStatementControlledBodyLine(terminalLine) &&
@@ -764,9 +806,9 @@ function createStructuralDiagnostics(deps) {
                         )
                     );
                 }
-                if (getWholeLineTerminalKind(lineNumber, trimmedLine, currentDepth) && !isSingleStatementControlledBodyLine(lineNumber)) {
+                if (terminalKind && !isSingleStatementControlledBodyLine(lineNumber)) {
                     terminalLineByFunctionDepth.set(currentDepth, lineNumber);
-                } else if (isExecutableStatementForUnreachable(trimmedLine)) {
+                } else if (!isMultilineContinuation && isExecutableStatementForUnreachable(trimmedLine)) {
                     terminalLineByFunctionDepth.delete(currentDepth);
                 }
             };
@@ -825,6 +867,9 @@ function createStructuralDiagnostics(deps) {
                             t('validation.startOfFunctionBodyWithoutHeader')
                         )
                     );
+                    continue;
+                }
+                if (isTopLevelDeclarationContinuationLine(lineNumber)) {
                     continue;
                 }
                 const invalidOutsideKeyword = (
@@ -1105,7 +1150,10 @@ function createStructuralDiagnostics(deps) {
                     );
                 }
             }
-            if (functionBody && statement.returnInfo) {
+            const effectiveReturnInfo = functionBody
+                ? getEffectiveReturnInfo(lineNumber, currentDepth, statement)
+                : null;
+            if (functionBody && effectiveReturnInfo) {
                     const funcKey = functionBody.func || null;
                     const state = returnStyleByFunction.get(funcKey) || {
                         sawVoid: false,
@@ -1118,13 +1166,13 @@ function createStructuralDiagnostics(deps) {
                         firstArrayReturnDecls: null,
                         firstArrayReturnAnalysisCache: null
                     };
-                    const returnValueText = statement.returnInfo.valueText;
+                    const returnValueText = effectiveReturnInfo.valueText;
                     const usesValue = !!returnValueText;
                     if (usesValue ? state.sawVoid : state.sawValue) {
                         if (shouldIncludeTargetLine(targetLines, lineNumber)) {
                             diagnostics.push(
                                 createLiveValidationDiagnostic(
-                                    createKeywordRange(lineNumber, 'return', statement.returnInfo.start),
+                                    createKeywordRange(lineNumber, 'return', effectiveReturnInfo.start),
                                     t('validation.mixedReturnStyles')
                                 )
                             );
@@ -1152,7 +1200,7 @@ function createStructuralDiagnostics(deps) {
                             if (shouldIncludeTargetLine(targetLines, lineNumber)) {
                                 diagnostics.push(
                                     createLiveValidationDiagnostic(
-                                        createKeywordRange(lineNumber, 'return', statement.returnInfo.start),
+                                        createKeywordRange(lineNumber, 'return', effectiveReturnInfo.start),
                                         t('validation.inconsistentReturnTypesArrayNonArray')
                                     )
                                 );
@@ -1172,7 +1220,7 @@ function createStructuralDiagnostics(deps) {
                                     if (shapeIssue && shouldIncludeTargetLine(targetLines, lineNumber)) {
                                         diagnostics.push(
                                             createLiveValidationDiagnostic(
-                                                createKeywordRange(lineNumber, 'return', statement.returnInfo.start),
+                                                createKeywordRange(lineNumber, 'return', effectiveReturnInfo.start),
                                                 explainArrayShapeDiagnosticIssue(shapeIssue).reason,
                                                 shapeIssue.severity
                                             )

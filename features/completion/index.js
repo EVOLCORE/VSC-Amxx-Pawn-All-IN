@@ -2,14 +2,27 @@ const {
     getCompletionControlContext,
     getCompletionIntent
 } = require('../../core/syntax/control-context');
-const { createCompletionInsertTextCore } = require('../../core/completion');
+const { PAWN_IDENTIFIER_RE } = require('../../core/syntax/identifiers');
+const {
+    PREPROCESSOR_DIRECTIVE_COMPLETIONS,
+    PRAGMA_DIRECTIVE_COMPLETIONS,
+    getPreprocessorDirectiveCompletionContext
+} = require('../../core/syntax/preprocessor-directives');
+const { getPawnIncludeCompletionContext } = require('../../core/syntax/includes');
+const {
+    createCompletionInsertTextCore,
+    normalizeCompletionCallArgumentMode
+} = require('../../core/completion');
 
+const INCLUDE_COMPLETION_TRIGGER_CHARACTERS = ['<', '"', '/', '\\'];
 const COMPLETION_TRIGGER_CHARACTERS = [
+    '#',
+    ...INCLUDE_COMPLETION_TRIGGER_CHARACTERS,
     '_',
     '@',
     ...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 ];
-const PAWN_COMPLETION_WORD_RE = /[A-Za-z_@][A-Za-z0-9_@]*/;
+const PAWN_COMPLETION_WORD_RE = PAWN_IDENTIFIER_RE;
 const COMPLETION_SIGNATURE_WRAP_WIDTH = 96;
 const COMPLETION_DOC_WRAP_WIDTH = 88;
 const SERVICE_KEYWORD_COMPLETIONS = [
@@ -40,6 +53,7 @@ function createCompletionFeature(deps) {
         isFunctionLikeDecl,
         isFunctionLikeDefineDecl,
         isSameFilePath,
+        getIncludeCompletionEntries = () => [],
         BUILTIN_DECLS,
         buildSig,
         buildCommandLink,
@@ -50,6 +64,7 @@ function createCompletionFeature(deps) {
         skipInlineControlHeader = null,
         isCompletionEnabled = () => true,
         getForwardCompletionBodyStyle = () => 'same-line',
+        getCompletionCallArgumentMode = () => 'required-before-default',
         completionOutputChannel = null
     } = deps;
 
@@ -65,6 +80,8 @@ function createCompletionFeature(deps) {
     const detailLabelCache = new WeakMap();
     const completionIdentityCache = new WeakMap();
     const baseCandidatesCache = new WeakMap();
+    const intentCandidatesCache = new WeakMap();
+    const dedupedCandidatesCache = new WeakMap();
     const candidatePrefixFilterCache = new WeakMap();
     const candidateItemsCache = new WeakMap();
     const forwardImplementationDeclMapCache = new WeakMap();
@@ -137,11 +154,19 @@ function createCompletionFeature(deps) {
         return snippetText;
     }
 
-    function getCallArgSnippetText(data) {
+    function getCallArgSnippetText(data, callArgumentMode = 'required-before-default') {
         if (!data || typeof data !== 'object') return '';
-        if (callArgSnippetTextCache.has(data)) return callArgSnippetTextCache.get(data);
-        const snippetText = completionInsertTextCore.buildCallArgSnippetText(data.args || '');
-        callArgSnippetTextCache.set(data, snippetText);
+        const normalizedCallArgumentMode = normalizeCompletionCallArgumentMode(callArgumentMode);
+        let perModeCache = callArgSnippetTextCache.get(data);
+        if (!perModeCache) {
+            perModeCache = new Map();
+            callArgSnippetTextCache.set(data, perModeCache);
+        }
+        if (perModeCache.has(normalizedCallArgumentMode)) return perModeCache.get(normalizedCallArgumentMode);
+        const snippetText = completionInsertTextCore.buildCallArgSnippetText(data.args || '', {
+            callArgumentMode: normalizedCallArgumentMode
+        });
+        perModeCache.set(normalizedCallArgumentMode, snippetText);
         return snippetText;
     }
 
@@ -249,7 +274,7 @@ function createCompletionFeature(deps) {
             } else if (options.callInsertMode === 'name-only') {
                 item.insertText = callInsertName;
             } else {
-                const argSnippetText = getCallArgSnippetText(data);
+                const argSnippetText = getCallArgSnippetText(data, options.callArgumentMode);
                 item.insertText = new vscode.SnippetString(`${callInsertName}(${argSnippetText})`);
             }
         } else {
@@ -294,6 +319,7 @@ function createCompletionFeature(deps) {
             String(options.forwardBodyStyle || ''),
             options.isForwardImplementationContext ? 1 : 0,
             String(options.callInsertMode || ''),
+            String(options.callArgumentMode || ''),
             options.prefixStartsWithAt ? 1 : 0,
             getExistingArgumentBlockCacheKey(options.existingArgumentBlock)
         ].join('|');
@@ -414,19 +440,70 @@ function createCompletionFeature(deps) {
         return result;
     }
 
-    function filterCompletionCandidatesForIntent(candidates, completionIntent) {
+    function getCompletionCandidateDedupeKey(candidate) {
+        const data = candidate?.d;
+        if (!data?.name) return '';
+        const identity = candidate?.i || getCompletionIdentity(data);
+        const name = identity?.name || data.name;
+        const category = isFunctionLikeDecl(data) ? 'function' : 'value';
+        return `${category}:${name}`;
+    }
+
+    function dedupeCompletionCandidates(candidates) {
+        if (!Array.isArray(candidates) || candidates.length <= 1) return candidates;
+        const cached = dedupedCandidatesCache.get(candidates);
+        if (cached) return cached;
+
+        const seen = new Set();
+        const result = [];
+        for (const candidate of candidates) {
+            const key = getCompletionCandidateDedupeKey(candidate);
+            if (key && seen.has(key)) continue;
+            if (key) seen.add(key);
+            result.push(candidate);
+        }
+        const deduped = result.length === candidates.length ? candidates : result;
+        dedupedCandidatesCache.set(candidates, deduped);
+        return deduped;
+    }
+
+    function isFunctionLikeDefineCompletionCandidate(candidate) {
+        return candidate?.d?.type === 'define' &&
+            isFunctionLikeDefineDecl(candidate.d);
+    }
+
+    function filterCompletionCandidatesForIntentUncached(candidates, completionIntent) {
         if (!Array.isArray(candidates) || !candidates.length) return [];
-        if (completionIntent === 'variable-declaration') return [];
+        if (completionIntent === 'variable-declaration') {
+            return candidates.filter(isFunctionLikeDefineCompletionCandidate);
+        }
         if (completionIntent === 'top-level-declaration') {
             return candidates.filter(candidate =>
-                candidate?.d?.type === 'forward' &&
-                isFunctionLikeDecl(candidate.d)
+                (
+                    candidate?.d?.type === 'forward' &&
+                    isFunctionLikeDecl(candidate.d)
+                ) ||
+                isFunctionLikeDefineCompletionCandidate(candidate)
             );
         }
         if (completionIntent === 'call') {
             return candidates.filter(candidate => candidate?.d?.type !== 'forward');
         }
         return candidates;
+    }
+
+    function filterCompletionCandidatesForIntent(candidates, completionIntent) {
+        if (!Array.isArray(candidates) || !candidates.length) return [];
+        let perIntentCache = intentCandidatesCache.get(candidates);
+        if (!perIntentCache) {
+            perIntentCache = new Map();
+            intentCandidatesCache.set(candidates, perIntentCache);
+        }
+        const key = String(completionIntent || '');
+        if (perIntentCache.has(key)) return perIntentCache.get(key);
+        const filtered = filterCompletionCandidatesForIntentUncached(candidates, completionIntent);
+        perIntentCache.set(key, filtered);
+        return filtered;
     }
 
     function padSortNumber(value, width) {
@@ -470,19 +547,63 @@ function createCompletionFeature(deps) {
         }
     }
 
-    function getBaseCompletionCandidates(ctx, line) {
+    function collectFunctionLikeDefineCompletionCandidates(target, decls, sortPrefix) {
+        for (const d of decls || []) {
+            if (d?.type !== 'define' || !isFunctionLikeDefineDecl(d)) continue;
+            target.push({ d, p: sortPrefix, i: getCompletionIdentity(d) });
+        }
+    }
+
+    function getFunctionLikeDefineCompletionCandidates(ctx) {
+        const { parsedDecls, incDecls } = ctx;
+        const candidates = [];
+        collectFunctionLikeDefineCompletionCandidates(candidates, BUILTIN_DECLS, '006');
+        collectFunctionLikeDefineCompletionCandidates(candidates, incDecls, '005');
+        collectFunctionLikeDefineCompletionCandidates(candidates, parsedDecls?.globals || [], '004');
+        collectFunctionLikeDefineCompletionCandidates(candidates, parsedDecls?.functions || [], '010');
+        return candidates;
+    }
+
+    function getTopLevelDeclarationCompletionCandidates(ctx) {
+        const { parsedDecls, incDecls } = ctx;
+        const candidates = getFunctionLikeDefineCompletionCandidates(ctx).slice();
+        for (const d of parsedDecls?.functions || []) {
+            if (d?.type === 'forward' && isFunctionLikeDecl(d)) {
+                candidates.push({ d, p: '010', i: getCompletionIdentity(d) });
+            }
+        }
+        for (const d of incDecls || []) {
+            if (d?.type === 'forward' && isFunctionLikeDecl(d)) {
+                candidates.push({ d, p: '011', i: getCompletionIdentity(d) });
+            }
+        }
+        return candidates;
+    }
+
+    function getBaseCompletionCandidates(ctx, line, completionIntent = '') {
         if (!ctx || typeof ctx !== 'object') return [];
         let perLineCache = baseCandidatesCache.get(ctx);
         if (!perLineCache) {
             perLineCache = new Map();
             baseCandidatesCache.set(ctx, perLineCache);
         }
-        const cacheKey = Number.isInteger(line) ? line : -1;
+        const cacheKey = `${Number.isInteger(line) ? line : -1}:${completionIntent || ''}`;
         const cached = perLineCache.get(cacheKey);
         if (cached) return cached;
 
         const { parsedDecls, incDecls, lookup } = ctx;
         const { globals, functions, locals, funcArgs } = parsedDecls;
+        if (completionIntent === 'top-level-declaration') {
+            const topLevelCandidates = getTopLevelDeclarationCompletionCandidates(ctx);
+            perLineCache.set(cacheKey, topLevelCandidates);
+            return topLevelCandidates;
+        }
+        if (completionIntent === 'variable-declaration') {
+            const macroDeclarationCandidates = getFunctionLikeDefineCompletionCandidates(ctx);
+            perLineCache.set(cacheKey, macroDeclarationCandidates);
+            return macroDeclarationCandidates;
+        }
+
         const candidates = [];
         const varMap = new Map();
         for (const d of BUILTIN_DECLS) {
@@ -501,6 +622,7 @@ function createCompletionFeature(deps) {
         functions.forEach(d => candidates.push({ d, p: '010', i: getCompletionIdentity(d) }));
         for (const d of incDecls) {
             if (d.type !== 'variable' && d.type !== 'enum-item' && d.type !== 'enum' && d.type !== 'define') {
+                if (completionIntent === 'call' && d.type === 'forward') continue;
                 if (isFunctionLikeDecl(d)) {
                     const preferredIncludeFunc = lookup?.getPreferredFunctionMatch?.(d.name)?.data || null;
                     if (d.type !== 'forward' && preferredIncludeFunc && preferredIncludeFunc !== d) continue;
@@ -681,6 +803,106 @@ function createCompletionFeature(deps) {
         item.insertText = new vscode.SnippetString(definition.insertText);
         if (replaceRange) item.range = replaceRange;
         return item;
+    }
+
+    function makeCompletionRange(line, start, end) {
+        const startPosition = typeof vscode.Position === 'function'
+            ? new vscode.Position(line, start)
+            : { line, character: start };
+        const endPosition = typeof vscode.Position === 'function'
+            ? new vscode.Position(line, end)
+            : { line, character: end };
+        return new vscode.Range(startPosition, endPosition);
+    }
+
+    function makePreprocessorDirectiveItem(definition, sortIndex, replaceRange = null) {
+        const item = new vscode.CompletionItem(definition.name);
+        item.kind = vscode.CompletionItemKind.Keyword;
+        item.filterText = definition.name;
+        item.sortText = `000_preprocessor_${String(sortIndex).padStart(3, '0')}_${definition.name}`;
+        item.detail = definition.detail;
+        item.label = { label: definition.name, description: definition.detail };
+        item.labelDetails = { description: definition.detail };
+        item.insertText = new vscode.SnippetString(definition.insertText || definition.name);
+        if (definition.documentation) {
+            const markdown = typeof vscode.MarkdownString === 'function'
+                ? new vscode.MarkdownString()
+                : null;
+            if (markdown?.appendMarkdown) {
+                markdown.appendMarkdown(String(definition.documentation || ''));
+                item.documentation = markdown;
+            } else {
+                item.documentation = String(definition.documentation || '');
+            }
+        }
+        if (replaceRange) item.range = replaceRange;
+        return item;
+    }
+
+    function makeIncludePathCompletionItem(entry, context, sortIndex, replaceRange = null) {
+        const name = String(entry?.name || '');
+        const item = new vscode.CompletionItem(name);
+        item.kind = vscode.CompletionItemKind.File ?? vscode.CompletionItemKind.Text;
+        item.filterText = name;
+        item.sortText = `000_include_${String(sortIndex).padStart(5, '0')}_${name}`;
+        const detail = entry?.sourceKind === 'local'
+            ? 'local include'
+            : 'include';
+        item.detail = entry?.fileName ? `${detail} - ${entry.fileName}` : detail;
+        item.label = { label: name, description: item.detail };
+        item.labelDetails = { description: item.detail };
+        item.insertText = `${name}${context?.needsClosingDelimiter ? context.closingDelimiter || '' : ''}`;
+        if (replaceRange) item.range = replaceRange;
+        return item;
+    }
+
+    function getIncludePathCompletion(document, position) {
+        const line = Number.isInteger(position?.line) ? position.line : -1;
+        if (line < 0) return null;
+        const lineText = String(document?.lineAt?.(line)?.text || '');
+        const context = getPawnIncludeCompletionContext(lineText, position?.character ?? 0);
+        if (!context) return null;
+
+        const prefix = String(context.prefix || '').replace(/\\/g, '/').toLowerCase();
+        const replaceRange = makeCompletionRange(line, context.replaceStart, context.replaceEnd);
+        const entries = typeof getIncludeCompletionEntries === 'function'
+            ? getIncludeCompletionEntries(document?.fileName || '', { delimiter: context.delimiter || '' })
+            : [];
+        const items = (Array.isArray(entries) ? entries : [])
+            .filter(entry => {
+                const name = String(entry?.name || '').replace(/\\/g, '/');
+                return name && (!prefix || name.toLowerCase().startsWith(prefix));
+            })
+            .map((entry, index) => makeIncludePathCompletionItem(entry, context, index, replaceRange));
+        return { context, items, prefix };
+    }
+
+    function getPreprocessorDirectiveCompletion(document, position) {
+        const line = Number.isInteger(position?.line) ? position.line : -1;
+        if (line < 0) return null;
+        const lineText = String(document?.lineAt?.(line)?.text || '');
+        const includeCompletion = getIncludePathCompletion(document, position);
+        if (includeCompletion) return {
+            ...includeCompletion,
+            includePath: true
+        };
+        const context = getPreprocessorDirectiveCompletionContext(lineText, position?.character ?? 0);
+        if (!context.inPreprocessorLine) return null;
+
+        const prefix = String(context.prefix || '').toLowerCase();
+        const replaceRange = makeCompletionRange(line, context.replaceStart, context.replaceEnd);
+        const definitions = context.canCompletePragma
+            ? PRAGMA_DIRECTIVE_COMPLETIONS
+            : PREPROCESSOR_DIRECTIVE_COMPLETIONS;
+        const canComplete = context.canCompleteDirective || context.canCompletePragma;
+        const items = !canComplete
+            ? []
+            : definitions
+                .map((definition, index) => ({ definition, index }))
+                .filter(({ definition }) => !prefix || String(definition.name || '').startsWith(prefix))
+                .map(({ definition, index }) => makePreprocessorDirectiveItem(definition, index, replaceRange));
+
+        return { context, items, prefix };
     }
 
     function getServiceKeywordCandidatesForPrefix(prefix, hasExistingStartsWith = false) {
@@ -894,17 +1116,40 @@ function createCompletionFeature(deps) {
     }
 
     const completionProvider = {
-        provideCompletionItems(document, position) {
+        provideCompletionItems(document, position, _token = null, completionContext = null) {
             const startedAt = Date.now();
             try {
                 const fileName = String(document?.fileName || '');
                 const line = Number.isInteger(position?.line) ? position.line : -1;
                 const character = Number.isInteger(position?.character) ? position.character : -1;
+                const triggerCharacter = String(completionContext?.triggerCharacter || '');
                 logCompletion(`start file=${fileName} pos=${line}:${character} version=${document?.version ?? ''}`);
                 if (!isCompletionEnabled()) {
                     logCompletion(`skip disabled file=${fileName} ms=${Date.now() - startedAt}`);
                     return [];
                 }
+                const preprocessorCompletion = getPreprocessorDirectiveCompletion(document, position);
+                if (preprocessorCompletion) {
+                    const { context, items, prefix, includePath } = preprocessorCompletion;
+                    logCompletion(
+                        `preprocessor items=${items.length} prefix="${prefix}" ` +
+                        `directive=${context.canCompleteDirective ? 1 : 0} pragma=${context.canCompletePragma ? 1 : 0} ` +
+                        `includePath=${includePath ? 1 : 0} ` +
+                        `file=${fileName} pos=${line}:${character} ms=${Date.now() - startedAt}`
+                    );
+                    return typeof vscode.CompletionList === 'function'
+                        ? new vscode.CompletionList(items, false)
+                        : items;
+                }
+                if (INCLUDE_COMPLETION_TRIGGER_CHARACTERS.includes(triggerCharacter)) {
+                    logCompletion(
+                        `skip include-trigger-outside-include trigger="${triggerCharacter}" ` +
+                        `file=${fileName} pos=${line}:${character} ms=${Date.now() - startedAt}`
+                    );
+                    return [];
+                }
+                const replaceRange = getCompletionReplaceRange(document, position);
+                const prefix = replaceRange ? document.getText(replaceRange) : '';
                 const contextStartedAt = Date.now();
                 const ctx = getPawnDocumentContext(document, position.line);
                 const contextMs = Date.now() - contextStartedAt;
@@ -915,8 +1160,6 @@ function createCompletionFeature(deps) {
                     );
                     return [];
                 }
-                const replaceRange = getCompletionReplaceRange(document, position);
-                const prefix = replaceRange ? document.getText(replaceRange) : '';
                 const { fp, parsedDecls, incDecls, lookup } = ctx;
                 const { globals, functions, locals, funcArgs } = parsedDecls;
                 const forwardBodyStyle = normalizeForwardCompletionBodyStyle(getForwardCompletionBodyStyle());
@@ -929,23 +1172,28 @@ function createCompletionFeature(deps) {
                         escapeChar: ctx.lineCtrlChars?.[line] || ''
                     }
                 );
+                const completionCallArgumentMode = completionIntent === 'call'
+                    ? normalizeCompletionCallArgumentMode(getCompletionCallArgumentMode())
+                    : 'all';
                 const completionItemOptions = {
                     forwardBodyStyle,
                     isForwardImplementationContext: forwardBodyStyle !== 'disabled' &&
                         completionIntent === 'top-level-declaration',
                     callInsertMode: insertionContext.shouldInsertCallArguments ? 'call-with-args' : 'name-only',
+                    callArgumentMode: completionCallArgumentMode,
                     existingArgumentBlock: insertionContext.existingArgumentBlock,
                     prefixStartsWithAt: String(prefix || '').trimStart().startsWith('@')
                 };
 
-                const candidates = getBaseCompletionCandidates(ctx, line);
+                const candidates = getBaseCompletionCandidates(ctx, line, completionIntent);
                 const intentCandidates = filterCompletionCandidatesForIntent(candidates, completionIntent);
                 const filteredCandidates = filterCompletionCandidatesForPrefix(intentCandidates, prefix);
                 const completionCandidates = completionItemOptions.isForwardImplementationContext
                     ? getForwardImplementationCandidates(filteredCandidates.candidates, incDecls)
                     : filteredCandidates.candidates;
+                const dedupedCompletionCandidates = dedupeCompletionCandidates(completionCandidates);
                 const items = getCandidateCompletionItems(
-                    completionCandidates,
+                    dedupedCompletionCandidates,
                     fp,
                     replaceRange,
                     completionItemOptions
@@ -963,11 +1211,11 @@ function createCompletionFeature(deps) {
                 }
 
                 logCompletion(
-                    `items=${items.length}/${items.length} candidates=${filteredCandidates.candidates.length}/${intentCandidates.length}/${candidates.length} ` +
+                    `items=${items.length}/${items.length} candidates=${dedupedCompletionCandidates.length}/${filteredCandidates.candidates.length}/${intentCandidates.length}/${candidates.length} ` +
                     `prefix="${prefix}" mode=${filteredCandidates.mode} candidateMode=${filteredCandidates.mode} ` +
                     `startsWith=${filteredCandidates.startsWithCount} contains=${filteredCandidates.containsCount} ` +
                     `file=${fileName} pos=${line}:${character} ` +
-                    `callInsert=${completionItemOptions.callInsertMode} ` +
+                    `callInsert=${completionItemOptions.callInsertMode} callArgs=${completionItemOptions.callArgumentMode} ` +
                     `globals=${globals.length} locals=${locals.length} args=${funcArgs.length} ` +
                     `functions=${functions.length} includes=${incDecls.length} ` +
                     `intent=${completionIntent} contextMs=${contextMs} ms=${Date.now() - startedAt}`

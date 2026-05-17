@@ -29,14 +29,6 @@ function readLeadingFunctionLikeDefineCall(source) {
     };
 }
 
-function findFunctionLikeDefineDecl(defineDecls = [], name = '', isFunctionLikeDefineDecl = defaultIsFunctionLikeDefineDecl) {
-    if (!name || !Array.isArray(defineDecls)) return null;
-    for (const decl of defineDecls) {
-        if (decl?.name === name && isFunctionLikeDefineDecl(decl)) return decl;
-    }
-    return null;
-}
-
 function createEmptyVirtualExpandedLineContext(source, options = {}) {
     const sourceText = options.trimSource === false
         ? String(source || '')
@@ -59,8 +51,41 @@ function createVirtualExpandedLineContextCore(deps = {}) {
         macroExpansionCore,
         isFunctionLikeDefineDecl = defaultIsFunctionLikeDefineDecl
     } = deps;
+    const functionLikeDefineCache = new WeakMap();
 
-    function getLeadingFunctionLikeDefineContext(source, defineDecls = []) {
+    function getFunctionLikeDefineMap(defineDecls = []) {
+        if (!Array.isArray(defineDecls)) return null;
+        const cached = functionLikeDefineCache.get(defineDecls);
+        if (
+            cached &&
+            cached.length === defineDecls.length &&
+            cached.first === defineDecls[0] &&
+            cached.last === defineDecls[defineDecls.length - 1]
+        ) {
+            return cached.map;
+        }
+        const map = new Map();
+        for (const decl of defineDecls) {
+            if (decl?.name && isFunctionLikeDefineDecl(decl)) {
+                map.set(decl.name, decl);
+            }
+        }
+        functionLikeDefineCache.set(defineDecls, {
+            length: defineDecls.length,
+            first: defineDecls[0],
+            last: defineDecls[defineDecls.length - 1],
+            map
+        });
+        return map;
+    }
+
+    function findCoreFunctionLikeDefineDecl(defineDecls = [], name = '') {
+        if (!name || !Array.isArray(defineDecls)) return null;
+        const map = getFunctionLikeDefineMap(defineDecls);
+        return map?.get(name) || null;
+    }
+
+    function getLeadingFunctionLikeDefineContext(source, defineDecls = [], options = {}) {
         const leadingCall = readLeadingFunctionLikeDefineCall(source);
         if (!leadingCall) {
             return {
@@ -68,13 +93,19 @@ function createVirtualExpandedLineContextCore(deps = {}) {
                 defineDecl: null
             };
         }
+        const preResolvedDecl = options.defineDecl;
+        if (
+            preResolvedDecl?.name === leadingCall.name &&
+            isFunctionLikeDefineDecl(preResolvedDecl)
+        ) {
+            return {
+                leadingCall,
+                defineDecl: preResolvedDecl
+            };
+        }
         return {
             leadingCall,
-            defineDecl: findFunctionLikeDefineDecl(
-                defineDecls,
-                leadingCall.name,
-                isFunctionLikeDefineDecl
-            )
+            defineDecl: findCoreFunctionLikeDefineDecl(defineDecls, leadingCall.name)
         };
     }
 
@@ -83,7 +114,7 @@ function createVirtualExpandedLineContextCore(deps = {}) {
         if (!macroExpansionCore || !Array.isArray(defineDecls) || !defineDecls.length) return context;
         if (!context.sourceText || isPreprocessorDirectiveLine(context.sourceText)) return context;
 
-        const { leadingCall, defineDecl } = getLeadingFunctionLikeDefineContext(context.sourceText, defineDecls);
+        const { leadingCall, defineDecl } = getLeadingFunctionLikeDefineContext(context.sourceText, defineDecls, options);
         context.leadingCall = leadingCall;
         context.defineDecl = defineDecl;
         context.isFunctionLikeDefineLine = !!defineDecl;
@@ -136,8 +167,7 @@ function createVirtualExpandedLineContextCore(deps = {}) {
     }
 
     return {
-        findFunctionLikeDefineDecl: (defineDecls, name) =>
-            findFunctionLikeDefineDecl(defineDecls, name, isFunctionLikeDefineDecl),
+        findFunctionLikeDefineDecl: findCoreFunctionLikeDefineDecl,
         getLeadingFunctionLikeDefineContext,
         getVirtualExpandedLineContext,
         readLeadingFunctionLikeDefineCall
@@ -145,7 +175,5 @@ function createVirtualExpandedLineContextCore(deps = {}) {
 }
 
 module.exports = {
-    createVirtualExpandedLineContextCore,
-    readLeadingFunctionLikeDefineCall,
-    findFunctionLikeDefineDecl
+    createVirtualExpandedLineContextCore
 };

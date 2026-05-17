@@ -60,11 +60,21 @@ function main() {
     fs.writeFileSync(path.join(tempIncludeRoot, 'bare_child.inc'), '#define BARE_CHILD_SYMBOL 7\n');
     fs.writeFileSync(path.join(tempIncludeRoot, 'bare_root.inc'), '#include bare_child\n#define BARE_ROOT_SYMBOL 8\n');
     fs.writeFileSync(path.join(tempIncludeRoot, 'parent_with_missing_child.inc'), '#include <missing_nested_child>\n#define PARENT_WITH_MISSING_CHILD 9\n');
+    fs.writeFileSync(path.join(tempIncludeRoot, 'try_found.inc'), [
+        '#define TRY_FOUND_SYMBOL 11',
+        'native try_found_native(value)',
+        ''
+    ].join('\n'));
+    fs.writeFileSync(path.join(tempIncludeRoot, 'shared_shadow.inc'), '#define SYSTEM_SHARED_SHADOW_SYMBOL 1\n');
+    fs.writeFileSync(path.join(tempIncludeRoot, 'reapi.inc'), '#pragma rational Float\n#define _reapi_included\n#define REAPI_SYMBOL 1\n');
+    fs.writeFileSync(path.join(tempIncludeRoot, 'hamsandwich.inc'), '#define HAMSANDWICH_SYMBOL 1\n');
+    fs.writeFileSync(path.join(tempIncludeRoot, 'non_reapi_support.inc'), '#define NON_REAPI_SUPPORT_SYMBOL 1\n');
     const tempProjectRoot = path.join(tempRoot, 'project');
     const tempProjectModuleRoot = path.join(tempProjectRoot, 'Modules');
     fs.mkdirSync(tempProjectModuleRoot, { recursive: true });
     fs.writeFileSync(path.join(tempProjectModuleRoot, 'Feature.inc'), '#include "Modules/FeatureChild"\n#define FEATURE_SYMBOL FEATURE_CHILD_SYMBOL\n');
     fs.writeFileSync(path.join(tempProjectModuleRoot, 'FeatureChild.inc'), '#define FEATURE_CHILD_SYMBOL 10\n');
+    fs.writeFileSync(path.join(tempProjectRoot, 'shared_shadow.inc'), '#define LOCAL_SHARED_SHADOW_SYMBOL 1\n');
     const vscode = createMockVscode(workspaceRoot, {
         projectLocalIncludePaths: [tempIncludeRoot]
     });
@@ -325,6 +335,57 @@ public main()
         !macroLoopContinueDiagnostics.some(diagnostic => /continue.*out of context/i.test(diagnostic.message)),
         `loop-like function macro body should allow continue, got: ${macroLoopContinueDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
     );
+    const macroExpansionVariantsDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-macro-expansion-variants.sma'),
+        `
+native charsmax(any:array[])
+native formatex(buffer[], maxlen, const fmt[], any:...)
+native register_clcmd(const cmd[], const handler[])
+native consume_file(const plugin[])
+
+#define MaxClients 32
+#define BIT_PLAYER(%0) ( 1 << ( %0 ) )
+#define BIT_VALID(%0,%1) ( ( %0 ) & ( %1 ) )
+#define Vector3(%0) Float: %0[3]
+#define IsUserValid(%0) bool:( 0 < %0 <= MaxClients )
+#define UserDamagerEnabled(%0) ( BIT_VALID( gl_bitsUserDamagerEnabled, BIT_PLAYER( %0 ) ) ? true : false )
+#define SetFormatex(%0,%1,%2) ( %1 = formatex( %0, charsmax( %0 ), %2 ) )
+#define AddFormatex(%0,%1,%2) ( %1 += formatex( %0[ %1 ], charsmax( %0 ) - %1, %2 ) )
+#define register_cmd_list(%0,%1,%2) for ( new i; i < sizeof %1; i++ ) register_%0( %1[ i ], %2 )
+#define var_start_velocity var_user1
+
+new gl_bitsUserDamagerEnabled
+new var_user1[3]
+new const cmdList[][] = { "say /one", "say /two" }
+
+public handler() {}
+
+stock copy_vector(const Vector3(src), Vector3(dst))
+{
+    dst[0] = src[0]
+    consume_file(__FILE__)
+}
+
+stock main(id)
+{
+    new bool:ok = IsUserValid(id)
+    if (UserDamagerEnabled(id)) ok = true
+    new text[64], len
+    new Vector3(origin), Vector3(copy)
+    SetFormatex(text, len, "hello")
+    AddFormatex(text, len, " world")
+    register_cmd_list(clcmd, cmdList, "handler")
+    copy_vector(origin, copy)
+    var_start_velocity[0] = 1
+    return ok ? len : var_start_velocity[0] + copy[0]
+}
+`.trimStart()
+    );
+    const macroExpansionVariantsDiagnostics = liveValidation.collectLiveValidationDiagnostics(macroExpansionVariantsDocument);
+    assert(
+        macroExpansionVariantsDiagnostics.length === 0,
+        `macro expansion variants should be understood by validation and usage, got: ${macroExpansionVariantsDiagnostics.map(diagnostic => `${diagnostic.message} @ ${macroExpansionVariantsDocument.getText(diagnostic.range)}`).join(' | ')}`
+    );
     const singleStatementDeclScopeDocument = new MockDocument(
         path.join(workspaceRoot, 'feature-wiring-single-statement-decl-scope.sma'),
         `
@@ -380,6 +441,38 @@ public main(value)
     assert(
         !bracedForDeclScopeDiagnostics.some(diagnostic => /unknown symbol: soundPath|unknown symbol.*soundPath/i.test(diagnostic.message)),
         `braced for body declaration should be visible within the loop block, got: ${bracedForDeclScopeDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    const bareDeclarationArrayDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-bare-declaration-array.sma'),
+        `
+native server_print(const fmt[], any:...)
+
+new
+    globalArray[3], globalOther[4]
+
+static
+    Float:globalVector[3]
+
+public main()
+{
+    new
+        localArray[3], localOther[4]
+
+    static
+        localStatic[2]
+
+    globalArray[0] = localArray[2]
+    globalOther[3] = localOther[3]
+    globalVector[0] = 1.0
+    localStatic[1] = globalOther[3]
+    server_print("%d", globalArray[0] + localStatic[1])
+}
+`.trimStart()
+    );
+    const bareDeclarationArrayDiagnostics = liveValidation.collectLiveValidationDiagnostics(bareDeclarationArrayDocument);
+    assert(
+        !bareDeclarationArrayDiagnostics.some(diagnostic => /index out of bounds|unknown symbol/i.test(diagnostic.message)),
+        `bare declaration keyword array continuations should stay part of the declaration, got: ${bareDeclarationArrayDiagnostics.map(diagnostic => `${diagnostic.message} @ ${bareDeclarationArrayDocument.getText(diagnostic.range)}`).join(' | ')}`
     );
     const createLiveValidationWithConfig = configurationOverrides => {
         const configuredVscode = createMockVscode(workspaceRoot, {
@@ -744,6 +837,58 @@ public main()
         `valid permissive Pawn constructs should not report diagnostics, got: ${permissiveConstructsDiagnostics.map(diagnostic => `${diagnostic.message} @ ${permissiveConstructsDocument.getText(diagnostic.range)}`).join(' | ')}`
     );
 
+    const commentedPreprocessorAndMultilineConstDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-commented-preprocessor-multiline-const.sma'),
+        `
+/**
+ * If ur server can't use Re modules, just disable (with //) or delete this line
+ */
+#include <reapi>
+
+/**
+ * Don't touch this
+ */
+#if !defined _reapi_included
+    #include <hamsandwich>
+    #include <non_reapi_support>
+#endif
+
+/* ~ [ Plugin Settings ] ~ */
+const MAX_BODY_PARTS =
+                                        4;
+const MAX_SUBMODELS =
+                                        11;
+const ASCII_ZERO =
+                                        48;
+new const MAX_BODY_SUBMODELS[ MAX_BODY_PARTS ] = {
+    MAX_SUBMODELS, ...
+};
+
+const Float: DamagerTestDistance =
+                                        512.0;
+new const Float: DamagerTestDamages[ 2 ] = {
+    // Default, HeadShot
+    1234.0, 5678.0
+};
+
+public plugin_init()
+{
+    new result = MAX_BODY_SUBMODELS[0] + ASCII_ZERO
+    if (DamagerTestDamages[0] > DamagerTestDistance) {
+        result += MAX_BODY_PARTS
+    }
+    return result
+}
+`.trimStart()
+    );
+    const commentedPreprocessorAndMultilineConstDiagnostics = liveValidation.collectLiveValidationDiagnostics(
+        commentedPreprocessorAndMultilineConstDocument
+    );
+    assert(
+        commentedPreprocessorAndMultilineConstDiagnostics.length === 0,
+        `commented preprocessor and multiline const declarations should stay clean, got: ${commentedPreprocessorAndMultilineConstDiagnostics.map(diagnostic => `${diagnostic.message} @ ${commentedPreprocessorAndMultilineConstDocument.getText(diagnostic.range)}`).join(' | ')}`
+    );
+
     const missingFunctionBodyDocument = new MockDocument(
         path.join(workspaceRoot, 'feature-wiring-missing-function-body.sma'),
         `
@@ -835,6 +980,31 @@ enum _:STRUCT_PLAYER_DATA
     const lateIncludeAccountIdMember = lateIncludeEnumDecls.find(decl => decl.type === 'enum-item' && decl.name === 'PD_ACCID');
     assert(lateIncludePlayerDataEnum?.value === '3', `late include should not affect earlier enum capacity, got: ${lateIncludePlayerDataEnum?.value}`);
     assert(lateIncludeAccountIdMember?.value === '2', `late include should not size an earlier enum array field, got: ${lateIncludeAccountIdMember?.value}`);
+
+    const preprocessorGuardedEnumDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-preprocessor-guarded-enum.sma'),
+        `
+enum _:CvarIds
+{
+    CVAR_FIRST,
+#if !defined ALLOW_CUSTOMNADE
+    CVAR_NADE_DROPS,
+#endif
+    CVAR_LAST
+}
+`.trimStart()
+    );
+    const preprocessorGuardedEnumContext = coreRuntime.sharedRuntime.getPawnDocumentContext(preprocessorGuardedEnumDocument);
+    const preprocessorGuardedEnumDecls = preprocessorGuardedEnumContext.parsedDecls.globals;
+    const guardedEnumDropMember = preprocessorGuardedEnumDecls.find(decl => decl.type === 'enum-item' && decl.name === 'CVAR_NADE_DROPS');
+    const guardedEnumLastMember = preprocessorGuardedEnumDecls.find(decl => decl.type === 'enum-item' && decl.name === 'CVAR_LAST');
+    assert(guardedEnumDropMember?.value === '1', `preprocessor guarded enum member should stay parsed, got: ${guardedEnumDropMember?.value}`);
+    assert(guardedEnumLastMember?.value === '2', `enum value after preprocessor guard should continue at 2, got: ${guardedEnumLastMember?.value}`);
+    const preprocessorGuardedEnumDiagnostics = liveValidation.collectLiveValidationDiagnostics(preprocessorGuardedEnumDocument);
+    assert(
+        !preprocessorGuardedEnumDiagnostics.some(diagnostic => /unexpected token:\s*#(?:if|endif)/i.test(diagnostic.message)),
+        `preprocessor directives inside enum should not be treated as enum members, got: ${preprocessorGuardedEnumDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
 
     const duplicateIncludeEnumDocument = new MockDocument(
         path.join(workspaceRoot, 'feature-wiring-duplicate-include-enum.sma'),
@@ -940,6 +1110,91 @@ public main()
         bareIncludeDefines.has('BARE_ROOT_SYMBOL') && bareIncludeDefines.has('BARE_CHILD_SYMBOL'),
         'bare include directives should resolve root and nested include definitions'
     );
+    const tryIncludeDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-tryinclude.sma'),
+        `
+#tryinclude <try_found>
+#tryinclude <missing_optional>
+
+public main()
+{
+    return try_found_native(TRY_FOUND_SYMBOL);
+}
+`.trimStart()
+    );
+    const tryIncludeContext = coreRuntime.sharedRuntime.getPawnDocumentContext(tryIncludeDocument);
+    const tryIncludeDeclNames = new Set(tryIncludeContext.incDecls.map(decl => decl.name));
+    assert(
+        tryIncludeDeclNames.has('TRY_FOUND_SYMBOL') && tryIncludeDeclNames.has('try_found_native'),
+        `resolved #tryinclude should contribute include declarations, got: ${JSON.stringify([...tryIncludeDeclNames].filter(Boolean))}`
+    );
+    assert(
+        !tryIncludeContext.preprocessedState.unresolvedIncludeEntries.some(entry => entry?.name === 'missing_optional' && entry?.required !== false),
+        'missing #tryinclude should not create a required unresolved include entry'
+    );
+    const tryIncludeDiagnostics = liveValidation.collectLiveValidationDiagnostics(tryIncludeDocument);
+    assert(
+        !tryIncludeDiagnostics.some(diagnostic => /include.*missing_optional|unknown symbol.*TRY_FOUND_SYMBOL|unknown symbol.*try_found_native/i.test(diagnostic.message)),
+        `#tryinclude should resolve symbols when found and stay optional when missing, got: ${tryIncludeDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    const compilerBuiltinDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-compiler-builtins.sma'),
+        `
+native log_compiler_string(const value[])
+
+public main()
+{
+    log_compiler_string(__FILE__);
+    log_compiler_string(__BINARY__);
+    new line = __LINE__;
+    return line;
+}
+`.trimStart()
+    );
+    const compilerBuiltinDiagnostics = liveValidation.collectLiveValidationDiagnostics(compilerBuiltinDocument);
+    assert(
+        !compilerBuiltinDiagnostics.some(diagnostic =>
+            /unknown symbol|expected array\/struct argument|must be assigned to an array/i.test(diagnostic.message)
+        ),
+        `compiler predefined constants should behave as typed builtins, got: ${compilerBuiltinDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    const compilerBuiltinConditionDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-compiler-builtin-condition.sma'),
+        `
+#if defined __FILE__
+    #define COMPILER_FILE_CONSTANT_AVAILABLE 1
+#endif
+#ifdef __BINARY__
+    #define COMPILER_BINARY_CONSTANT_AVAILABLE 2
+#endif
+
+public main()
+{
+    return COMPILER_FILE_CONSTANT_AVAILABLE + COMPILER_BINARY_CONSTANT_AVAILABLE + __LINE__;
+}
+`.trimStart()
+    );
+    const compilerBuiltinConditionDiagnostics = liveValidation.collectLiveValidationDiagnostics(compilerBuiltinConditionDocument);
+    assert(
+        !compilerBuiltinConditionDiagnostics.some(diagnostic =>
+            /unknown symbol.*COMPILER_FILE_CONSTANT_AVAILABLE|unknown symbol.*COMPILER_BINARY_CONSTANT_AVAILABLE|unknown symbol.*__LINE__/i.test(diagnostic.message)
+        ),
+        `compiler predefined constants should be known to #if defined and expressions, got: ${compilerBuiltinConditionDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    const compilerBuiltinInvalidDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-compiler-builtin-invalid-context.sma'),
+        `
+public main()
+{
+    new value = __FILE__;
+}
+`.trimStart()
+    );
+    const compilerBuiltinInvalidDiagnostics = liveValidation.collectLiveValidationDiagnostics(compilerBuiltinInvalidDocument);
+    assert(
+        compilerBuiltinInvalidDiagnostics.some(diagnostic => /must be assigned to an array/i.test(diagnostic.message)),
+        `string-like compiler predefined constants should still be rejected in scalar assignment context, got: ${compilerBuiltinInvalidDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
     const includeWithMissingNestedDocument = new MockDocument(
         path.join(workspaceRoot, 'feature-wiring-include-with-missing-nested.sma'),
         `
@@ -989,6 +1244,71 @@ public main()
     assert(
         !rootRelativeNestedDiagnostics.some(diagnostic => diagnostic.code === 'amxx.live.unresolvedInclude'),
         `root-relative nested include should not produce unresolved include diagnostics, got: ${rootRelativeNestedDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    const angleIncludeSearchOrderDocument = new MockDocument(
+        path.join(tempProjectRoot, 'feature-wiring-angle-include-search-order.sma'),
+        `
+#include <shared_shadow>
+
+public main()
+{
+    return SYSTEM_SHARED_SHADOW_SYMBOL;
+}
+`.trimStart()
+    );
+    const angleIncludeSearchOrderDefines = new Set(coreRuntime.sharedRuntime
+        .getPawnDocumentContext(angleIncludeSearchOrderDocument)
+        .incDecls
+        .filter(decl => decl.type === 'define')
+        .map(decl => decl.name));
+    assert(
+        angleIncludeSearchOrderDefines.has('SYSTEM_SHARED_SHADOW_SYMBOL') &&
+            !angleIncludeSearchOrderDefines.has('LOCAL_SHARED_SHADOW_SYMBOL'),
+        'angle includes should resolve from configured include roots without shadowing from the local source folder'
+    );
+    const angleIncludeCompletionEntries = coreRuntime.sharedRuntime.getIncludeCompletionEntries(
+        angleIncludeSearchOrderDocument.fileName,
+        { delimiter: '<>' }
+    );
+    const isUnderTempIncludeRoot = filePath => {
+        const relative = path.relative(tempIncludeRoot, filePath || '');
+        return relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+    };
+    const isUnderTempProjectRoot = filePath => {
+        const relative = path.relative(tempProjectRoot, filePath || '');
+        return relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+    };
+    assert(
+        angleIncludeCompletionEntries.some(entry => entry.name === 'shared_shadow' && isUnderTempIncludeRoot(entry.filePath)) &&
+            !angleIncludeCompletionEntries.some(entry => entry.name === 'shared_shadow' && isUnderTempProjectRoot(entry.filePath)),
+        `angle include completion should list configured include-root candidates without local source-folder shadows, got count=${angleIncludeCompletionEntries.length} shared=${JSON.stringify(angleIncludeCompletionEntries.filter(entry => entry.name === 'shared_shadow'))} names=${angleIncludeCompletionEntries.slice(0, 20).map(entry => entry.name).join(',')}`
+    );
+    const quotedIncludeSearchOrderDocument = new MockDocument(
+        path.join(tempProjectRoot, 'feature-wiring-quoted-include-search-order.sma'),
+        `
+#include "shared_shadow"
+
+public main()
+{
+    return LOCAL_SHARED_SHADOW_SYMBOL;
+}
+`.trimStart()
+    );
+    const quotedIncludeSearchOrderDefines = new Set(coreRuntime.sharedRuntime
+        .getPawnDocumentContext(quotedIncludeSearchOrderDocument)
+        .incDecls
+        .filter(decl => decl.type === 'define')
+        .map(decl => decl.name));
+    assert(
+        quotedIncludeSearchOrderDefines.has('LOCAL_SHARED_SHADOW_SYMBOL'),
+        'quoted includes should resolve from the local source folder before configured include roots'
+    );
+    const quotedIncludeCompletionEntry = coreRuntime.sharedRuntime
+        .getIncludeCompletionEntries(quotedIncludeSearchOrderDocument.fileName, { delimiter: '""' })
+        .find(entry => entry.name === 'shared_shadow');
+    assert(
+        quotedIncludeCompletionEntry && isUnderTempProjectRoot(quotedIncludeCompletionEntry.filePath),
+        `quoted include completion should prefer the local source-folder candidate, got ${JSON.stringify(quotedIncludeCompletionEntry || null)}`
     );
 
     const hardIncludeOnlyHarness = createLiveValidationWithConfig({ includeFileExtensions: [] });

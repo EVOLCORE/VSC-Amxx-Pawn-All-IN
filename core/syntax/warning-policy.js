@@ -2,31 +2,11 @@ const { findBalancedGroupEnd } = require('./balanced');
 const {
     findTopLevelSimpleAssignmentOperator: findTopLevelSimpleAssignmentOperatorCore
 } = require('./top-level');
+const { PRAGMA_DIRECTIVE_NAMES } = require('./preprocessor-directives');
 
 function createWarningPolicySyntaxCore() {
     const COMPILER_SYMBOL_MAX_LENGTH = 63;
-    const KNOWN_PRAGMA_NAMES = new Set([
-        'align',
-        'amxlimit',
-        'codepage',
-        'compress',
-        'ctrlchar',
-        'deprecated',
-        'dynamic',
-        'library',
-        'reqlib',
-        'reqclass',
-        'loadlib',
-        'explib',
-        'expclass',
-        'defclasslib',
-        'pack',
-        'rational',
-        'semicolon',
-        'tabsize',
-        'unused',
-        'showstackusageinfo'
-    ]);
+    const KNOWN_PRAGMA_NAMES = new Set(PRAGMA_DIRECTIVE_NAMES);
 
     const createWarningIssue = (kind, messageKey, params = {}) => ({
         kind,
