@@ -166,6 +166,7 @@
   "validation.includeNotResolved": "инклуд не найден: {name}. Откройте workspace проекта или настройте include paths.",
   "validation.includeDependencyNotResolved": "зависимость инклуда не найдена: {name} (требуется из {parentName}). Откройте workspace проекта или настройте include paths.",
   "validation.symbolTruncated": "имя символа длиннее {max} значимых символов; компилятор обрежет его до \"{name}\"",
+  "validation.functionLikeDefineCallMustStayOnOneLine": "вызов function-like #define должен оставаться на одной физической строке",
   "validation.macroRedefinition": "переопределение macro (не совпадает): {name}",
   "validation.constantRedefinition": "переопределение константы (не совпадает): {name}",
   "validation.unknownPragma": "неизвестная #pragma: {name}",

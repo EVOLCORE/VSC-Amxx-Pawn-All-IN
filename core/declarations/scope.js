@@ -478,6 +478,18 @@ function createDeclarationScopeCore(deps) {
         return { parenDepth, braceDepth };
     }
 
+    function isDeclarationGapLine(rawLine, preparedLine, escapeChar = getActiveCtrlChar()) {
+        const prepared = String(preparedLine ?? '').trim();
+        if (!prepared) return true;
+        const raw = String(rawLine || '');
+        const withoutLineComment = String(stripLineComment(raw, escapeChar) || '').trim();
+        if (!withoutLineComment) return true;
+        const rawTrimmed = raw.trim();
+        return rawTrimmed.startsWith('//') ||
+            rawTrimmed.startsWith('/*') ||
+            rawTrimmed.startsWith('*/');
+    }
+
     function collectDeclarationText(rawLines, startLine, lineCtrlChars = [], preparedLines = null) {
         let i = startLine;
         const sourceLines = preparedLines || rawLines;
@@ -511,6 +523,16 @@ function createDeclarationScopeCore(deps) {
             }
             escapeChar = lineCtrlChars[i] || getActiveCtrlChar();
             const cont = sourceLines[i] || '';
+            if (
+                !hasLineContinuation &&
+                pd <= 0 &&
+                bd <= 0 &&
+                (awaitingBraceInitializer || awaitingBareDeclarationContinuation) &&
+                isDeclarationGapLine(rawLines[i] || '', cont, escapeChar)
+            ) {
+                i++;
+                continue;
+            }
             joined += ' ' + cont.trim();
             depths = netParenBraceDepth(cont, escapeChar);
             pd += depths.parenDepth;
@@ -524,7 +546,12 @@ function createDeclarationScopeCore(deps) {
         while (joined.trimEnd().endsWith(',') && i < rawLines.length) {
             const cont = sourceLines[i] || '';
             const trimmedCont = String(cont || '').trim();
-            if (!trimmedCont || isPreprocessorDirectiveLine(trimmedCont) || isExplicitDeclarationStartLine(trimmedCont)) {
+            escapeChar = lineCtrlChars[i] || getActiveCtrlChar();
+            if (isDeclarationGapLine(rawLines[i] || '', cont, escapeChar)) {
+                i++;
+                continue;
+            }
+            if (isPreprocessorDirectiveLine(trimmedCont) || isExplicitDeclarationStartLine(trimmedCont)) {
                 break;
             }
             joined += ' ' + cont.trim();

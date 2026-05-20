@@ -506,7 +506,11 @@ function createCompletionFeature(deps) {
     }
 
     function makeCompletionCandidate(decl, sortPrefix, sourceMeta = null) {
-        const candidate = { d: decl, p: sortPrefix, i: getCompletionIdentity(decl) };
+        const candidate = {
+            d: decl,
+            p: `${sortPrefix}_${decl?.deprecated === true ? '9deprecated' : '0active'}`,
+            i: getCompletionIdentity(decl)
+        };
         if (sourceMeta && Number.isFinite(sourceMeta.sourcePriority)) {
             candidate.sourcePriority = sourceMeta.sourcePriority;
             candidate.sourcePath = sourceMeta.sourcePath || '';

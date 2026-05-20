@@ -16,6 +16,7 @@ function createDelimiterSyntaxCore(deps) {
         const relevantLineRe = /[()[\]{}"'"]/;
         let inStr = false;
         let strCh = '';
+        const lastStackEmptyCloseByChar = Object.create(null);
 
         const shouldIncludeLine = lineNumber => !targetLines || targetLines.has(lineNumber);
         const markTaintedRange = (startLine, endLine) => {
@@ -69,7 +70,11 @@ function createDelimiterSyntaxCore(deps) {
                 const expectedOpen = closeToOpen[char];
                 const top = stack[stack.length - 1] || null;
                 if (!top) {
-                    markTaintedRange(lineNumber, lineNumber);
+                    const taintStartLine =
+                        Number.isInteger(lastStackEmptyCloseByChar[char]?.lineNumber)
+                            ? lastStackEmptyCloseByChar[char].lineNumber
+                            : lineNumber;
+                    markTaintedRange(taintStartLine, lineNumber);
                     pushIssue(
                         lineNumber,
                         currentLineStartOffset() + index,
@@ -105,6 +110,12 @@ function createDelimiterSyntaxCore(deps) {
                     continue;
                 }
                 stack.pop();
+                if (!stack.length) {
+                    lastStackEmptyCloseByChar[char] = {
+                        lineNumber,
+                        offset: currentLineStartOffset() + index
+                    };
+                }
             }
         }
 

@@ -756,6 +756,7 @@ function createLiveValidationScanner(deps) {
         };
         const delimiterState = getDelimiterBalanceState();
         const delimiterTaintedLines = delimiterState?.taintedLines || null;
+        const hasDelimiterDiagnostics = !!(delimiterState?.diagnostics || EMPTY_DIAGNOSTICS).length;
         const isDelimiterTaintedLine = lineNumber => !!delimiterTaintedLines?.[lineNumber];
         const diagnosticLineFilter = createLiveDiagnosticLineFilter({
             isInactivePreprocessorLine,
@@ -787,7 +788,7 @@ function createLiveValidationScanner(deps) {
             }
             pushDiagnostic(diagnostic);
         }
-        const usageDiagnostics = hasUnresolvedRequiredIncludes || !warningsEnabledForScan
+        const usageDiagnostics = hasUnresolvedRequiredIncludes || hasDelimiterDiagnostics || !warningsEnabledForScan
             ? EMPTY_DIAGNOSTICS
             : collectUsageLiveDiagnostics(document, rootCtx, docLength);
         if (scanStats) {
@@ -801,7 +802,7 @@ function createLiveValidationScanner(deps) {
                 scanStats.usageDiagnosticsKept++;
             }
         }
-        if (!hasUnresolvedRequiredIncludes && warningsEnabledForScan) {
+        if (!hasUnresolvedRequiredIncludes && !hasDelimiterDiagnostics && warningsEnabledForScan) {
             for (const diagnostic of collectDynamicUsageLiveDiagnostics(document, rootCtx, docLength, {
                 inactiveStockLines: documentScanPlan.inactiveStockLines || null
             })) {
@@ -845,6 +846,7 @@ function createLiveValidationScanner(deps) {
                 : null;
             const lineHasInvalidCodeCharacters = !!invalidCodeCharacterState?.diagnostics.length;
             const firstInvalidCodeCharacter = invalidCodeCharacterState?.firstCharacter ?? -1;
+            if (isDelimiterTaintedLine(lineNumber)) continue;
             if (hasUnresolvedRequiredIncludes) continue;
             if (shouldSkipLine(lineNumber, { inactive: false })) continue;
             if (isBackslashContinuationLine(lineNumber)) continue;

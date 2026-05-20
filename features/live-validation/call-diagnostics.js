@@ -1,4 +1,5 @@
 const { createTagOverridePolicySyntaxCore } = require('../../core/syntax/tag-override-policy');
+const { hasUncontinuedPhysicalLineBreakBetweenOffsets } = require('../../core/syntax/macro-call-policy');
 const { getTypeAnalysisSourceDecls } = require('../../core/validation/type-analysis-cache');
 const { isPotentialEnumDeclarationLine } = require('../../core/declarations/line-utils');
 
@@ -146,14 +147,29 @@ function createCallDiagnostics(deps) {
                 getWarningSeverity()
             ));
         }
-        const resultTagDiagnostic = collectCallResultTagOverrideDiagnostic(signatureData);
-        if (resultTagDiagnostic) diagnostics.push(resultTagDiagnostic);
-        if (isFunctionLikeDefineDecl(signatureData)) return diagnostics;
-
         const closeOffset = Number.isInteger(callCtx.closeOffset)
             ? callCtx.closeOffset
             : findMatchingParenOffset(ctx.text, callCtx.openOffset, ctx.text.length, ctx.resolver);
         if (closeOffset < 0) return diagnostics;
+
+        const resultTagDiagnostic = collectCallResultTagOverrideDiagnostic(signatureData);
+        if (resultTagDiagnostic) diagnostics.push(resultTagDiagnostic);
+        if (isFunctionLikeDefineDecl(signatureData)) {
+            if (
+                hasUncontinuedPhysicalLineBreakBetweenOffsets(
+                    ctx.rawLines || [],
+                    ctx.lineStartOffsets || null,
+                    callCtx.openOffset,
+                    closeOffset
+                )
+            ) {
+                diagnostics.push(createLiveValidationDiagnostic(
+                    createCallNameRange(),
+                    t('validation.functionLikeDefineCallMustStayOnOneLine')
+                ));
+            }
+            return diagnostics;
+        }
 
         const rawArgText = ctx.text.slice(callCtx.openOffset + 1, closeOffset);
         const callEscapeChar = ctx.resolver.ctrlCharAtOffset(callCtx.openOffset);

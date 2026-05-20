@@ -75,6 +75,13 @@ function main() {
     fs.writeFileSync(path.join(tempProjectModuleRoot, 'Feature.inc'), '#include "Modules/FeatureChild"\n#define FEATURE_SYMBOL FEATURE_CHILD_SYMBOL\n');
     fs.writeFileSync(path.join(tempProjectModuleRoot, 'FeatureChild.inc'), '#define FEATURE_CHILD_SYMBOL 10\n');
     fs.writeFileSync(path.join(tempProjectRoot, 'shared_shadow.inc'), '#define LOCAL_SHARED_SHADOW_SYMBOL 1\n');
+    const tempGlobalIncludeRoot = path.join(tempRoot, 'global_include');
+    const tempPriorityProjectRoot = path.join(tempRoot, 'priority_project');
+    const tempPriorityVendorIncludeRoot = path.join(tempPriorityProjectRoot, 'vendor', 'include');
+    fs.mkdirSync(tempGlobalIncludeRoot, { recursive: true });
+    fs.mkdirSync(tempPriorityVendorIncludeRoot, { recursive: true });
+    fs.writeFileSync(path.join(tempGlobalIncludeRoot, 'priority_dup.inc'), '#define PRIORITY_DUP_VALUE 20\n');
+    fs.writeFileSync(path.join(tempPriorityVendorIncludeRoot, 'priority_dup.inc'), '#define PRIORITY_DUP_VALUE 30\n');
     const vscode = createMockVscode(workspaceRoot, {
         projectLocalIncludePaths: [tempIncludeRoot]
     });
@@ -474,6 +481,42 @@ public main()
         !bareDeclarationArrayDiagnostics.some(diagnostic => /index out of bounds|unknown symbol/i.test(diagnostic.message)),
         `bare declaration keyword array continuations should stay part of the declaration, got: ${bareDeclarationArrayDiagnostics.map(diagnostic => `${diagnostic.message} @ ${bareDeclarationArrayDocument.getText(diagnostic.range)}`).join(' | ')}`
     );
+    const declarationGapDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-declaration-gap-lines.sma'),
+        `
+#define MAX_PLAYERS 32
+
+new
+    first,
+    second,
+    // separator comment inside one declaration
+    third[MAX_PLAYERS + 1],
+
+    fourth[4]
+
+public main()
+{
+    third[0] = 1
+    fourth[0] = third[0] + second + first
+}
+`.trimStart()
+    );
+    const declarationGapContext = coreRuntime.sharedRuntime.getPawnDocumentContext(
+        declarationGapDocument,
+        undefined,
+        { preparseLocals: true }
+    );
+    const declarationGapGlobals = declarationGapContext.parsedDecls.globals;
+    assert(
+        declarationGapGlobals.some(decl => decl.name === 'third' && decl.dims === '[MAX_PLAYERS + 1]') &&
+        declarationGapGlobals.some(decl => decl.name === 'fourth' && decl.dims === '[4]'),
+        `blank/comment lines after commas should stay inside a multi-line declaration, got: ${JSON.stringify(declarationGapGlobals.filter(decl => ['third', 'fourth'].includes(decl.name)))}`
+    );
+    const declarationGapDiagnostics = liveValidation.collectLiveValidationDiagnostics(declarationGapDocument);
+    assert(
+        !declarationGapDiagnostics.some(diagnostic => /unknown symbol|statement has no effect|invalid expression/i.test(diagnostic.message)),
+        `blank/comment declaration gaps should not create false diagnostics, got: ${declarationGapDiagnostics.map(diagnostic => `${diagnostic.message} @ ${declarationGapDocument.getText(diagnostic.range)}`).join(' | ')}`
+    );
     const createLiveValidationWithConfig = configurationOverrides => {
         const configuredVscode = createMockVscode(workspaceRoot, {
             projectLocalIncludePaths: [tempIncludeRoot],
@@ -514,6 +557,53 @@ public main()
             )
         };
     };
+
+    const priorityVscode = createMockVscode(tempPriorityProjectRoot, {
+        projectLocalIncludePaths: ['include'],
+        globalIncludePaths: [tempGlobalIncludeRoot]
+    });
+    const priorityContext = {
+        subscriptions: [],
+        globalStorageUri: {
+            fsPath: path.join(tempRoot, 'storage-priority')
+        }
+    };
+    const priorityCoreRuntime = buildCoreActivationRuntime({
+        vscode: priorityVscode,
+        fs,
+        path,
+        context: priorityContext,
+        t,
+        settingsService: createSettingsService(priorityVscode),
+        state: createActivationState()
+    });
+    const priorityDocument = new MockDocument(
+        path.join(tempPriorityProjectRoot, 'priority-include-order.sma'),
+        `
+#include <priority_dup>
+
+public main()
+{
+    return PRIORITY_DUP_VALUE;
+}
+`.trimStart()
+    );
+    priorityCoreRuntime.sharedRuntime.warmWorkspaceIncludeSources(priorityDocument.fileName);
+    const prioritySearchPaths = priorityCoreRuntime.sharedRuntime.getSearchPaths(priorityDocument.fileName);
+    const priorityGlobalIndex = prioritySearchPaths.findIndex(sourcePath => path.resolve(sourcePath) === path.resolve(tempGlobalIncludeRoot));
+    const priorityVendorIndex = prioritySearchPaths.findIndex(sourcePath => path.resolve(sourcePath) === path.resolve(tempPriorityVendorIncludeRoot));
+    assert(
+        priorityGlobalIndex >= 0 &&
+            priorityVendorIndex >= 0 &&
+            priorityGlobalIndex < priorityVendorIndex,
+        `configured global include roots should stay before workspace-discovered duplicate roots, got ${prioritySearchPaths.join(' | ')}`
+    );
+    const priorityContextResult = priorityCoreRuntime.sharedRuntime.getPawnDocumentContext(priorityDocument);
+    const priorityDefine = priorityContextResult.incDecls.find(decl => decl.name === 'PRIORITY_DUP_VALUE');
+    assert(
+        priorityDefine?.value === '20',
+        `include resolution should keep the configured higher-priority duplicate, got ${priorityDefine?.value}`
+    );
 
     const document = new MockDocument(
         path.join(workspaceRoot, 'feature-wiring-define.sma'),

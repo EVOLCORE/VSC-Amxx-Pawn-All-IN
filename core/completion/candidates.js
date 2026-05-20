@@ -28,10 +28,20 @@ function getCompletionCandidateSourcePriority(candidate) {
     return priority;
 }
 
+function isCompletionCandidateDeprecated(candidate) {
+    return candidate?.d?.deprecated === true || candidate?.deprecated === true;
+}
+
 function compareCompletionCandidatePriority(left, leftIndex, right, rightIndex) {
     const leftSort = String(left?.p || '');
     const rightSort = String(right?.p || '');
     if (leftSort !== rightSort) return leftSort < rightSort ? -1 : 1;
+
+    const leftDeprecated = isCompletionCandidateDeprecated(left) ? 1 : 0;
+    const rightDeprecated = isCompletionCandidateDeprecated(right) ? 1 : 0;
+    if (leftDeprecated !== rightDeprecated) {
+        return leftDeprecated < rightDeprecated ? -1 : 1;
+    }
 
     const leftSourcePriority = getCompletionCandidateSourcePriority(left);
     const rightSourcePriority = getCompletionCandidateSourcePriority(right);
@@ -76,5 +86,6 @@ module.exports = {
     dedupeCompletionCandidates,
     getCompletionCandidateDedupeKey,
     getCompletionCandidateSourcePriority,
+    isCompletionCandidateDeprecated,
     normalizeCompletionCandidateDedupeName
 };

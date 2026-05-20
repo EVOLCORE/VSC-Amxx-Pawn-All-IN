@@ -36,6 +36,32 @@ function isDigit(char) {
     return char >= '0' && char <= '9';
 }
 
+function readFormatWidthOrPrecision(source, cursor, contentEndOffset) {
+    const text = String(source || '');
+    let nextCursor = cursor;
+    let consumes = 0;
+    if (text[nextCursor] === '*') {
+        consumes++;
+        nextCursor++;
+    } else {
+        while (nextCursor < contentEndOffset && isDigit(text[nextCursor])) nextCursor++;
+    }
+    return { cursor: nextCursor, consumes };
+}
+
+function readFormatPrecisionSuffix(source, cursor, contentEndOffset) {
+    const text = String(source || '');
+    let nextCursor = cursor;
+    let consumes = 0;
+    while (nextCursor < contentEndOffset && text[nextCursor] === '.') {
+        nextCursor++;
+        const precisionPart = readFormatWidthOrPrecision(text, nextCursor, contentEndOffset);
+        consumes += precisionPart.consumes;
+        nextCursor = precisionPart.cursor;
+    }
+    return { cursor: nextCursor, consumes };
+}
+
 function normalizeFormatEscapePredicate(isEscapedQuote) {
     return typeof isEscapedQuote === 'function'
         ? isEscapedQuote
@@ -103,23 +129,13 @@ function readFormatPlaceholder(source, percentOffset, contentEndOffset, options 
 
     while (cursor < contentEndOffset && FORMAT_FLAG_CHARS.has(text[cursor])) cursor++;
 
-    let widthPrecisionConsumes = 0;
-    if (text[cursor] === '*') {
-        widthPrecisionConsumes++;
-        cursor++;
-    } else {
-        while (cursor < contentEndOffset && isDigit(text[cursor])) cursor++;
-    }
+    const widthPart = readFormatWidthOrPrecision(text, cursor, contentEndOffset);
+    let widthPrecisionConsumes = widthPart.consumes;
+    cursor = widthPart.cursor;
 
-    if (text[cursor] === '.') {
-        cursor++;
-        if (text[cursor] === '*') {
-            widthPrecisionConsumes++;
-            cursor++;
-        } else {
-            while (cursor < contentEndOffset && isDigit(text[cursor])) cursor++;
-        }
-    }
+    const precisionPart = readFormatPrecisionSuffix(text, cursor, contentEndOffset);
+    widthPrecisionConsumes += precisionPart.consumes;
+    cursor = precisionPart.cursor;
 
     const specifier = text[cursor] || '';
     const specifiers = options.specifiers || DEFAULT_FORMAT_SPECIFIERS;
@@ -224,18 +240,38 @@ function collectFormatArgumentLinksForCall(source, callCtx, options = {}) {
     return links;
 }
 
-function isOffsetInsideRange(offset, startOffset, endOffset) {
-    return Number.isInteger(offset) &&
-        Number.isInteger(startOffset) &&
-        Number.isInteger(endOffset) &&
-        offset >= startOffset &&
-        offset < endOffset;
+function isOffsetDirectlyInsideRange(offset, startOffset, endOffset) {
+    if (!Number.isInteger(offset) ||
+        !Number.isInteger(startOffset) ||
+        !Number.isInteger(endOffset)) {
+        return false;
+    }
+    return offset >= startOffset && offset < endOffset;
+}
+
+function isOffsetPreviousCharacterInsideRange(offset, startOffset, endOffset) {
+    if (!Number.isInteger(offset) ||
+        !Number.isInteger(startOffset) ||
+        !Number.isInteger(endOffset)) {
+        return false;
+    }
+
+    // VS Code caret positions can sit just after the glyph the user sees under
+    // the cursor. Treat the previous character as active too, so `%`, `%d` and
+    // longer placeholders behave the same for hover and document highlights.
+    const previousOffset = offset - 1;
+    return previousOffset >= startOffset && previousOffset < endOffset;
 }
 
 function findFormatPlaceholderLinkAtOffset(source, callCtx, offset, options = {}) {
     const links = collectFormatArgumentLinksForCall(source, callCtx, options);
+    const directLink = links.find(link =>
+        isOffsetDirectlyInsideRange(offset, link.placeholder.startOffset, link.placeholder.endOffset)
+    );
+    if (directLink) return directLink;
+
     return links.find(link =>
-        isOffsetInsideRange(offset, link.placeholder.startOffset, link.placeholder.endOffset)
+        isOffsetPreviousCharacterInsideRange(offset, link.placeholder.startOffset, link.placeholder.endOffset)
     ) || null;
 }
 

@@ -532,6 +532,7 @@ function createDocumentIncludeSystem(deps) {
                 }
                 includeIndex.set(requestKey, {
                     filePath: resolvedFilePath,
+                    sourceRoot: path.resolve(sourceRoot),
                     priority: sourcePriority,
                     sourcePriority,
                     extensionPriority: fileExtensionPriority
@@ -682,6 +683,28 @@ function createDocumentIncludeSystem(deps) {
         return collectProjectIncludeSourcesFromRoot(getProjectRootForFile(docFilePath), options);
     }
 
+    function getCachedProjectIncludeSourceGroupsFromRoot(rootPath = '') {
+        const empty = { exactSources: [], discoveredSources: [] };
+        if (!rootPath || getIncludeSourceKind(rootPath) !== 'directory') return empty;
+        const cacheEntry = ensureProjectIncludeCacheEntry(rootPath, { refresh: false });
+        if (!cacheEntry) return empty;
+        const exactSources = mergeUniqueSources(cacheEntry.exactSources || []);
+        const exactKeys = new Set(exactSources.map(sourcePath => normalizeFsPath(sourcePath)).filter(Boolean));
+        const discoveredSourceList = hasFreshDiscoveredSources(cacheEntry)
+            ? cacheEntry.discoveredSources
+            : [];
+        const discoveredSources = mergeUniqueSources(discoveredSourceList || [])
+            .filter(sourcePath => {
+                const key = normalizeFsPath(sourcePath);
+                return key && !exactKeys.has(key);
+            });
+        return { exactSources, discoveredSources };
+    }
+
+    function getCachedProjectIncludeSourceGroups(docFilePath = '') {
+        return getCachedProjectIncludeSourceGroupsFromRoot(getProjectRootForFile(docFilePath));
+    }
+
     function getCachedProjectIncludeSourcesFromRoot(rootPath = '') {
         if (!rootPath || getIncludeSourceKind(rootPath) !== 'directory') return [];
         const cacheEntry = ensureProjectIncludeCacheEntry(rootPath, { refresh: false });
@@ -812,7 +835,17 @@ function createDocumentIncludeSystem(deps) {
         }
 
         for (const rootPath of roots) {
-            ensureProjectIncludeCacheEntry(rootPath, { refresh: true });
+            const beforeEntry = ensureProjectIncludeCacheEntry(rootPath, { refresh: false });
+            const beforeSignature = hasFreshDiscoveredSources(beforeEntry)
+                ? (beforeEntry.allSources || []).map(sourcePath => normalizeFsPath(sourcePath)).join('|')
+                : '';
+            const afterEntry = ensureProjectIncludeCacheEntry(rootPath, { refresh: true });
+            const afterSignature = hasFreshDiscoveredSources(afterEntry)
+                ? (afterEntry.allSources || []).map(sourcePath => normalizeFsPath(sourcePath)).join('|')
+                : '';
+            if (beforeSignature !== afterSignature) {
+                clearRootScopedSearchPathCaches(rootPath);
+            }
         }
     }
 
@@ -845,9 +878,11 @@ function createDocumentIncludeSystem(deps) {
         if (searchPathCache.has(cacheKey)) {
             return [...searchPathCache.get(cacheKey)];
         }
+        const projectSources = getCachedProjectIncludeSourceGroups(docFilePath);
         const results = mergeUniqueSources(
-            getCachedProjectIncludeSources(docFilePath),
-            getConfiguredGlobalIncludeSources(docFilePath)
+            projectSources.exactSources,
+            getConfiguredGlobalIncludeSources(docFilePath),
+            projectSources.discoveredSources
         );
         searchPathCache.set(cacheKey, results);
         return results;
@@ -1089,7 +1124,7 @@ function createDocumentIncludeSystem(deps) {
         const delimiter = String(options?.delimiter || '');
         const includeLocalFirst = delimiter !== '<>';
         const includeAncestorLocalFallbacks = delimiter !== '<>';
-        const includeAncestorHintFallbacks = true;
+        const includeAncestorHintFallbacks = delimiter !== '<>';
         const returnMeta = options?.returnMeta === true;
         const makeResolveResult = (filePath, meta = {}) => {
             if (!returnMeta) return filePath;
@@ -1170,6 +1205,7 @@ function createDocumentIncludeSystem(deps) {
             return null;
         };
         const cacheKey = [
+            'include-order-v2',
             normalizeFsPath(fromFilePath),
             String(name || ''),
             delimiter,
@@ -1216,17 +1252,17 @@ function createDocumentIncludeSystem(deps) {
             }
         }
 
+        const directMatch = tryResolveFromSources(searchPaths, true);
+        if (directMatch) {
+            return directMatch;
+        }
+
         const indexedMatch = fromFilePath
             ? tryResolveFromProjectIncludeIndex(name, fromFilePath, { returnMeta: true })
             : null;
         if (indexedMatch) {
             resolvedIncludePathCache.set(cacheKey, indexedMatch.filePath);
             return makeResolveResult(indexedMatch.filePath, indexedMatch);
-        }
-
-        const directMatch = tryResolveFromSources(searchPaths, true);
-        if (directMatch) {
-            return directMatch;
         }
 
         if (fromFilePath) {

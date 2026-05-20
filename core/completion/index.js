@@ -17,6 +17,7 @@ const {
     dedupeCompletionCandidates,
     getCompletionCandidateDedupeKey,
     getCompletionCandidateSourcePriority,
+    isCompletionCandidateDeprecated,
     normalizeCompletionCandidateDedupeName
 } = require('./candidates');
 
@@ -31,6 +32,7 @@ module.exports = {
     getCompletionCandidateDedupeKey,
     getCompletionCandidateSourcePriority,
     getCompletionMatch,
+    isCompletionCandidateDeprecated,
     normalizeCompletionMatchText,
     normalizeCompletionCandidateDedupeName,
     normalizeCompletionCallArgumentMode,
