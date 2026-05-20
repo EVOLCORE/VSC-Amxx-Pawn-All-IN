@@ -5,6 +5,7 @@ const {
     getEffectiveIncludeFileExtensions,
     normalizeIncludeExtensionList
 } = require('../core/include-extensions');
+const { isPawnIncludeDirectiveCandidateLine } = require('../core/syntax/includes');
 
 function buildLazyActivationRuntime(deps, options = {}) {
     const {
@@ -49,7 +50,7 @@ function buildLazyActivationRuntime(deps, options = {}) {
         try {
             for (let lineNumber = 0; lineNumber < lineCount; lineNumber++) {
                 const lineText = String(document.lineAt(lineNumber)?.text || '');
-                if (/^\s*#\s*include\b/i.test(lineText)) return true;
+                if (isPawnIncludeDirectiveCandidateLine(lineText)) return true;
             }
         } catch {
             return false;
@@ -91,6 +92,10 @@ function buildLazyActivationRuntime(deps, options = {}) {
             // Lazy hover logging should never affect provider results.
         }
     };
+    const proxySemanticTokensLegend =
+        typeof vscode?.SemanticTokensLegend === 'function'
+            ? new vscode.SemanticTokensLegend(['number'], [])
+            : null;
     const disposeProxyRegistrations = () => {
         while (proxyDisposables.length) {
             const disposable = proxyDisposables.pop();
@@ -124,6 +129,8 @@ function buildLazyActivationRuntime(deps, options = {}) {
         activeRuntime.completionFeature.register(context);
         activeRuntime.navigationFeature.register(context);
         activeRuntime.renameFeature?.register?.(context);
+        activeRuntime.semanticTokensFeature?.register?.(context);
+        activeRuntime.formatStringFeature?.register?.(context);
         realRegistered = true;
         return activeRuntime;
     }
@@ -297,6 +304,33 @@ function buildLazyActivationRuntime(deps, options = {}) {
         }
     };
 
+    const proxySemanticTokensFeature = {
+        register() {
+            if (typeof vscode.languages.registerDocumentSemanticTokensProvider !== 'function') return;
+            if (!proxySemanticTokensLegend) return;
+            trackProxyDisposable(vscode.languages.registerDocumentSemanticTokensProvider('amxxpawn', {
+                provideDocumentSemanticTokens(document, token) {
+                    return ensureRegisteredRuntime()
+                        .semanticTokensFeature
+                        ?.provideDocumentSemanticTokens?.(document, token) || null;
+                }
+            }, proxySemanticTokensLegend));
+        }
+    };
+
+    const proxyFormatStringFeature = {
+        register() {
+            if (typeof vscode.languages.registerDocumentHighlightProvider !== 'function') return;
+            trackProxyDisposable(vscode.languages.registerDocumentHighlightProvider('amxxpawn', {
+                provideDocumentHighlights(document, position) {
+                    return ensureRegisteredRuntime()
+                        .formatStringFeature
+                        ?.provideDocumentHighlights?.(document, position) || [];
+                }
+            }));
+        }
+    };
+
     const proxyPersistentHoverFeature = {
         register() {
             const schedule = (editor, delayMs, retryDelays) =>
@@ -344,6 +378,8 @@ function buildLazyActivationRuntime(deps, options = {}) {
         completionFeature: proxyCompletionFeature,
         navigationFeature: proxyNavigationFeature,
         renameFeature: proxyRenameFeature,
+        semanticTokensFeature: proxySemanticTokensFeature,
+        formatStringFeature: proxyFormatStringFeature,
         buildHoverAtPosition(document, position) {
             return ensureRegisteredRuntime().buildHoverAtPosition(document, position);
         },

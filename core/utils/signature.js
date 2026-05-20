@@ -133,7 +133,10 @@ function getIncludeEntriesSignatureHash(includeEntries = [], normalizeFsPath, ge
         hash.update(
             `${normalize(entry?.filePath || '')}\0` +
             `${getDefineSignature(entry)}\0` +
-            `${Number.isInteger(entry?.depth) ? entry.depth : 0}\0`
+            `${Number.isInteger(entry?.depth) ? entry.depth : 0}\0` +
+            `${Number.isFinite(entry?.sourcePriority) ? entry.sourcePriority : ''}\0` +
+            `${normalize(entry?.sourcePath || '')}\0` +
+            `${String(entry?.resolutionKind || '')}\0`
         );
         count++;
     }

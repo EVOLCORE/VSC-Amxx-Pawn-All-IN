@@ -122,6 +122,16 @@ function main() {
             wiringFile: 'bootstrap/feature-wiring/completion-navigation.js'
         },
         {
+            factoryFile: 'features/semantic-tokens/index.js',
+            factoryName: 'createSemanticTokensFeature',
+            wiringFile: 'bootstrap/feature-wiring/completion-navigation.js'
+        },
+        {
+            factoryFile: 'features/format-strings/index.js',
+            factoryName: 'createFormatStringFeature',
+            wiringFile: 'bootstrap/feature-wiring/completion-navigation.js'
+        },
+        {
             factoryFile: 'services/document-language.js',
             factoryName: 'createDocumentLanguageService',
             wiringFile: 'bootstrap/feature-wiring/support.js'

@@ -13,6 +13,7 @@ const {
     findPreviousNonEmptyLine,
     isDoWhileClosingLine
 } = require('../syntax/control-lines');
+const { toSortedUniqueLineNumbers } = require('../syntax/line-number-lists');
 
 function computeFunctionRangeMaps(functions = [], depths = [], lineCount = 0, options = {}) {
     const includeHeader = options?.includeHeader === true;
@@ -35,10 +36,10 @@ function computeFunctionRangeMaps(functions = [], depths = [], lineCount = 0, op
         }
     };
 
-    const sortedFunctionStartLines = (functions || [])
-        .map(func => func?.startLine ?? func?.lineNumber)
-        .filter(Number.isInteger)
-        .sort((left, right) => left - right);
+    const sortedFunctionStartLines = toSortedUniqueLineNumbers(
+        maxLine + 1,
+        (functions || []).map(func => func?.startLine ?? func?.lineNumber)
+    );
     const findNextFunctionStartLine = lineNumber => {
         let low = 0;
         let high = sortedFunctionStartLines.length;

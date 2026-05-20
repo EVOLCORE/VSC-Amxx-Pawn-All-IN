@@ -1,4 +1,4 @@
-const { readPawnIdentifierAt } = require('./identifiers');
+const { createPawnIdentifierReader } = require('./identifiers');
 const { PAWN_STRUCTURAL_KEYWORD_SET } = require('./keywords');
 const {
     findTopLevelChar: findTopLevelCharCore,
@@ -33,12 +33,10 @@ function createStatementClassifier(deps) {
             isIdentifierBoundaryAfter(text, index + keyword.length);
     }
 
-    function readIdentifierAt(source, index) {
-        return readPawnIdentifierAt(source, index, {
-            isIdentifierStartChar,
-            isIdentifierContinueChar
-        });
-    }
+    const readIdentifierAt = createPawnIdentifierReader({
+        isIdentifierStartChar,
+        isIdentifierContinueChar
+    });
 
     function collectStatementLevelIdentifiers(source, names = null) {
         const text = String(source || '');

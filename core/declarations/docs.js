@@ -1,3 +1,5 @@
+const { parsePragmaDirectiveLine } = require('../syntax/preprocessor-directives');
+
 function mayHaveDocsForLine(rawLines, lineNumber) {
     if (!Array.isArray(rawLines) || lineNumber < 0 || lineNumber >= rawLines.length) return false;
     const ownLine = String(rawLines[lineNumber] || '');
@@ -46,9 +48,9 @@ function attachLazyDocs(target, propName, resolveDocs, mayHaveDocs = true) {
 }
 
 function parseDeprecatedPragmaMessage(lineText) {
-    const match = String(lineText || '').trim().match(/^#pragma\s+deprecated\b([\s\S]*)$/i);
-    if (!match) return null;
-    return match[1].trim();
+    const pragma = parsePragmaDirectiveLine(lineText);
+    if (pragma?.name !== 'deprecated') return null;
+    return String(pragma.value || '').trim();
 }
 
 function applyDeprecatedPragmaToNextDecl(decls, message) {

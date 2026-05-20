@@ -27,7 +27,6 @@ function createLiveValidationSharedDiagnostics(deps) {
         parseDimSpec,
         getEffectiveDeclDimParts,
         computeFunctionRangeMaps,
-        normalizeExtensionList,
         areLiveValidationWarningsEnabled,
         settingsService,
         nonAsciiCharRe,
@@ -47,7 +46,6 @@ function createLiveValidationSharedDiagnostics(deps) {
     });
     const context = createSharedContextDiagnostics({
         settingsService,
-        normalizeExtensionList,
         areLiveValidationWarningsEnabled,
         computeFunctionRangeMaps,
         getPreferredFunctionHoverMatch,

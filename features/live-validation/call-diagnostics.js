@@ -40,6 +40,7 @@ function createCallDiagnostics(deps) {
         const diagnostics = [];
         if (isIncludeDocument(document) && !isStrictIncludeValidationEnabled()) return diagnostics;
         if (!callCtx?.funcName) return diagnostics;
+        const warningsEnabled = areWarningDiagnosticsEnabled();
         const callLine = Number.isInteger(callLineNumber)
             ? callLineNumber
             : document.positionAt(callCtx.openOffset).line;
@@ -96,7 +97,7 @@ function createCallDiagnostics(deps) {
         };
 
         const collectCallResultTagOverrideDiagnostic = signatureData => {
-            if (!areWarningDiagnosticsEnabled()) return null;
+            if (!warningsEnabled) return null;
             if (typeof explainTypeCompat !== 'function') return null;
             const tagOverride = findCallResultTagOverride();
             if (!tagOverride) return null;
@@ -135,7 +136,7 @@ function createCallDiagnostics(deps) {
             );
             return diagnostics;
         }
-        const deprecatedIssue = areWarningDiagnosticsEnabled()
+        const deprecatedIssue = warningsEnabled
             ? getDeprecatedSymbolIssue(signatureData)
             : null;
         if (deprecatedIssue) {
@@ -156,7 +157,15 @@ function createCallDiagnostics(deps) {
 
         const rawArgText = ctx.text.slice(callCtx.openOffset + 1, closeOffset);
         const callEscapeChar = ctx.resolver.ctrlCharAtOffset(callCtx.openOffset);
-        if (hasLineBreakInsideStringLiteral(rawArgText, callEscapeChar)) return diagnostics;
+        if (
+            (rawArgText.includes('"') || rawArgText.includes("'")) &&
+            hasLineBreakInsideStringLiteral(rawArgText, callEscapeChar)
+        ) {
+            return diagnostics;
+        }
+        if (!String(signatureData.args || '').trim() && !rawArgText.trim()) {
+            return diagnostics;
+        }
         const rawArgPieces = splitTopLevelWithRanges(
             rawArgText,
             callCtx.openOffset + 1,
@@ -184,7 +193,7 @@ function createCallDiagnostics(deps) {
             });
         }
         const issuePlan = collectCallArgumentIssues(signatureData.args || '', callSiteArgs, analysisDecls, analysisCache, {
-            includeWarnings: areWarningDiagnosticsEnabled(),
+            includeWarnings: warningsEnabled,
             includeMissingArguments: true,
             callEscapeChar,
             precomputedLayout: layout,

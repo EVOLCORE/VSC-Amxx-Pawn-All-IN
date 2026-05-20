@@ -28,6 +28,10 @@
     "editorHoverWidget.border": "#404A57",
     "editorHoverWidget.foreground": "#D9E0E8"
   },
+  "semanticHighlighting": true,
+  "semanticTokenColors": {
+    "number": "#B78CFF"
+  },
   "tokenColors": [
     { "scope": ["comment", "comment.block.pawn", "comment.block.documentation.pawn", "comment.line.double-slash.pawn"], "settings": { "foreground": "#7C8793", "fontStyle": "italic" } },
     { "scope": ["comment.keyword.todo.pawn"], "settings": { "foreground": "#F076A2", "fontStyle": "bold italic" } },
@@ -50,7 +54,7 @@
     { "scope": ["string", "string.quoted.double.pawn", "string.quoted.single.pawn"], "settings": { "foreground": "#E5C07B" } },
     { "scope": ["constant.other.placeholder.pawn"], "settings": { "foreground": "#B78CFF", "fontStyle": "bold" } },
     { "scope": ["constant.character.escape.pawn"], "settings": { "foreground": "#B7E35B" } },
-    { "scope": ["variable.other.pawn"], "settings": { "foreground": "#D9E0E8" } },
+    { "scope": ["variable.other.pawn", "variable.other.preprocessor.pawn"], "settings": { "foreground": "#D9E0E8" } },
     { "scope": ["punctuation.separator.comma.pawn", "punctuation.terminator.statement.pawn", "punctuation.section.block.pawn", "punctuation.section.brackets.pawn", "punctuation.section.parens.pawn", "punctuation.section.parameters.begin.pawn", "punctuation.section.parameters.end.pawn", "punctuation.section.arguments.begin.pawn", "keyword.coma.pawn", "keyword.brace.pawn", "keyword.brackets.pawn", "parens.pawn", "function.parens.begin.pawn", "function.parens.end.pawn"], "settings": { "foreground": "#F14C88" } },
     { "scope": ["keyword.operator.assignment.pawn", "keyword.operator.comparison.pawn", "keyword.operator.increment-decrement.pawn", "keyword.operator.ternary.pawn", "keyword.operator.logical.pawn", "keyword.operator.bitwise.pawn", "keyword.operator.arithmetic.pawn"], "settings": { "foreground": "#F14C88" } },
     { "scope": ["invalid.illegal", "invalid.illegal.invalid-usage-of-preprocessor-directive.pawn", "invalid.illegal.stray-comment-end.pawn", "invalid.illegal.invalid-character.pawn", "invalid.illegal.unknown-escape.pawn"], "settings": { "foreground": "#111111", "background": "#FF5370" } }

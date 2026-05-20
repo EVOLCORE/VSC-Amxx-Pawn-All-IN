@@ -5,6 +5,7 @@ const { createMacroExpansionSyntaxCore } = require('../syntax/macro-expander');
 const { createVirtualExpandedLineContextCore } = require('../syntax/virtual-expanded-line-context');
 const { findBalancedGroupEnd } = require('../syntax/balanced');
 const { readPawnAssignmentOperatorAt } = require('../syntax/operators');
+const { parsePragmaDirectiveLine } = require('../syntax/preprocessor-directives');
 const { splitPawnLines } = require('../syntax/lines');
 const {
     advanceTopLevelScannerState,
@@ -282,9 +283,9 @@ function createSymbolUsageDiagnostics(deps = {}) {
     function collectPragmaUnusedNames(lines) {
         const names = new Set();
         for (const line of lines || []) {
-            const match = String(line || '').trim().match(/^#\s*pragma\s+unused\b([\s\S]*)$/i);
-            if (!match) continue;
-            for (const piece of match[1].split(',')) {
+            const pragma = parsePragmaDirectiveLine(line);
+            if (pragma?.name !== 'unused') continue;
+            for (const piece of String(pragma.value || '').split(',')) {
                 const name = readPawnIdentifierAt(piece.trim(), 0)?.name || '';
                 if (name) names.add(name);
             }

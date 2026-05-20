@@ -1,6 +1,8 @@
 const { createCompletionFeature } = require('../../features/completion');
 const { createNavigationFeature } = require('../../features/navigation');
 const { createRenameFeature } = require('../../features/rename');
+const { createSemanticTokensFeature } = require('../../features/semantic-tokens');
+const { createFormatStringFeature } = require('../../features/format-strings');
 
 function buildCompletionNavigationFeatures(deps, support) {
     const {
@@ -26,6 +28,7 @@ function buildCompletionNavigationFeatures(deps, support) {
         hasIncludeFunctionTwin,
         findFirstNavigableDecl,
         splitTopLevel,
+        splitTopLevelWithRanges,
         parseParamMeta,
         isEscapedQuote,
         isFunctionLikeDecl,
@@ -38,7 +41,11 @@ function buildCompletionNavigationFeatures(deps, support) {
         findKeywordOccurrences,
         skipInlineControlHeader,
         computeFunctionRangeMaps,
-        isLinePositionInsideCommentOrString
+        isLinePositionInsideCommentOrString,
+        getDocumentTextAndResolver,
+        findCallContext,
+        findMatchingParenOffset,
+        createLazyCallContextOptions
     } = sharedRuntime;
 
     const completionFeature = createCompletionFeature({
@@ -93,10 +100,29 @@ function buildCompletionNavigationFeatures(deps, support) {
         isSameFilePath
     });
 
+    const semanticTokensFeature = createSemanticTokensFeature({
+        vscode,
+        getPawnDocumentContext,
+        isLinePositionInsideCommentOrString
+    });
+
+    const formatStringFeature = createFormatStringFeature({
+        vscode,
+        getPawnDocumentContext,
+        getDocumentTextAndResolver,
+        findCallContext,
+        findMatchingParenOffset,
+        splitTopLevelWithRanges,
+        isEscapedQuote,
+        createLazyCallContextOptions
+    });
+
     return {
         completionFeature,
         navigationFeature,
-        renameFeature
+        renameFeature,
+        semanticTokensFeature,
+        formatStringFeature
     };
 }
 

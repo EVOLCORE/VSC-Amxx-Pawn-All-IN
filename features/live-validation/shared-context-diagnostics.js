@@ -1,6 +1,7 @@
 const { createLineMembership } = require('../../core/utils/line-membership');
 const { normalizePathKey } = require('../../core/utils/path');
 const { getEffectiveIncludeFileExtensions } = require('../../core/include-extensions');
+const { createIncludeValidationPolicy } = require('../../core/include-validation-policy');
 const { getPawnIdentifierName } = require('../../core/syntax/identifiers');
 const { splitPawnLines } = require('../../core/syntax/lines');
 const { hasTrailingBackslashContinuation } = require('../../core/syntax/continuation');
@@ -8,7 +9,6 @@ const { hasTrailingBackslashContinuation } = require('../../core/syntax/continua
 function createSharedContextDiagnostics(deps) {
     const {
         settingsService,
-        normalizeExtensionList,
         areLiveValidationWarningsEnabled,
         computeFunctionRangeMaps,
         getPreferredFunctionHoverMatch,
@@ -19,8 +19,17 @@ function createSharedContextDiagnostics(deps) {
         isOperatorOverloadName
     } = deps;
 
-    const getIncludeValidationMode = () => settingsService?.getIncludeValidationMode?.() || 'balanced';
-    const isStrictIncludeValidationEnabled = () => getIncludeValidationMode() === 'strict';
+    const includeValidationPolicy = createIncludeValidationPolicy({
+        getIncludeFileExtensions: () => {
+            const extensions = settingsService?.getIncludeFileExtensions?.();
+            return Array.isArray(extensions) && extensions.length
+                ? extensions
+                : getEffectiveIncludeFileExtensions();
+        },
+        getIncludeValidationMode: () => settingsService?.getIncludeValidationMode?.() || 'balanced'
+    });
+    const getIncludeValidationMode = includeValidationPolicy.getIncludeValidationMode;
+    const isStrictIncludeValidationEnabled = includeValidationPolicy.isStrictIncludeValidationEnabled;
     const getCallbackSignatureMode = () => settingsService?.getCallbackSignatureMode?.() || 'strict';
     const areWarningDiagnosticsEnabled = () =>
         areLiveValidationWarningsEnabled(settingsService?.getLiveValidationIssueMode?.());
@@ -51,27 +60,6 @@ function createSharedContextDiagnostics(deps) {
         }
         return !!headerNamesByLine.get(lineNumber)?.has(funcName);
     };
-    let includeFileExtensionCacheKey = null;
-    let includeFileExtensionCacheValue = null;
-    let includeFileExtensionSignature = '';
-    const includeDocumentCache = new WeakMap();
-    const getCachedConfiguredIncludeFileExtensions = () => {
-        const rawExtensions = settingsService?.getIncludeFileExtensions?.();
-        const cacheKey = Array.isArray(rawExtensions)
-            ? rawExtensions.join('\0')
-            : '__default__';
-        if (cacheKey === includeFileExtensionCacheKey && includeFileExtensionCacheValue) {
-            return includeFileExtensionCacheValue;
-        }
-        const normalizedExtensions = Array.isArray(rawExtensions)
-            ? normalizeExtensionList(rawExtensions, [], { useFallbackWhenEmpty: false })
-            : undefined;
-        const result = getEffectiveIncludeFileExtensions(normalizedExtensions);
-        includeFileExtensionCacheKey = cacheKey;
-        includeFileExtensionCacheValue = result;
-        includeFileExtensionSignature = includeFileExtensionCacheValue.join('|');
-        return includeFileExtensionCacheValue;
-    };
     const isFunctionLikeLookupDecl = decl => isFunctionLikeDecl(decl);
     const isObjectAliasDefineLookupDecl = decl => decl?.type === 'define' && !decl.args && !decl.macroStyle;
     const hasIncludeFunctionTwinWithAtFallback = (name, incDecls, lookup) => {
@@ -95,22 +83,7 @@ function createSharedContextDiagnostics(deps) {
     const normalizedDeclPathCache = new WeakMap();
 
 
-    function isIncludeDocument(document) {
-        const fileName = String(document?.fileName || '').toLowerCase();
-        if (!fileName) return false;
-        const includeExtensions = getCachedConfiguredIncludeFileExtensions();
-        const cached = includeDocumentCache.get(document);
-        if (cached?.fileName === fileName && cached.signature === includeFileExtensionSignature) {
-            return cached.value;
-        }
-        const value = includeExtensions.some(ext => fileName.endsWith(ext));
-        includeDocumentCache.set(document, {
-            fileName,
-            signature: includeFileExtensionSignature,
-            value
-        });
-        return value;
-    }
+    const isIncludeDocument = includeValidationPolicy.isIncludeDocument;
 
 
 

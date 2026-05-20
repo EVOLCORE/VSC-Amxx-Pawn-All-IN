@@ -105,16 +105,19 @@ function attachIncludeDeclIndexesFromSerializedOrBuild(decls, serializedIndexes 
     return attachPrecomputedDeclBuckets(decls, built.nameBuckets, built.variableBuckets);
 }
 
-function createIncludeDeclAccumulator() {
+function createIncludeDeclAccumulator(options = {}) {
+    const shouldDedupe = options.dedupe !== false;
     const decls = [];
     const nameBuckets = new Map();
     const variableBuckets = new Map();
-    const seenDeclKeys = new Set();
+    const seenDeclKeys = shouldDedupe ? new Set() : null;
     const pushDecl = decl => {
         if (!decl) return;
-        const declKey = getIncludeDeclDedupeKey(decl);
-        if (declKey && seenDeclKeys.has(declKey)) return;
-        if (declKey) seenDeclKeys.add(declKey);
+        if (seenDeclKeys) {
+            const declKey = getIncludeDeclDedupeKey(decl);
+            if (declKey && seenDeclKeys.has(declKey)) return;
+            if (declKey) seenDeclKeys.add(declKey);
+        }
         decls.push(decl);
         if (!decl.name) return;
         const bucket = nameBuckets.get(decl.name);

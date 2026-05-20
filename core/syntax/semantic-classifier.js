@@ -1,4 +1,4 @@
-const { readPawnIdentifierAt } = require('./identifiers');
+const { createPawnIdentifierReader } = require('./identifiers');
 const { findBalancedGroupEnd } = require('./balanced');
 const { isPawnWhitespaceChar } = require('./whitespace');
 
@@ -61,12 +61,10 @@ function createSemanticSyntaxCore(deps = {}) {
     const isIdentifierContinue = char => isIdentifierContinueChar(char || '');
     const isQuoteEscaped = (source, index, escapeChar) => isEscapedQuote(source, index, escapeChar);
 
-    function readIdentifierAt(source, index) {
-        return readPawnIdentifierAt(source, index, {
-            isIdentifierStartChar: isIdentifierStart,
-            isIdentifierContinueChar: isIdentifierContinue
-        });
-    }
+    const readIdentifierAt = createPawnIdentifierReader({
+        isIdentifierStartChar: isIdentifierStart,
+        isIdentifierContinueChar: isIdentifierContinue
+    });
 
     function readNumberAt(source, index) {
         if (source[index] === '0' && (source[index + 1] === 'x' || source[index + 1] === 'X')) {

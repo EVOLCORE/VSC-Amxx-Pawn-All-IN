@@ -1,4 +1,5 @@
 const { isPreprocessorDirectiveLine } = require('./preprocessor-lines');
+const { readPreprocessorIdentifierToken } = require('./preprocessor-directives');
 const { parsePawnIncludeDirectiveTarget } = require('./includes');
 const { readPawnIdentifierAt } = require('./identifiers');
 const { splitPawnLines } = require('./lines');
@@ -445,11 +446,12 @@ function createPreprocessorLabelSyntaxCore(deps) {
 
             if (directiveName === 'pragma') {
                 const pragmaPayload = String(directive.payload || '');
-                const pragmaName = pragmaPayload.trim().match(/^([A-Za-z_@]\w*)/)?.[1] || '';
-                const pragmaOffset = pragmaName ? pragmaPayload.indexOf(pragmaName) : 0;
+                const pragmaToken = readPreprocessorIdentifierToken(pragmaPayload, 0);
+                const pragmaName = pragmaToken?.name || '';
+                const pragmaOffset = pragmaToken?.start ?? 0;
                 if (pragmaName.toLowerCase() === 'rational') {
                     const parsedRational = parseRationalPragmaPayload(
-                        pragmaPayload.slice(pragmaOffset + pragmaName.length),
+                        pragmaPayload.slice((pragmaToken?.end ?? pragmaOffset) || 0),
                         [...activeDefinesByName.values()]
                     );
                     if (activeBranch && parsedRational) {
@@ -524,7 +526,7 @@ function createPreprocessorLabelSyntaxCore(deps) {
             }
 
             if (directiveName === 'undef') {
-                const undefName = String(directive.payload || '').trim().match(/^([A-Za-z_@]\w*)/)?.[1] || '';
+                const undefName = readPreprocessorIdentifierToken(String(directive.payload || ''), 0)?.name || '';
                 if (activeBranch && undefName) activeDefinesByName.delete(undefName);
                 return;
             }

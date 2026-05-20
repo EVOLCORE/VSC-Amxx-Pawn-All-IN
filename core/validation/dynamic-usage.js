@@ -1,3 +1,5 @@
+const { parsePragmaDirectiveLine } = require('../syntax/preprocessor-directives');
+
 function createDynamicUsageDiagnostics(deps = {}) {
     const {
         evaluatePawnNumericExpr,
@@ -17,9 +19,9 @@ function createDynamicUsageDiagnostics(deps = {}) {
         let limit = DEFAULT_DYNAMIC_CELLS;
 
         for (const line of lines) {
-            const match = String(line || '').trim().match(/^#\s*pragma\s+dynamic\b(.*)$/i);
-            if (!match) continue;
-            const expr = String(match[1] || '').trim();
+            const pragma = parsePragmaDirectiveLine(line);
+            if (pragma?.name !== 'dynamic') continue;
+            const expr = String(pragma.value || '').trim();
             if (!expr) continue;
             const value = evaluatePawnNumericExpr(expr, decls, new Set(), analysisCache);
             if (Number.isFinite(value) && value >= 0) {

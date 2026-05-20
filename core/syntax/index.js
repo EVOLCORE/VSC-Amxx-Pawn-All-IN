@@ -30,6 +30,8 @@ const { computeLineStartGroupContextFlags } = require('./group-context');
 const {
     PAWN_INCLUDE_LINE_RE,
     getPawnIncludeCompletionContext,
+    isIncludeDirectiveKeyword,
+    isPawnIncludeDirectiveCandidateLine,
     parsePawnIncludeDirectiveTarget,
     getPawnIncludeNameFromLine
 } = require('./includes');
@@ -71,6 +73,7 @@ const {
 } = require('./preprocessor-lines');
 const {
     containsPawnIdentifierStartChar,
+    createPawnIdentifierReader,
     getPawnIdentifierName,
     isPawnIdentifierBoundaryChar,
     isPawnIdentifierContinueChar,
@@ -80,6 +83,14 @@ const {
     isPawnIdentifierStartCode,
     readPawnIdentifierAt
 } = require('./identifiers');
+const {
+    isAtPublicFunctionStartLine,
+    isBareDeclarationKeywordLine,
+    isExplicitDeclarationStartLine,
+    isPotentialDeclarationStartLine,
+    isPotentialEnumDeclarationLine,
+    readLeadingDeclarationWord
+} = require('./declaration-start');
 const {
     findPawnLineTrimEndIndex,
     findNextNonWhitespaceIndex,
@@ -97,6 +108,12 @@ const {
     countTextLines,
     splitPawnLines
 } = require('./lines');
+const {
+    collectNumericDefineNamesFromContext,
+    findNumericDefineNameRangesInLine,
+    isNumericDefineValue,
+    isNumericObjectLikeDefineDecl
+} = require('./numeric-defines');
 const pawnKeywords = require('./keywords');
 const compilerBuiltins = require('./compiler-builtins');
 const preprocessorDirectives = require('./preprocessor-directives');
@@ -129,6 +146,8 @@ module.exports = {
     computeLineStartGroupContextFlags,
     PAWN_INCLUDE_LINE_RE,
     getPawnIncludeCompletionContext,
+    isIncludeDirectiveKeyword,
+    isPawnIncludeDirectiveCandidateLine,
     parsePawnIncludeDirectiveTarget,
     getPawnIncludeNameFromLine,
     advanceTopLevelScannerState,
@@ -160,6 +179,7 @@ module.exports = {
     isPreprocessorDirectiveLine,
     maskPreprocessorDirectiveLines,
     containsPawnIdentifierStartChar,
+    createPawnIdentifierReader,
     getPawnIdentifierName,
     isPawnIdentifierBoundaryChar,
     isPawnIdentifierContinueChar,
@@ -168,6 +188,12 @@ module.exports = {
     isPawnIdentifierStartChar,
     isPawnIdentifierStartCode,
     readPawnIdentifierAt,
+    isAtPublicFunctionStartLine,
+    isBareDeclarationKeywordLine,
+    isExplicitDeclarationStartLine,
+    isPotentialDeclarationStartLine,
+    isPotentialEnumDeclarationLine,
+    readLeadingDeclarationWord,
     findPawnLineTrimEndIndex,
     findNextNonWhitespaceIndex,
     findPreviousNonWhitespaceIndex,
@@ -181,6 +207,10 @@ module.exports = {
     countLineBreaks,
     countTextLines,
     splitPawnLines,
+    collectNumericDefineNamesFromContext,
+    findNumericDefineNameRangesInLine,
+    isNumericDefineValue,
+    isNumericObjectLikeDefineDecl,
     ...pawnKeywords,
     ...compilerBuiltins,
     ...preprocessorDirectives

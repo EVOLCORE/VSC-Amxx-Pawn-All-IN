@@ -3,7 +3,12 @@ const { createHoverCallPlanFeature } = require('./call-plan');
 const { createHoverCallContextCache } = require('./call-context-cache');
 const { createHoverSessionFactory } = require('./session');
 const { createHoverSemanticCache } = require('./semantic-cache');
+const {
+    dedupeHoverMatches,
+    hasHoverMatch
+} = require('./match-dedupe');
 const { isInactivePreprocessorMaskedLine } = require('../../core/syntax/preprocessor-lines');
+const { findFormatPlaceholderLinkAtOffset } = require('../../core/format-strings');
 
 function createHoverBuilderFeature(deps) {
     const {
@@ -36,10 +41,14 @@ function createHoverBuilderFeature(deps) {
         isHoverAtActiveCursor,
         findNestedParentCallNameContext,
         findFunctionCallNameContext,
+        findCallContext,
+        findMatchingParenOffset,
         getPreferredFunctionHoverMatch,
         extractCallSiteArgs,
         hasIncludeFunctionTwin,
         splitTopLevel,
+        splitTopLevelWithRanges,
+        isEscapedQuote,
         parseFuncArgs,
         parseDimsParts,
         createLazyCallContextOptions,
@@ -54,6 +63,7 @@ function createHoverBuilderFeature(deps) {
         expandObjectLikeDefineTupleCallArgs,
         isMeaningfulCallCursorPosition,
         isMeaningfulCallPosition,
+        shouldSuppressHoverValidationForDocument = () => false,
         getHoverCacheSignature,
         logHover = null
     } = deps;
@@ -167,11 +177,12 @@ function createHoverBuilderFeature(deps) {
             getRawIndexedExpressionsForLine,
             findIndexedAccessContextAtPositionCached
         } = hoverSession;
-        suppressHoverValidation = isInactivePreprocessorMaskedLine(
-            ctx.rawLines,
-            ctx.preprocessedState?.rawLines,
-            position.line
-        );
+        suppressHoverValidation = shouldSuppressHoverValidationForDocument(document) ||
+            isInactivePreprocessorMaskedLine(
+                ctx.rawLines,
+                ctx.preprocessedState?.rawLines,
+                position.line
+            );
         const documentSemanticKey = getDocumentSemanticKey(
             document,
             ctx.semanticSession || null,
@@ -297,17 +308,49 @@ function createHoverBuilderFeature(deps) {
             return localMatches.length ? localMatches : getWordMatches(key);
         };
         const buildDistinctArgHoverInfo = (matchList, includeDocs = false, options = {}) => {
-            const seen = new Set();
-            const unique = [];
-            for (const match of matchList || []) {
-                if (!match?.data) continue;
-                const key = getDeclMatchKey(match.data);
-                if (seen.has(key)) continue;
-                seen.add(key);
-                unique.push(match);
-            }
+            const unique = dedupeHoverMatches(matchList, getDeclMatchKey);
             return buildArgHoverInfo(unique, fp, includeDocs, options);
         };
+        const buildFormatPlaceholderHover = () => {
+            if (!lineText.includes('%')) return null;
+            if (typeof findCallContext !== 'function') return null;
+            const callCtx = findCallContext(document, position, callContextOptions);
+            if (!callCtx?.funcName) return null;
+            const link = findFormatPlaceholderLinkAtOffset(text, callCtx, positionOffset, {
+                splitTopLevelWithRanges,
+                findMatchingParenOffset,
+                ctrlCharResolver: resolver,
+                isEscapedQuote,
+                escapeChar: resolver.ctrlCharAtLine?.(position.line) || ''
+            });
+            if (!link) return null;
+
+            const md = new vscode.MarkdownString();
+            const argsText = (link.args || [])
+                .map(arg => String(arg.text || '').trim())
+                .filter(Boolean)
+                .join(', ');
+            md.appendMarkdown('**Format placeholder**\n\n');
+            const code = `${link.placeholder.raw} -> ${argsText || '<missing argument>'}`;
+            if (typeof md.appendCodeblock === 'function') {
+                md.appendCodeblock(code, 'pawn');
+            } else {
+                md.appendMarkdown(`\`\`\`pawn\n${code}\n\`\`\``);
+            }
+            if (link.placeholder.consumes > 1) {
+                md.appendMarkdown(`\n\nConsumes arguments: ${link.placeholder.consumes}`);
+            }
+            if (link.callName) {
+                md.appendMarkdown(`\n\nCall: \`${link.callName}\``);
+            }
+            const hoverRange = createHoverRangeFromOffsets(
+                link.placeholder.startOffset,
+                link.placeholder.endOffset
+            );
+            return new vscode.Hover(md, hoverRange || undefined);
+        };
+        const formatPlaceholderHover = buildFormatPlaceholderHover();
+        if (formatPlaceholderHover) return formatPlaceholderHover;
         const declarationSpanAtPosition = findVariableDeclarationSpanInRange(
             document,
             positionOffset,
@@ -930,11 +973,7 @@ function createHoverBuilderFeature(deps) {
             );
             if (
                 preferredCallMatch &&
-                !matches.some(match =>
-                    match?.data?.name === preferredCallMatch.data.name &&
-                    match?.data?.filePath === preferredCallMatch.data.filePath &&
-                    match?.data?.lineNumber === preferredCallMatch.data.lineNumber
-                )
+                !hasHoverMatch(matches, preferredCallMatch, getDeclMatchKey)
             ) {
                 matches.unshift(preferredCallMatch);
             }

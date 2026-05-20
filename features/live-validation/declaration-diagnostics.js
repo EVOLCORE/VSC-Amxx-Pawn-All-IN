@@ -109,6 +109,7 @@ function createDeclarationDiagnostics(deps) {
             return declarationAnalysisCache;
         };
         const escapeChar = ctx.resolver.ctrlCharAtLine(lineNumber);
+        const warningsEnabled = areWarningDiagnosticsEnabled();
         const occurrenceByName = new Map();
         const isIdentifierChar = isPawnIdentifierContinueChar;
         const findIdentifierSpanForOccurrence = (name, occurrenceIndex = 0) => {
@@ -145,7 +146,7 @@ function createDeclarationDiagnostics(deps) {
                 : null;
         };
         const pushDeclWarning = (decl, issue, occurrenceIndex = 0) => {
-            if (!issue || !areWarningDiagnosticsEnabled()) return;
+            if (!issue || !warningsEnabled) return;
             const range = createIdentifierRangeForOccurrence(decl?.name || issue.params?.name || '', occurrenceIndex);
             if (!range) return;
             diagnostics.push(createLiveValidationDiagnostic(
@@ -344,7 +345,7 @@ function createDeclarationDiagnostics(deps) {
                     t('validation.symbolAlreadyDefined', { name: decl.name })
                 );
                 if (diagnostic) diagnostics.push(diagnostic);
-            } else if (areWarningDiagnosticsEnabled() && decl?.type === 'variable' && decl.name) {
+            } else if (warningsEnabled && decl?.type === 'variable' && decl.name) {
                 const shadowDeclarationKind = currentArgs.includes(decl)
                     ? 'argument'
                     : (currentLocals.includes(decl) ? 'local' : '');
@@ -580,7 +581,7 @@ function createDeclarationDiagnostics(deps) {
                     );
                     const rhs = stripTrailingSemicolon(rhsSourceInfo.text);
                     if (
-                        areWarningDiagnosticsEnabled() &&
+                        warningsEnabled &&
                         rhs &&
                         normalizeSelfAssignmentExpression(lhs) === normalizeSelfAssignmentExpression(rhs)
                     ) {
@@ -625,7 +626,7 @@ function createDeclarationDiagnostics(deps) {
                         }
                     }
                     if (
-                        areWarningDiagnosticsEnabled() &&
+                        warningsEnabled &&
                         rhs
                     ) {
                         const { analysisCache, analysisDecls } = getAssignmentAnalysis();
@@ -695,7 +696,7 @@ function createDeclarationDiagnostics(deps) {
             const analysisDecls = ctx.allDecls;
             const valueText = String(decl.value || '').trim();
             if (
-                areWarningDiagnosticsEnabled()
+                warningsEnabled
             ) {
                 const tagIssue = getScalarAssignmentTagIssue(decl.name, valueText, analysisDecls, analysisCache, {
                     escapeChar,
@@ -821,7 +822,7 @@ function createDeclarationDiagnostics(deps) {
             const isInitializerWarning =
                 initializerIssue.kind === 'enumFieldCountOverflow' ||
                 initializerIssue.kind === 'enumFieldInitializerOverflow';
-            if (isInitializerWarning && !areWarningDiagnosticsEnabled()) continue;
+            if (isInitializerWarning && !warningsEnabled) continue;
             const message = initializerIssue.kind === 'overflow'
                 ? t('validation.initializationDataExceedsDeclaredSize')
                 : (initializerIssue.kind === 'enumFieldCountOverflow'

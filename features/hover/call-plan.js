@@ -1,3 +1,5 @@
+const { pushUniqueHoverMatch } = require('./match-dedupe');
+
 function createHoverCallPlanFeature(deps) {
     const {
         t,
@@ -15,11 +17,12 @@ function createHoverCallPlanFeature(deps) {
     } = deps;
 
     const pushUniqueMatch = (matches, label, data, nav) => {
-        if (!data) return;
-        const key = `${getDeclMatchKey(data)}|${label}`;
-        if (!matches.some(match => `${getDeclMatchKey(match.data)}|${match.label}` === key)) {
-            matches.push({ label, data, nav });
-        }
+        pushUniqueHoverMatch(
+            matches,
+            { label, data, nav },
+            getDeclMatchKey,
+            { includeLabel: true }
+        );
     };
 
     const resolveCallArgHoverMatches = ({

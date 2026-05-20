@@ -43,6 +43,7 @@ Recommended AMX Mod X version: 1.9.0 or newer.
 4. Compact/full/signature-only hover content modes.
 5. Optional Go to Definition links inside hover content.
 6. Go to Definition support for symbols and include declarations.
+7. Format-string placeholder hover/highlighting that maps placeholders such as `%s`, `%i`, `%f`, and multi-argument `%L` to the arguments they consume.
 
 ### Refactor
 
@@ -64,6 +65,7 @@ Recommended AMX Mod X version: 1.9.0 or newer.
 
 1. AMXX compiler integration with a toolbar command.
 2. Configurable compiler path, output directory, compiler options, result toasts, output reveal behavior, and diagnostic reveal priority.
+3. Compiler include paths are passed in the same project/global priority order used by the extension, with duplicate `-i` options filtered out.
 
 ### Performance & Caching
 
@@ -207,6 +209,11 @@ Then use the `AMXX Pawn All-In: Compile Current File` command or the editor titl
 
 The extension can run `amxxpc` for the current file.
 It can use a compiler from the current project, from the source file directory, or from `amxxPawnAllIn.globalCompilerPath`, depending on your configuration.
+
+When compiling, AMXX Pawn All-In passes configured include folders to `amxxpc` as include paths.
+Project-local include paths are emitted first, global include paths follow, and duplicate folders are removed by absolute path.
+Quoted includes still keep compiler-style local-file lookup first; angle includes rely on the configured project/global include path order.
+Managed include and output arguments are protected from `amxxPawnAllIn.compilerOptions`: duplicate include paths are skipped, unique manual include paths are kept after managed paths, and custom `-o` options cannot override the configured output file.
 
 Compiler output can be written to a configurable output directory, and the extension can reveal live errors, compiler errors, warnings, or all issues depending on your workflow.
 

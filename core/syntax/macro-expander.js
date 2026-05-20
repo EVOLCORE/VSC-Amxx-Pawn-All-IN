@@ -1,6 +1,6 @@
 const {
+    createPawnIdentifierReader,
     isPawnIdentifierName,
-    readPawnIdentifierAt
 } = require('./identifiers');
 const { findBalancedGroupEnd } = require('./balanced');
 
@@ -21,13 +21,10 @@ function createMacroExpansionSyntaxCore(deps = {}) {
     const isIdentifierContinue = char => isIdentifierContinueChar(char || '');
     const isQuoteEscaped = (source, index, escapeChar) => isEscapedQuote(source, index, escapeChar);
     const isWhitespace = char => /\s/.test(char || '');
-
-    function readIdentifierAt(source, index) {
-        return readPawnIdentifierAt(source, index, {
-            isIdentifierStartChar: isIdentifierStart,
-            isIdentifierContinueChar: isIdentifierContinue
-        });
-    }
+    const readIdentifierAt = createPawnIdentifierReader({
+        isIdentifierStartChar: isIdentifierStart,
+        isIdentifierContinueChar: isIdentifierContinue
+    });
 
     function findMatchingParenIndex(source, openIndex, escapeChar = '') {
         return findBalancedGroupEnd(source, openIndex, '(', ')', {

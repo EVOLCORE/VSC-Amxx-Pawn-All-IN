@@ -1,7 +1,11 @@
 const { getDefineStateSignature } = require('../utils/signature');
 const { createMacroExpansionSyntaxCore } = require('./macro-expander');
 const { isCompilerPredefinedConstantName } = require('./compiler-builtins');
-const { PREPROCESSOR_DIRECTIVE_NAMES } = require('./preprocessor-directives');
+const {
+    PREPROCESSOR_DIRECTIVE_NAMES,
+    readPreprocessorDirectiveNameContext,
+    readPreprocessorIdentifierToken
+} = require('./preprocessor-directives');
 const { createRationalPolicySyntaxCore } = require('./rational-policy');
 const { parsePawnIncludeDirectiveTarget } = require('./includes');
 const {
@@ -30,7 +34,6 @@ function createPreprocessorSyntaxCore(deps) {
         getNestedSearchPaths = null,
         resolveInclude,
         getIncludeNameFromLine,
-        collectDeclarationText,
         maskPreprocessorLine,
         stripLineComment,
         splitTopLevel,
@@ -62,26 +65,22 @@ function createPreprocessorSyntaxCore(deps) {
         splitTopLevel
     });
 
-    function skipDirectiveSpaces(source, cursor) {
-        let index = Math.max(0, cursor | 0);
-        while (index < source.length && isPawnHorizontalWhitespaceCode(source.charCodeAt(index))) index++;
-        return index;
-    }
+    const skipDirectiveSpaces = skipPawnHorizontalWhitespace;
+    const readDirectiveIdentifier = readPreprocessorIdentifierToken;
+    const defineLookupValuesCache = new WeakMap();
 
-    function readDirectiveIdentifier(source, cursor = 0) {
-        const start = skipDirectiveSpaces(String(source || ''), cursor);
-        const text = String(source || '');
-        if (start >= text.length || !isPawnIdentifierStartCode(text.charCodeAt(start))) {
-            return null;
-        }
-        let end = start + 1;
-        while (end < text.length && isPawnIdentifierContinueCode(text.charCodeAt(end))) end++;
-        return {
-            name: text.slice(start, end),
-            start,
-            end
-        };
-    }
+    const getDefineLookupValues = (defineLookup = null, fallbackDecls = []) => {
+        if (!(defineLookup instanceof Map)) return fallbackDecls;
+        const cached = defineLookupValuesCache.get(defineLookup);
+        if (cached) return cached;
+        const values = [...defineLookup.values()];
+        defineLookupValuesCache.set(defineLookup, values);
+        return values;
+    };
+
+    const invalidateDefineLookupValues = defineLookup => {
+        if (defineLookup instanceof Map) defineLookupValuesCache.delete(defineLookup);
+    };
 
     function getDirectiveLineWithoutComment(line, escapeChar = undefined, shouldStripLineComment = true) {
         const sourceLine = String(line || '');
@@ -97,22 +96,20 @@ function createPreprocessorSyntaxCore(deps) {
             options.escapeChar,
             options.stripLineComment !== false
         );
-        let hashIndex = 0;
-        while (hashIndex < directiveLine.length && isPawnHorizontalWhitespaceCode(directiveLine.charCodeAt(hashIndex))) hashIndex++;
-        if (hashIndex >= directiveLine.length || directiveLine.charCodeAt(hashIndex) !== 35) return null;
+        const directiveNameContext = readPreprocessorDirectiveNameContext(directiveLine);
+        if (!directiveNameContext) return null;
 
-        let cursor = skipDirectiveSpaces(directiveLine, hashIndex + 1);
-        const keywordInfo = readDirectiveIdentifier(directiveLine, cursor);
-        const keywordStart = keywordInfo?.start ?? cursor;
-        const keywordEnd = keywordInfo?.end ?? cursor;
-        cursor = keywordEnd;
+        const hashIndex = directiveNameContext.hashStart;
+        const keywordStart = directiveNameContext.tokenStart;
+        const keywordEnd = directiveNameContext.tokenEnd;
+        let cursor = keywordEnd;
 
         let payloadStart = skipDirectiveSpaces(directiveLine, cursor);
         let payloadEnd = directiveLine.length;
         while (payloadEnd > payloadStart && isPawnHorizontalWhitespaceCode(directiveLine.charCodeAt(payloadEnd - 1))) payloadEnd--;
 
-        const keywordRaw = keywordInfo?.name || '';
-        const keyword = keywordRaw.toLowerCase();
+        const keywordRaw = directiveNameContext.directiveNameRaw || '';
+        const keyword = directiveNameContext.directiveName || '';
         return {
             sourceLine,
             directiveLine,
@@ -387,7 +384,7 @@ function createPreprocessorSyntaxCore(deps) {
                 payloadRange.start,
                 payloadRange.start + payloadRange.length
             );
-            const evalDecls = defineLookup ? [...defineLookup.values()] : defineDecls;
+            const evalDecls = getDefineLookupValues(defineLookup, defineDecls);
             const evaluatedLineNumber = evaluatePawnNumericExpr(payload, evalDecls);
             if (evaluatedLineNumber == null) {
                 pushIssue('validation.mustBeConstantExpression', payloadRange);
@@ -585,7 +582,7 @@ function createPreprocessorSyntaxCore(deps) {
         const hasDefine = name => isCompilerPredefinedConstantName(name) ||
             (defineLookup ? defineLookup.has(name) : defineDecls.some(d => d.name === name));
         const getDefine = name => defineLookup ? (defineLookup.get(name) || null) : (defineDecls.find(d => d.name === name) || null);
-        const evalDecls = defineLookup ? [...defineLookup.values()] : defineDecls;
+        const evalDecls = getDefineLookupValues(defineLookup, defineDecls);
         const source = String(expr || '').trim();
         if (!source) return { valid: false, value: null, normalized: '' };
 
@@ -667,12 +664,20 @@ function createPreprocessorSyntaxCore(deps) {
                     sharedCache: true
                 };
             }
+            if (cached && includeIndexMap && !cached.indexMap) {
+                cached.indexMap = buildDefineDeclIndexMap();
+                return {
+                    map: cached.map,
+                    indexMap: cached.indexMap,
+                    sharedCache: true
+                };
+            }
             const map = new Map();
-            const indexMap = new Map();
+            const indexMap = includeIndexMap ? new Map() : null;
             for (let index = 0; index < defineDecls.length; index++) {
                 const decl = defineDecls[index];
                 map.set(decl.name, decl);
-                indexMap.set(decl.name, index);
+                if (indexMap) indexMap.set(decl.name, index);
             }
             if (!ownsDefineDecls) {
                 const entry = cached || { map, indexMap };
@@ -805,11 +810,11 @@ function createPreprocessorSyntaxCore(deps) {
         const readDirectiveName = rest => readDirectiveIdentifier(rest, 0)?.name || '';
         const applyRationalPragmaDirective = directive => {
             const payload = String(directive?.payload || '');
-            const pragmaName = payload.trim().match(/^([A-Za-z_@]\w*)/)?.[1] || '';
+            const pragmaToken = readDirectiveIdentifier(payload, 0);
+            const pragmaName = pragmaToken?.name || '';
             if (pragmaName.toLowerCase() !== 'rational') return false;
-            const pragmaOffset = pragmaName ? payload.indexOf(pragmaName) : 0;
             const parsed = rationalPolicy.parseRationalPragmaPayload(
-                payload.slice(pragmaOffset + pragmaName.length),
+                payload.slice(pragmaToken?.end ?? 0),
                 defineDecls
             );
             const nextState = rationalPolicy.createRationalStateFromPragma(parsed);
@@ -817,28 +822,6 @@ function createPreprocessorSyntaxCore(deps) {
                 rationalState = nextState;
             }
             return true;
-        };
-        const collectDirectiveDeclarationText = lineNumber => {
-            const collected = collectDeclarationText(rawLines, lineNumber, [], strippedLines);
-            if (collected.text.indexOf('//') < 0) return collected;
-
-            let hasLineComment = false;
-            for (let currentLine = lineNumber; currentLine < collected.nextLine; currentLine++) {
-                if (String(strippedLines[currentLine] || '').indexOf('//') >= 0) {
-                    hasLineComment = true;
-                    break;
-                }
-            }
-            if (!hasLineComment) return collected;
-
-            const directiveLines = [];
-            for (let currentLine = lineNumber; currentLine < collected.nextLine; currentLine++) {
-                const source = String(strippedLines[currentLine] || '');
-                directiveLines[currentLine] = source.indexOf('//') >= 0
-                    ? stripLineComment(source)
-                    : source;
-            }
-            return collectDeclarationText(rawLines, lineNumber, [], directiveLines);
         };
         const ensureOutLines = () => {
             if (!outLines) {
@@ -1008,10 +991,7 @@ function createPreprocessorSyntaxCore(deps) {
                     appendRawDirectiveLines();
                     return nextDirectiveLine;
                 }
-                const { text: joinedDefine, nextLine } = collectDirectiveDeclarationText(lineNumber);
-                const parsedDefine = parsePreprocessorDefineDirective(joinedDefine);
-                const parsed = parsedDefine?.valid ? parsedDefine : lineDefine;
-                const { name, args, macroStyle, macroIndexer, value } = parsed;
+                const { name, args, macroStyle, macroIndexer, value } = lineDefine;
                 ensureMutableDefineDecls();
                 const defineIndexMap = ensureDefineDeclIndexMap();
                 const defineMap = ensureDefineDeclMap();
@@ -1033,15 +1013,16 @@ function createPreprocessorSyntaxCore(deps) {
                     defineDecls.push(defineDecl);
                 }
                 defineMap.set(name, defineDecl);
+                invalidateDefineLookupValues(defineMap);
                 defineStateKeyDirty = true;
                 emitRawLine(rawLine, strippedLines[lineNumber] || rawLine);
-                for (let continuationLine = lineNumber + 1; continuationLine < nextLine; continuationLine++) {
+                for (let continuationLine = lineNumber + 1; continuationLine < nextDirectiveLine; continuationLine++) {
                     appendMaskedLine(
                         rawLines[continuationLine],
                         strippedLines[continuationLine] || rawLines[continuationLine]
                     );
                 }
-                return nextLine;
+                return nextDirectiveLine;
             }
 
             if (keyword === 'undef') {
@@ -1063,6 +1044,7 @@ function createPreprocessorSyntaxCore(deps) {
                     defineIndexMap.delete(undefName);
                 }
                 defineMap.delete(undefName);
+                invalidateDefineLookupValues(defineMap);
                 defineStateKeyDirty = true;
                 appendRawDirectiveLines();
                 return nextDirectiveLine;
@@ -1083,19 +1065,31 @@ function createPreprocessorSyntaxCore(deps) {
                 }
                 const includeRequired = keyword === 'include';
                 const fromFilePath = options.fromFilePath || '';
-                const includePath = resolveInclude(includeName, searchPaths, fromFilePath, {
-                    delimiter: includeTarget?.delimiter || ''
+                const includeResolution = resolveInclude(includeName, searchPaths, fromFilePath, {
+                    delimiter: includeTarget?.delimiter || '',
+                    returnMeta: true
                 });
+                const includePath = typeof includeResolution === 'string'
+                    ? includeResolution
+                    : includeResolution?.filePath || '';
                 if (includePath) {
                     const activeDefineStateKey = ensureDefineStateKey();
+                    const includeDefineDecls = ownsDefineDecls
+                        ? defineDecls.slice()
+                        : defineDecls;
                     const includeEntry = {
                         name: includeName,
                         filePath: includePath,
-                        defineDecls: defineDecls.slice(),
+                        defineDecls: includeDefineDecls,
                         defineStateKey: activeDefineStateKey,
                         depth: includeDepth,
                         lineNumber,
-                        required: includeRequired
+                        required: includeRequired,
+                        sourcePath: includeResolution?.sourcePath || '',
+                        sourcePriority: Number.isFinite(includeResolution?.sourcePriority)
+                            ? includeResolution.sourcePriority
+                            : Number.MAX_SAFE_INTEGER,
+                        resolutionKind: includeResolution?.resolutionKind || ''
                     };
                     includeEntries.push(includeEntry);
 

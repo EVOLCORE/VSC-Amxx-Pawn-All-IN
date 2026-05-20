@@ -1,3 +1,5 @@
+const { isIncludeDirectiveKeyword } = require('../core/syntax/includes');
+
 function createDocumentLanguageService(deps) {
     const {
         vscode,
@@ -25,7 +27,7 @@ function createDocumentLanguageService(deps) {
         for (let lineNumber = 0; lineNumber < lineCount; lineNumber++) {
             const lineText = String(document.lineAt(lineNumber)?.text || '');
             const directive = parsePreprocessorDirectiveLine(lineText);
-            if (directive?.keyword !== 'include') continue;
+            if (!isIncludeDirectiveKeyword(directive?.keyword)) continue;
             const includeName = getIncludeNameFromLine(directive.trimmed);
             if (!includeName) continue;
             if (resolveInclude(includeName, getResolvedSearchPaths(), document.fileName)) {

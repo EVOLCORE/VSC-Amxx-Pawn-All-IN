@@ -27,7 +27,6 @@ const { createLiveValidationSharedDiagnostics } = require('./shared-diagnostics'
 
 const {
     isPawnIdentifierBoundaryChar: defaultIsPawnIdentifierBoundaryChar,
-    normalizeExtensionList: defaultNormalizeExtensionList,
     areLiveValidationWarningsEnabled: defaultAreLiveValidationWarningsEnabled
 } = createUtilityCore();
 const {
@@ -150,7 +149,6 @@ function createLiveValidationDiagnosticCore(deps) {
         getPreprocessorDirectiveIssues,
         computeFunctionRangeMaps = defaultComputeFunctionRangeMaps,
         isPawnIdentifierBoundaryChar = defaultIsPawnIdentifierBoundaryChar,
-        normalizeExtensionList = defaultNormalizeExtensionList,
         areLiveValidationWarningsEnabled = defaultAreLiveValidationWarningsEnabled,
         settingsService
     } = deps;
@@ -289,7 +287,6 @@ function createLiveValidationDiagnosticCore(deps) {
         parseDimSpec,
         getEffectiveDeclDimParts,
         computeFunctionRangeMaps,
-        normalizeExtensionList,
         areLiveValidationWarningsEnabled,
         settingsService,
         nonAsciiCharRe,

@@ -1,4 +1,8 @@
 const { computeFunctionRangeMaps: defaultComputeFunctionRangeMaps } = require('../../core/declarations/scope');
+const {
+    doesDiagnosticOverlapLine,
+    doesDiagnosticOverlapLineRange
+} = require('../../core/diagnostics/ranges');
 const { isHoverModifierHackMode } = require('../../core/hover-modes');
 const { shouldSchedulePersistentHoverForSelectionEvent } = require('../../core/persistent-hover/selection-events');
 const { unrefTimer } = require('../../core/utils/timers');
@@ -98,10 +102,7 @@ function createPersistentHoverFeature(deps) {
         if (!errorDiagnostics.length) return false;
 
         const lineNumber = state.position.line;
-        if (errorDiagnostics.some(item =>
-            item.range.start.line <= lineNumber &&
-            item.range.end.line >= lineNumber
-        )) {
+        if (errorDiagnostics.some(item => doesDiagnosticOverlapLine(item, lineNumber))) {
             return true;
         }
 
@@ -109,8 +110,7 @@ function createPersistentHoverFeature(deps) {
         if (!functionRange) return false;
 
         return errorDiagnostics.some(item =>
-            item.range.end.line >= functionRange.startLine &&
-            item.range.start.line <= functionRange.endLine
+            doesDiagnosticOverlapLineRange(item, functionRange)
         );
     }
 

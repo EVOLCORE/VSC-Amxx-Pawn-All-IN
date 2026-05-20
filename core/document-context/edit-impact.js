@@ -1,4 +1,10 @@
 const { countTextLines, splitPawnLines } = require('../syntax/lines');
+const {
+    collectContentChangeLineSet,
+    collectEditImpactLineSet,
+    normalizeContentChangeLineRange
+} = require('./incremental-lines');
+const { toSortedUniqueLineNumbers } = require('../syntax/line-number-lists');
 
 const SEMANTIC_EQUIVALENT_NARROW_LINE_THRESHOLD = 128;
 const BODY_ONLY_LOCAL_MAX_BASE_LINES = 12;
@@ -65,20 +71,10 @@ function findEditedFunctionBodyRange(base, lineNumber) {
 }
 
 function expandChangedRangesToLines(document, contentChanges = []) {
-    const lines = new Set();
-    const lineCount = Number.isInteger(document?.lineCount) ? document.lineCount : 0;
-    for (const change of contentChanges || []) {
-        const start = Math.max(0, change?.range?.start?.line ?? 0);
-        const end = Math.max(start, change?.range?.end?.line ?? start);
-        const startLine = Math.max(0, start - 1);
-        const endLine = lineCount > 0
-            ? Math.min(lineCount - 1, end + 1)
-            : end + 1;
-        for (let line = startLine; line <= endLine; line++) {
-            lines.add(line);
-        }
-    }
-    return [...lines].sort((left, right) => left - right);
+    return toSortedUniqueLineNumbers(document?.lineCount || 0, collectContentChangeLineSet(document, contentChanges, {
+        paddingBefore: 1,
+        paddingAfter: 1
+    }));
 }
 
 function shouldEscalateEditedValidation(document, contentChanges = [], baseLines = [], editImpact = null) {
@@ -101,14 +97,11 @@ function shouldEscalateEditedValidation(document, contentChanges = [], baseLines
     }
 
     for (const change of contentChanges) {
-        const startLine = change?.range?.start?.line ?? 0;
-        const endLine = change?.range?.end?.line ?? startLine;
-        const replacedLineSpan = Math.max(1, endLine - startLine + 1);
-        const insertedLineSpan = countTextLines(change?.text || '');
-        if (replacedLineSpan !== insertedLineSpan) {
+        const changeRange = normalizeContentChangeLineRange(change);
+        if (!changeRange || changeRange.replacedLineSpan !== changeRange.insertedLineSpan) {
             return true;
         }
-        if (Math.max(replacedLineSpan, insertedLineSpan) >= 24) {
+        if (Math.max(changeRange.replacedLineSpan, changeRange.insertedLineSpan) >= 24) {
             return true;
         }
     }
@@ -147,16 +140,14 @@ function canUseLocalBodyEditedValidation(rootCtx, baseLineNumbers, editImpact) {
     if (baseLineNumbers.length > BODY_ONLY_LOCAL_MAX_BASE_LINES) return false;
     const lineIndex = rootCtx.lineIndex;
     const rawLines = rootCtx.rawLines || [];
-    const changedLines = new Set();
+    const changedLines = collectEditImpactLineSet(editImpact, rawLines.length);
     for (const range of editImpact?.ranges || []) {
         const startLine = Math.max(0, range?.startLine ?? 0);
         const endLine = Math.max(startLine, range?.endLine ?? startLine);
+        if (startLine >= rawLines.length || endLine >= rawLines.length) return false;
         const replacedLineSpan = Math.max(1, endLine - startLine + 1);
         const insertedLineSpan = countTextLines(range?.changeText || '');
         if (replacedLineSpan !== insertedLineSpan) return false;
-        for (let line = startLine; line <= endLine; line++) {
-            changedLines.add(line);
-        }
     }
     if (!changedLines.size) return false;
     const hasUnbalancedDelimiter = (source, openChar, closeChar) => {
@@ -253,10 +244,11 @@ function createEditImpactResolver(deps) {
         let allChangesAreSafeWhitespaceOnly = true;
         let allChangesStayInsideFunctionBody = true;
         for (const change of contentChanges) {
-            const startLine = Math.max(0, change?.range?.start?.line ?? 0);
-            const endLine = Math.max(startLine, change?.range?.end?.line ?? startLine);
-            const replacedLineSpan = Math.max(1, endLine - startLine + 1);
-            const insertedLineSpan = countTextLines(change?.text || '');
+            const changeRange = normalizeContentChangeLineRange(change);
+            if (!changeRange) {
+                return withDecision(document, contentChanges, { kind: 'structural' });
+            }
+            const { rangeStartLine: startLine, rangeEndLine: endLine, replacedLineSpan, insertedLineSpan } = changeRange;
             if (Math.max(replacedLineSpan, insertedLineSpan) >= 24) {
                 return withDecision(document, contentChanges, { kind: 'structural' });
             }

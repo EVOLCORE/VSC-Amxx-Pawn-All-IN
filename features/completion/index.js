@@ -10,8 +10,12 @@ const {
 } = require('../../core/syntax/preprocessor-directives');
 const { getPawnIncludeCompletionContext } = require('../../core/syntax/includes');
 const {
+    compareCompletionCandidatePriority,
     createCompletionInsertTextCore,
-    normalizeCompletionCallArgumentMode
+    dedupeCompletionCandidates: dedupeCompletionCandidateList,
+    getBestCompletionMatch,
+    normalizeCompletionCallArgumentMode,
+    withCompletionMatchSortPrefix
 } = require('../../core/completion');
 
 const INCLUDE_COMPLETION_TRIGGER_CHARACTERS = ['<', '"', '/', '\\'];
@@ -423,7 +427,7 @@ function createCompletionFeature(deps) {
         for (const candidate of candidates) {
             const forwardDecl = findForwardImplementationDecl(candidate?.d, incDecls);
             const resolvedCandidate = forwardDecl
-                ? { d: forwardDecl, p: candidate.p, i: getCompletionIdentity(forwardDecl) }
+                ? { ...candidate, d: forwardDecl, i: getCompletionIdentity(forwardDecl) }
                 : candidate;
             const data = resolvedCandidate?.d;
             const identity = resolvedCandidate?.i || getCompletionIdentity(data);
@@ -440,29 +444,12 @@ function createCompletionFeature(deps) {
         return result;
     }
 
-    function getCompletionCandidateDedupeKey(candidate) {
-        const data = candidate?.d;
-        if (!data?.name) return '';
-        const identity = candidate?.i || getCompletionIdentity(data);
-        const name = identity?.name || data.name;
-        const category = isFunctionLikeDecl(data) ? 'function' : 'value';
-        return `${category}:${name}`;
-    }
-
     function dedupeCompletionCandidates(candidates) {
         if (!Array.isArray(candidates) || candidates.length <= 1) return candidates;
         const cached = dedupedCandidatesCache.get(candidates);
         if (cached) return cached;
 
-        const seen = new Set();
-        const result = [];
-        for (const candidate of candidates) {
-            const key = getCompletionCandidateDedupeKey(candidate);
-            if (key && seen.has(key)) continue;
-            if (key) seen.add(key);
-            result.push(candidate);
-        }
-        const deduped = result.length === candidates.length ? candidates : result;
+        const deduped = dedupeCompletionCandidateList(candidates);
         dedupedCandidatesCache.set(candidates, deduped);
         return deduped;
     }
@@ -518,6 +505,22 @@ function createCompletionFeature(deps) {
         return declDepth > 1;
     }
 
+    function makeCompletionCandidate(decl, sortPrefix, sourceMeta = null) {
+        const candidate = { d: decl, p: sortPrefix, i: getCompletionIdentity(decl) };
+        if (sourceMeta && Number.isFinite(sourceMeta.sourcePriority)) {
+            candidate.sourcePriority = sourceMeta.sourcePriority;
+            candidate.sourcePath = sourceMeta.sourcePath || '';
+            candidate.resolutionKind = sourceMeta.resolutionKind || '';
+        }
+        return candidate;
+    }
+
+    function getIncludeDeclSourceMeta(ctx, decl) {
+        return typeof ctx?.getIncludeSourceMetaForPath === 'function'
+            ? ctx.getIncludeSourceMetaForPath(decl?.filePath || '')
+            : null;
+    }
+
     function getScopedLocalSortPrefix(localDecl, cursorLine) {
         const declLine = Number.isInteger(localDecl?.lineNumber) ? localDecl.lineNumber : 0;
         const declDepth = Number.isInteger(localDecl?.declDepth) ? localDecl.declDepth : 0;
@@ -539,18 +542,19 @@ function createCompletionFeature(deps) {
         ].join('_');
     }
 
-    function setBestCompletionCandidate(map, decl, sortPrefix) {
+    function setBestCompletionCandidate(map, decl, sortPrefix, sourceMeta = null) {
         if (!decl?.name) return;
+        const candidate = makeCompletionCandidate(decl, sortPrefix, sourceMeta);
         const previous = map.get(decl.name);
-        if (!previous || String(sortPrefix) < String(previous.p)) {
-            map.set(decl.name, { d: decl, p: sortPrefix, i: getCompletionIdentity(decl) });
+        if (!previous || compareCompletionCandidatePriority(candidate, 0, previous, 1) < 0) {
+            map.set(decl.name, candidate);
         }
     }
 
-    function collectFunctionLikeDefineCompletionCandidates(target, decls, sortPrefix) {
+    function collectFunctionLikeDefineCompletionCandidates(target, decls, sortPrefix, getSourceMeta = null) {
         for (const d of decls || []) {
             if (d?.type !== 'define' || !isFunctionLikeDefineDecl(d)) continue;
-            target.push({ d, p: sortPrefix, i: getCompletionIdentity(d) });
+            target.push(makeCompletionCandidate(d, sortPrefix, getSourceMeta?.(d) || null));
         }
     }
 
@@ -558,7 +562,12 @@ function createCompletionFeature(deps) {
         const { parsedDecls, incDecls } = ctx;
         const candidates = [];
         collectFunctionLikeDefineCompletionCandidates(candidates, BUILTIN_DECLS, '006');
-        collectFunctionLikeDefineCompletionCandidates(candidates, incDecls, '005');
+        collectFunctionLikeDefineCompletionCandidates(
+            candidates,
+            incDecls,
+            '005',
+            decl => getIncludeDeclSourceMeta(ctx, decl)
+        );
         collectFunctionLikeDefineCompletionCandidates(candidates, parsedDecls?.globals || [], '004');
         collectFunctionLikeDefineCompletionCandidates(candidates, parsedDecls?.functions || [], '010');
         return candidates;
@@ -569,12 +578,12 @@ function createCompletionFeature(deps) {
         const candidates = getFunctionLikeDefineCompletionCandidates(ctx).slice();
         for (const d of parsedDecls?.functions || []) {
             if (d?.type === 'forward' && isFunctionLikeDecl(d)) {
-                candidates.push({ d, p: '010', i: getCompletionIdentity(d) });
+                candidates.push(makeCompletionCandidate(d, '010'));
             }
         }
         for (const d of incDecls || []) {
             if (d?.type === 'forward' && isFunctionLikeDecl(d)) {
-                candidates.push({ d, p: '011', i: getCompletionIdentity(d) });
+                candidates.push(makeCompletionCandidate(d, '011', getIncludeDeclSourceMeta(ctx, d)));
             }
         }
         return candidates;
@@ -611,15 +620,15 @@ function createCompletionFeature(deps) {
         }
         for (const d of incDecls) {
             if (d.type === 'variable' || d.type === 'define' || d.type === 'enum-item' || d.type === 'enum') {
-                setBestCompletionCandidate(varMap, d, '005');
+                setBestCompletionCandidate(varMap, d, '005', getIncludeDeclSourceMeta(ctx, d));
             }
         }
         globals.forEach(d => setBestCompletionCandidate(varMap, d, '004'));
         locals.forEach(d => setBestCompletionCandidate(varMap, { ...d, isLocal: true }, getScopedLocalSortPrefix(d, line)));
         funcArgs.forEach(d => setBestCompletionCandidate(varMap, d, '003'));
-        varMap.forEach(({ d, p }) => candidates.push({ d, p }));
+        varMap.forEach(candidate => candidates.push(candidate));
 
-        functions.forEach(d => candidates.push({ d, p: '010', i: getCompletionIdentity(d) }));
+        functions.forEach(d => candidates.push(makeCompletionCandidate(d, '010')));
         for (const d of incDecls) {
             if (d.type !== 'variable' && d.type !== 'enum-item' && d.type !== 'enum' && d.type !== 'define') {
                 if (completionIntent === 'call' && d.type === 'forward') continue;
@@ -627,7 +636,7 @@ function createCompletionFeature(deps) {
                     const preferredIncludeFunc = lookup?.getPreferredFunctionMatch?.(d.name)?.data || null;
                     if (d.type !== 'forward' && preferredIncludeFunc && preferredIncludeFunc !== d) continue;
                 }
-                candidates.push({ d, p: '011', i: getCompletionIdentity(d) });
+                candidates.push(makeCompletionCandidate(d, '011', getIncludeDeclSourceMeta(ctx, d)));
             }
         }
         perLineCache.set(cacheKey, candidates);
@@ -649,57 +658,8 @@ function createCompletionFeature(deps) {
         }
     }
 
-    function getCompletionItemFilterText(item) {
-        const label = typeof item?.label === 'string'
-            ? item.label
-            : item?.label?.label;
-        return String(item?.filterText || label || '').toLowerCase();
-    }
-
     function getCompletionDataFilterAliases(data) {
         return getCompletionIdentity(data).normalizedFilterAliases || [getCompletionDataFilterText(data)];
-    }
-
-    function partitionByPrefix(entries, prefix, getText) {
-        const normalizedPrefix = String(prefix || '').toLowerCase();
-        if (!normalizedPrefix) {
-            return {
-                entries,
-                startsWithCount: entries.length,
-                containsCount: entries.length,
-                mode: 'all'
-            };
-        }
-        const startsWith = [];
-        const contains = [];
-        for (const entry of entries) {
-            const text = getText(entry);
-            if (!text) continue;
-            if (text.startsWith(normalizedPrefix)) {
-                startsWith.push(entry);
-            } else if (text.includes(normalizedPrefix)) {
-                contains.push(entry);
-            }
-        }
-        if (startsWith.length) {
-            return {
-                entries: startsWith,
-                startsWithCount: startsWith.length,
-                containsCount: startsWith.length + contains.length,
-                mode: 'startsWith'
-            };
-        }
-        return {
-            entries: contains,
-            startsWithCount: 0,
-            containsCount: contains.length,
-            mode: 'contains'
-        };
-    }
-
-    function filterCompletionItemsForPrefix(items, prefix) {
-        const result = partitionByPrefix(items, prefix, getCompletionItemFilterText);
-        return { ...result, items: result.entries };
     }
 
     function filterCompletionCandidatesForPrefix(candidates, prefix) {
@@ -726,44 +686,52 @@ function createCompletionFeature(deps) {
                 candidates,
                 startsWithCount: candidates.length,
                 containsCount: candidates.length,
+                fuzzyCount: 0,
                 mode: 'all'
             };
         }
 
-        const startsWith = [];
-        const contains = [];
+        const matched = [];
+        let startsWithCount = 0;
+        let containsCount = 0;
+        let fuzzyCount = 0;
         for (const candidate of candidates) {
             const aliases = candidate.i?.normalizedFilterAliases || getCompletionDataFilterAliases(candidate.d);
-            let matchedContains = false;
-            let matchedStartsWith = false;
-            for (const alias of aliases) {
-                if (!alias) continue;
-                if (alias.startsWith(normalizedPrefix)) {
-                    matchedStartsWith = true;
-                    break;
-                }
-                if (!matchedContains && alias.includes(normalizedPrefix)) {
-                    matchedContains = true;
-                }
+            const match = getBestCompletionMatch(aliases, normalizedPrefix);
+            if (!match) continue;
+            if (match.kind === 'exact' || match.kind === 'startsWith') {
+                startsWithCount++;
+            } else if (match.kind === 'contains') {
+                containsCount++;
+            } else if (match.kind === 'fuzzy') {
+                fuzzyCount++;
             }
-            if (matchedStartsWith) {
-                startsWith.push(candidate);
-            } else if (matchedContains) {
-                contains.push(candidate);
-            }
+            matched.push({ candidate, match });
         }
-        const result = startsWith.length
+        const result = startsWithCount
             ? {
-                entries: startsWith,
-                startsWithCount: startsWith.length,
-                containsCount: startsWith.length + contains.length,
+                entries: matched
+                    .filter(({ match }) => match.kind === 'exact' || match.kind === 'startsWith')
+                    .map(({ candidate, match }) => ({
+                        ...candidate,
+                        p: withCompletionMatchSortPrefix(candidate.p, match)
+                    })),
+                startsWithCount,
+                containsCount: startsWithCount + containsCount,
+                fuzzyCount,
                 mode: 'startsWith'
             }
             : {
-                entries: contains,
+                entries: matched
+                    .filter(({ match }) => match.kind === 'contains' || match.kind === 'fuzzy')
+                    .map(({ candidate, match }) => ({
+                        ...candidate,
+                        p: withCompletionMatchSortPrefix(candidate.p, match)
+                    })),
                 startsWithCount: 0,
-                containsCount: contains.length,
-                mode: 'contains'
+                containsCount,
+                fuzzyCount,
+                mode: containsCount ? 'contains' : 'fuzzy'
             };
         return { ...result, candidates: result.entries };
     }
@@ -792,11 +760,12 @@ function createCompletionFeature(deps) {
         return !before || before === '}';
     }
 
-    function makeServiceKeywordItem(definition, sortIndex, replaceRange = null) {
+    function makeServiceKeywordItem(definition, sortIndex, replaceRange = null, match = null) {
         const item = new vscode.CompletionItem(definition.name);
         item.kind = vscode.CompletionItemKind.Keyword;
         item.filterText = definition.name;
-        item.sortText = `000_${String(sortIndex).padStart(3, '0')}_${definition.name}`;
+        const matchSortKey = match?.sortKey ? `${match.sortKey}_` : '';
+        item.sortText = `000_${matchSortKey}${String(sortIndex).padStart(3, '0')}_${definition.name}`;
         item.detail = definition.detail;
         item.label = { label: definition.name, description: definition.detail };
         item.labelDetails = { description: definition.detail };
@@ -906,23 +875,30 @@ function createCompletionFeature(deps) {
     }
 
     function getServiceKeywordCandidatesForPrefix(prefix, hasExistingStartsWith = false) {
-        const normalizedPrefix = String(prefix || '').toLowerCase();
-        if (!normalizedPrefix) {
+        if (!String(prefix || '')) {
             return SERVICE_KEYWORD_COMPLETIONS.map((definition, index) => ({ definition, index }));
         }
 
-        const startsWith = [];
-        const contains = [];
+        const matched = [];
+        let startsWithCount = 0;
+        let containsCount = 0;
         SERVICE_KEYWORD_COMPLETIONS.forEach((definition, index) => {
-            const name = String(definition.name || '').toLowerCase();
-            if (name.startsWith(normalizedPrefix)) {
-                startsWith.push({ definition, index });
-            } else if (name.includes(normalizedPrefix)) {
-                contains.push({ definition, index });
+            const match = getBestCompletionMatch(definition.name, prefix);
+            if (!match) return;
+            if (match.kind === 'exact' || match.kind === 'startsWith') {
+                startsWithCount++;
+            } else if (match.kind === 'contains') {
+                containsCount++;
             }
+            matched.push({ definition, index, match });
         });
-        if (hasExistingStartsWith || startsWith.length) return startsWith;
-        return contains;
+        if (hasExistingStartsWith || startsWithCount) {
+            return matched.filter(({ match }) => match.kind === 'exact' || match.kind === 'startsWith');
+        }
+        return matched.filter(({ match }) =>
+            match.kind === 'contains' ||
+            (containsCount === 0 && match.kind === 'fuzzy')
+        );
     }
 
     function getCompletionPositionCacheKey(document, position, replaceRange = null) {
@@ -993,7 +969,7 @@ function createCompletionFeature(deps) {
             return controlContext;
         };
 
-        candidates.forEach(({ definition, index }) => {
+        candidates.forEach(({ definition, index, match }) => {
             let allowed = false;
             switch (definition.context) {
                 case 'statement':
@@ -1018,7 +994,7 @@ function createCompletionFeature(deps) {
                     allowed = false;
             }
             if (allowed) {
-                items.push(makeServiceKeywordItem(definition, index, replaceRange));
+                items.push(makeServiceKeywordItem(definition, index, replaceRange, match));
             }
         });
     }
@@ -1213,7 +1189,7 @@ function createCompletionFeature(deps) {
                 logCompletion(
                     `items=${items.length}/${items.length} candidates=${dedupedCompletionCandidates.length}/${filteredCandidates.candidates.length}/${intentCandidates.length}/${candidates.length} ` +
                     `prefix="${prefix}" mode=${filteredCandidates.mode} candidateMode=${filteredCandidates.mode} ` +
-                    `startsWith=${filteredCandidates.startsWithCount} contains=${filteredCandidates.containsCount} ` +
+                    `startsWith=${filteredCandidates.startsWithCount} contains=${filteredCandidates.containsCount} fuzzy=${filteredCandidates.fuzzyCount || 0} ` +
                     `file=${fileName} pos=${line}:${character} ` +
                     `callInsert=${completionItemOptions.callInsertMode} callArgs=${completionItemOptions.callArgumentMode} ` +
                     `globals=${globals.length} locals=${locals.length} args=${funcArgs.length} ` +

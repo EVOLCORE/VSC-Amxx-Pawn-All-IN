@@ -1,4 +1,5 @@
 const { isPawnIdentifierContinueChar } = require('./identifiers');
+const { parsePragmaDirectiveLine } = require('./preprocessor-directives');
 const { isPreprocessorDirectiveLine } = require('./preprocessor-lines');
 const { findPawnLineTrimEndIndex } = require('./whitespace');
 
@@ -475,9 +476,9 @@ function createTextSyntaxDiagnosticsCore(deps) {
     }
 
     function parsePragmaPackValue(line) {
-        const match = String(line || '').match(/^\s*#\s*pragma\s+pack\b([\s\S]*)$/i);
-        if (!match) return null;
-        const value = String(match[1] || '').trim().toLowerCase();
+        const pragma = parsePragmaDirectiveLine(line);
+        if (pragma?.name !== 'pack') return null;
+        const value = String(pragma.value || '').trim().toLowerCase();
         if (!value) return null;
         if (value === 'true' || value === 'on') return true;
         if (value === 'false' || value === 'off') return false;

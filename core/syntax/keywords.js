@@ -1,4 +1,8 @@
-const { isPawnIdentifierBoundaryChar } = require('./identifiers');
+const {
+    isPawnIdentifierBoundaryChar,
+    isPawnIdentifierContinueCode,
+    isPawnIdentifierStartCode
+} = require('./identifiers');
 
 const PAWN_DECLARATION_KEYWORDS = Object.freeze([
     'new',
@@ -109,6 +113,32 @@ const PAWN_DECLARATION_OR_CONTROL_KEYWORD_SET = new Set(PAWN_DECLARATION_OR_CONT
 const PAWN_STRUCTURAL_KEYWORD_SET = new Set(PAWN_STRUCTURAL_KEYWORDS);
 const PAWN_NON_FUNCTION_HEADER_KEYWORD_SET = new Set(PAWN_NON_FUNCTION_HEADER_KEYWORDS);
 const PAWN_NON_FUNCTION_NAME_KEYWORD_SET = new Set(PAWN_NON_FUNCTION_NAME_KEYWORDS);
+const keywordSetCache = new WeakMap();
+
+function getKeywordSetForList(keywords = [], options = {}) {
+    if (keywords instanceof Set) return keywords;
+    if (!Array.isArray(keywords)) return new Set();
+    const caseInsensitive = options.caseInsensitive === true;
+    let cached = keywordSetCache.get(keywords);
+    if (!cached) {
+        cached = { exact: new Set(keywords), lower: null };
+        keywordSetCache.set(keywords, cached);
+    }
+    if (!caseInsensitive) return cached.exact;
+    if (!cached.lower) {
+        cached.lower = new Set(keywords.map(keyword => String(keyword || '').toLowerCase()));
+    }
+    return cached.lower;
+}
+
+function readKeywordCandidateAt(source = '', startIndex = 0) {
+    const text = String(source || '');
+    const start = Math.max(0, startIndex | 0);
+    if (start >= text.length || !isPawnIdentifierStartCode(text.charCodeAt(start))) return '';
+    let end = start + 1;
+    while (end < text.length && isPawnIdentifierContinueCode(text.charCodeAt(end))) end++;
+    return text.slice(start, end);
+}
 
 function startsWithPawnKeyword(source = '', startIndex = 0, keyword = '', options = {}) {
     const text = String(source || '');
@@ -123,10 +153,10 @@ function startsWithPawnKeyword(source = '', startIndex = 0, keyword = '', option
 }
 
 function startsWithAnyPawnKeyword(source = '', startIndex = 0, keywords = [], options = {}) {
-    for (const keyword of keywords || []) {
-        if (startsWithPawnKeyword(source, startIndex, keyword, options)) return true;
-    }
-    return false;
+    const candidate = readKeywordCandidateAt(source, startIndex);
+    if (!candidate) return false;
+    const lookupName = options.caseInsensitive ? candidate.toLowerCase() : candidate;
+    return getKeywordSetForList(keywords, options).has(lookupName);
 }
 
 function startsWithDeclarationKeyword(source = '', startIndex = 0, options = {}) {

@@ -21,7 +21,10 @@ function createIncludeCacheCodec({ normalizeFsPath, getDefineStateKey, getDefine
         'singleStatementBodyLine',
         'modifiers',
         'deprecated',
-        'deprecatedMessage'
+        'deprecatedMessage',
+        'sourcePriority',
+        'includeSourcePath',
+        'includeResolutionKind'
     ];
     const DEFINE_DECL_COMPACT_KEYS = [
         'name',
@@ -33,7 +36,7 @@ function createIncludeCacheCodec({ normalizeFsPath, getDefineStateKey, getDefine
         'deprecated',
         'deprecatedMessage'
     ];
-    const INCLUDE_DECL_COMPACT_SCHEMA_VERSION = 'v3-deprecated-pragmas';
+    const INCLUDE_DECL_COMPACT_SCHEMA_VERSION = 'v4-include-source-priority';
     const INCLUDE_DECL_COMPACT_SIGNATURE = `${INCLUDE_DECL_COMPACT_SCHEMA_VERSION}|${INCLUDE_DECL_COMPACT_KEYS.join('|')}`;
 
     function serializeDependencyStamps(dependencyStamps) {
@@ -235,6 +238,15 @@ function createIncludeCacheCodec({ normalizeFsPath, getDefineStateKey, getDefine
                 entry.rationalState.digits | 0
             ];
         }
+        if (Number.isFinite(entry.sourcePriority)) {
+            serialized[5] = entry.sourcePriority;
+        }
+        if (entry.sourcePath) {
+            serialized[6] = String(entry.sourcePath || '');
+        }
+        if (entry.resolutionKind) {
+            serialized[7] = String(entry.resolutionKind || '');
+        }
         return serialized;
     }
 
@@ -297,7 +309,10 @@ function createIncludeCacheCodec({ normalizeFsPath, getDefineStateKey, getDefine
                 filePath,
                 depth: Number.isInteger(serialized[3]) ? serialized[3] : 0,
                 rationalState: reviveRationalState(serialized[4]),
-                defineDecls: defineRef?.defineDecls || []
+                defineDecls: defineRef?.defineDecls || [],
+                sourcePriority: Number.isFinite(serialized[5]) ? serialized[5] : undefined,
+                sourcePath: serialized[6] ? String(serialized[6] || '') : '',
+                resolutionKind: serialized[7] ? String(serialized[7] || '') : ''
             };
             return attachLazyDefineStateKey(
                 entry,
@@ -311,7 +326,10 @@ function createIncludeCacheCodec({ normalizeFsPath, getDefineStateKey, getDefine
             defineStateKey: String(serialized[2] || ''),
             depth: Number.isInteger(serialized[3]) ? serialized[3] : 0,
             defineDecls: reviveDefineDecls(serialized[4] || []),
-            rationalState: reviveRationalState(serialized[5])
+            rationalState: reviveRationalState(serialized[5]),
+            sourcePriority: Number.isFinite(serialized[6]) ? serialized[6] : undefined,
+            sourcePath: serialized[7] ? String(serialized[7] || '') : '',
+            resolutionKind: serialized[8] ? String(serialized[8] || '') : ''
         };
     }
 

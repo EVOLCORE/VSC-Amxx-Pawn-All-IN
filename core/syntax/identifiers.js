@@ -32,16 +32,22 @@ function containsPawnIdentifierStartChar(source = '') {
 function readPawnIdentifierAt(source = '', index = 0, options = {}) {
     const text = String(source || '');
     const start = Math.max(0, Number.isInteger(index) ? index : 0);
-    const isIdentifierStartChar = typeof options.isIdentifierStartChar === 'function'
+    const customStart = typeof options.isIdentifierStartChar === 'function'
         ? options.isIdentifierStartChar
-        : isPawnIdentifierStartChar;
-    const isIdentifierContinueChar = typeof options.isIdentifierContinueChar === 'function'
+        : null;
+    const customContinue = typeof options.isIdentifierContinueChar === 'function'
         ? options.isIdentifierContinueChar
-        : isPawnIdentifierContinueChar;
-    if (!isIdentifierStartChar(text[start] || '')) return null;
-
+        : null;
     let end = start + 1;
-    while (end < text.length && isIdentifierContinueChar(text[end] || '')) end++;
+    if (!customStart && !customContinue) {
+        if (start >= text.length || !isPawnIdentifierStartCode(text.charCodeAt(start))) return null;
+        while (end < text.length && isPawnIdentifierContinueCode(text.charCodeAt(end))) end++;
+    } else {
+        const isIdentifierStartChar = customStart || isPawnIdentifierStartChar;
+        const isIdentifierContinueChar = customContinue || isPawnIdentifierContinueChar;
+        if (!isIdentifierStartChar(text[start] || '')) return null;
+        while (end < text.length && isIdentifierContinueChar(text[end] || '')) end++;
+    }
 
     const name = text.slice(start, end);
     return {
@@ -51,6 +57,36 @@ function readPawnIdentifierAt(source = '', index = 0, options = {}) {
         value: name,
         start,
         end
+    };
+}
+
+function createPawnIdentifierReader(options = {}) {
+    const isIdentifierStartChar = typeof options.isIdentifierStartChar === 'function'
+        ? options.isIdentifierStartChar
+        : null;
+    const isIdentifierContinueChar = typeof options.isIdentifierContinueChar === 'function'
+        ? options.isIdentifierContinueChar
+        : null;
+    if (!isIdentifierStartChar && !isIdentifierContinueChar) {
+        return readPawnIdentifierAt;
+    }
+    const canStart = isIdentifierStartChar || isPawnIdentifierStartChar;
+    const canContinue = isIdentifierContinueChar || isPawnIdentifierContinueChar;
+    return (source = '', index = 0) => {
+        const text = String(source || '');
+        const start = Math.max(0, Number.isInteger(index) ? index : 0);
+        if (!canStart(text[start] || '')) return null;
+        let end = start + 1;
+        while (end < text.length && canContinue(text[end] || '')) end++;
+        const name = text.slice(start, end);
+        return {
+            type: 'identifier',
+            name,
+            text: name,
+            value: name,
+            start,
+            end
+        };
     };
 }
 
@@ -70,6 +106,7 @@ module.exports = {
     PAWN_IDENTIFIER_RE,
     PAWN_IDENTIFIER_SOURCE,
     containsPawnIdentifierStartChar,
+    createPawnIdentifierReader,
     getPawnIdentifierName,
     isPawnIdentifierBoundaryChar,
     isPawnIdentifierContinueChar,

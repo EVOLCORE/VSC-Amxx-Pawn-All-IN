@@ -28,6 +28,10 @@
     "editorHoverWidget.border": "#45483B",
     "editorHoverWidget.foreground": "#F2F2E8"
   },
+  "semanticHighlighting": true,
+  "semanticTokenColors": {
+    "number": "#AE81FF"
+  },
   "tokenColors": [
     {
       "scope": [
@@ -268,7 +272,8 @@
     },
     {
       "scope": [
-        "variable.other.pawn"
+        "variable.other.pawn",
+        "variable.other.preprocessor.pawn"
       ],
       "settings": {
         "foreground": "#F2F2E8"

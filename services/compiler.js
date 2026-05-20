@@ -5,6 +5,10 @@ const { spawn } = require('child_process');
 const { createCompilerDiagnosticService } = require('./compiler-diagnostics');
 const { createRuntimeLocalization } = require('./localization');
 const { createUtilityCore } = require('../core/utils');
+const {
+    collectCompilerIncludeDirectories,
+    defaultNormalizeFsPath
+} = require('../core/include-search-paths');
 
 const EXTENSION_CONFIG_NS = 'amxxPawnAllIn';
 const COMPILE_COMMAND_ID = 'amxxPawnAllIn.compileCurrentFile';
@@ -43,6 +47,8 @@ const compilerSettings = {
     compilerOutputDirectory: 'compiled',
     compilerOutputDirectoryBase: 'project-root-if-available',
     compilerOptions: [],
+    globalIncludePaths: [],
+    projectLocalIncludePaths: ['include'],
     compileRevealTarget: 'all-issues-priority',
     compileStartToastMode: 'never',
     compileResultToastMode: 'issues',
@@ -51,8 +57,7 @@ const compilerSettings = {
 };
 
 function normalizeCompilerFsPath(filePath) {
-    if (!filePath) return '';
-    return path.resolve(filePath).replace(/\\/g, '/').toLowerCase();
+    return defaultNormalizeFsPath(path, filePath);
 }
 
 function hasConfiguredPawnSourceExtension(filePath, extensions = compilerSettings.pawnFileExtensions) {
@@ -86,6 +91,15 @@ function refreshCompilerSettings() {
     compilerSettings.compilerOptions = Array.isArray(config.get('compilerOptions', []))
         ? config.get('compilerOptions', [])
         : [];
+    const rawGlobalIncludePaths = config.get('globalIncludePaths', []);
+    compilerSettings.globalIncludePaths = Array.isArray(rawGlobalIncludePaths)
+        ? rawGlobalIncludePaths
+        : [];
+    const rawProjectLocalIncludePaths = config.get('projectLocalIncludePaths', ['include']);
+    compilerSettings.projectLocalIncludePaths =
+        Array.isArray(rawProjectLocalIncludePaths) && rawProjectLocalIncludePaths.length
+            ? rawProjectLocalIncludePaths
+            : ['include'];
     compilerSettings.compileRevealTarget = resolveCompileRevealTarget(config);
     compilerSettings.compileStartToastMode = resolveCompileStartToastMode(config);
     compilerSettings.compileResultToastMode = resolveCompileResultToastMode(config);
@@ -552,10 +566,122 @@ function resolveCompileOutputDirectoryForCompiler(sourceFilePath, compilerPath =
 function getCompilerOptionArgs() {
     const rawOptions = compilerSettings.compilerOptions;
     if (!Array.isArray(rawOptions)) return [];
-    return rawOptions
-        .map(option => String(option || '').trim())
-        .filter(Boolean)
-        .filter(option => !/^-o/i.test(option));
+    const result = [];
+    for (let index = 0; index < rawOptions.length; index++) {
+        const option = String(rawOptions[index] || '').trim();
+        if (!option) continue;
+        if (/^-o$/i.test(option)) {
+            index++;
+            continue;
+        }
+        if (/^-o/i.test(option)) continue;
+        result.push(option);
+    }
+    return result;
+}
+
+function collectConfiguredCompilerIncludeDirectories(sourceFilePath = '') {
+    return collectCompilerIncludeDirectories({
+        vscode,
+        fs,
+        path,
+        sourceFilePath,
+        projectLocalIncludePaths: compilerSettings.projectLocalIncludePaths,
+        globalIncludePaths: compilerSettings.globalIncludePaths,
+        normalizeFsPath: normalizeCompilerFsPath
+    });
+}
+
+function stripWrappingQuotes(value = '') {
+    const text = String(value || '').trim();
+    if (text.length >= 2) {
+        const first = text[0];
+        const last = text[text.length - 1];
+        if ((first === '"' && last === '"') || (first === '\'' && last === '\'')) {
+            return text.slice(1, -1);
+        }
+    }
+    return text;
+}
+
+function resolveCompilerOptionIncludeDirectory(rawValue = '', sourceFilePath = '') {
+    const value = stripWrappingQuotes(rawValue);
+    if (!value) return '';
+    const baseDir = sourceFilePath ? path.dirname(sourceFilePath) : process.cwd();
+    const candidate = path.isAbsolute(value)
+        ? value
+        : path.resolve(baseDir, value);
+    try {
+        return fs.statSync(candidate).isDirectory()
+            ? path.resolve(candidate)
+            : '';
+    } catch {
+        return '';
+    }
+}
+
+function getCompilerOptionIncludeValue(option = '', nextOption = '') {
+    const text = String(option || '').trim();
+    if (!text) return null;
+    if (/^-i$/i.test(text)) {
+        return { separate: true, value: String(nextOption || '').trim() };
+    }
+    const match = text.match(/^-i(.+)$/i);
+    if (!match) return null;
+    return { separate: false, value: String(match[1] || '').trim() };
+}
+
+function filterDuplicateCompilerIncludeOptions(options = [], managedIncludeDirectories = [], sourceFilePath = '') {
+    const seenIncludeDirectories = new Set(
+        (managedIncludeDirectories || [])
+            .map(normalizeCompilerFsPath)
+            .filter(Boolean)
+    );
+    const result = [];
+    for (let index = 0; index < options.length; index++) {
+        const option = options[index];
+        const includeValue = getCompilerOptionIncludeValue(option, options[index + 1]);
+        if (!includeValue) {
+            result.push(option);
+            continue;
+        }
+
+        const resolvedDirectory = resolveCompilerOptionIncludeDirectory(includeValue.value, sourceFilePath);
+        const normalizedDirectory = normalizeCompilerFsPath(resolvedDirectory);
+        if (normalizedDirectory && seenIncludeDirectories.has(normalizedDirectory)) {
+            if (includeValue.separate) index++;
+            continue;
+        }
+        if (normalizedDirectory) {
+            seenIncludeDirectories.add(normalizedDirectory);
+        }
+        result.push(option);
+        if (includeValue.separate && index + 1 < options.length) {
+            result.push(options[index + 1]);
+            index++;
+        }
+    }
+    return result;
+}
+
+function getCompilerIncludePathArgs(sourceFilePath = '') {
+    return collectConfiguredCompilerIncludeDirectories(sourceFilePath)
+        .map(includeDir => `-i${includeDir}`);
+}
+
+function getCompilerArgs(compileContext) {
+    const includeDirectories = collectConfiguredCompilerIncludeDirectories(compileContext.sourceFilePath);
+    const compilerOptions = filterDuplicateCompilerIncludeOptions(
+        getCompilerOptionArgs(),
+        includeDirectories,
+        compileContext.sourceFilePath
+    );
+    return [
+        ...includeDirectories.map(includeDir => `-i${includeDir}`),
+        ...compilerOptions,
+        compileContext.compileFilePath,
+        `-o${compileContext.compileOutputFilePath}`
+    ];
 }
 
 function ensureDirectoryExists(dirPath) {
@@ -686,11 +812,7 @@ function registerCompilerIntegration(context) {
                 const compileContext = createCompileContext(document, compilerPath);
 
                 const compileCwd = path.dirname(document.fileName);
-                const compilerArgs = [
-                    ...getCompilerOptionArgs(),
-                    compileContext.compileFilePath,
-                    `-o${compileContext.compileOutputFilePath}`
-                ];
+                const compilerArgs = getCompilerArgs(compileContext);
 
                 await new Promise(resolve => {
                     const child = spawn(compilerPath, compilerArgs, {
@@ -789,6 +911,10 @@ module.exports = {
         collectCompilerDiagnostics,
         parseCompilerIssueLine,
         decodeCompilerChunk,
+        collectConfiguredCompilerIncludeDirectories,
+        filterDuplicateCompilerIncludeOptions,
+        getCompilerArgs,
+        getCompilerIncludePathArgs,
         hasConfiguredPawnSourceExtension,
         isCompilablePawnDocument,
         normalizeExtensionList

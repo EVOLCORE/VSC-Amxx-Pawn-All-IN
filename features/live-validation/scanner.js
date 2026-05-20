@@ -15,6 +15,14 @@ const {
     LIVE_VALIDATION_DIAGNOSTIC_ENGINE_SIGNATURE
 } = require('./diagnostic-engine-signature');
 const { createScannerLineState } = require('./scanner-state');
+const {
+    createLiveDiagnosticLineFilter,
+    getDiagnosticLineSpan,
+    getDiagnosticStartLine,
+    getSingleLineDiagnosticRange,
+    isSingleLineDiagnostic
+} = require('./diagnostic-line-filter');
+const { toSortedUniqueLineNumbers } = require('../../core/syntax/line-number-lists');
 const { isPreprocessorDirectiveLine: isPreprocessorDirectiveTextLine } = require('../../core/syntax/preprocessor-lines');
 
 const {
@@ -58,15 +66,17 @@ function createLiveValidationScanner(deps) {
     const EMPTY_DIAGNOSTICS = [];
     const getLiveValidationIssueMode = () =>
         normalizeLiveValidationIssueMode(settingsService?.getLiveValidationIssueMode?.());
-    const shouldKeepDiagnostic = diagnostic =>
-        areLiveValidationWarningsEnabled(getLiveValidationIssueMode()) ||
-        diagnostic?.severity === vscode?.DiagnosticSeverity?.Error ||
-        diagnostic?.severity == null;
 
     function collectLiveValidationDiagnostics(document, options = {}) {
         const requestedSpecificLines = Array.isArray(options.lines) && options.lines.length;
         const isFullScanRequest = !requestedSpecificLines;
-        const shouldPreparseUsageLocals = areLiveValidationWarningsEnabled(getLiveValidationIssueMode());
+        const issueMode = getLiveValidationIssueMode();
+        const warningsEnabledForScan = areLiveValidationWarningsEnabled(issueMode);
+        const shouldKeepDiagnostic = diagnostic =>
+            warningsEnabledForScan ||
+            diagnostic?.severity === vscode?.DiagnosticSeverity?.Error ||
+            diagnostic?.severity == null;
+        const shouldPreparseUsageLocals = warningsEnabledForScan;
         const shouldPreparseRootLocals = shouldPreparseUsageLocals || isFullScanRequest;
         const contextSession = createPawnDocumentContextSession(document, {
             includeDecls: true,
@@ -164,9 +174,8 @@ function createLiveValidationScanner(deps) {
         const diagnosticOverlapsInvalidCodeCharacter = diagnostic => {
             if (!diagnostic?.range?.start || !diagnostic?.range?.end) return false;
             if (isInvalidCodeCharacterDiagnostic(diagnostic)) return false;
-            const startLine = diagnostic.range.start.line;
-            const endLine = diagnostic.range.end.line;
-            if (startLine !== endLine) return false;
+            if (!isSingleLineDiagnostic(diagnostic)) return false;
+            const { startLine } = getDiagnosticLineSpan(diagnostic);
             const invalidRanges = invalidCodeCharacterRangesByLine.get(startLine);
             if (!invalidRanges?.length) return false;
             return invalidRanges.some(range =>
@@ -179,23 +188,25 @@ function createLiveValidationScanner(deps) {
             );
         };
         const rememberInvalidCodeCharacterRange = diagnostic => {
-            const range = diagnostic?.range;
-            if (!range?.start || !range?.end || range.start.line !== range.end.line) return;
-            const lineRanges = invalidCodeCharacterRangesByLine.get(range.start.line) || [];
+            const range = getSingleLineDiagnosticRange(diagnostic);
+            if (!range) return;
+            const lineNumber = getDiagnosticStartLine(diagnostic);
+            const lineRanges = invalidCodeCharacterRangesByLine.get(lineNumber) || [];
             lineRanges.push({
                 start: range.start.character,
                 end: Math.max(range.start.character + 1, range.end.character)
             });
-            invalidCodeCharacterRangesByLine.set(range.start.line, lineRanges);
+            invalidCodeCharacterRangesByLine.set(lineNumber, lineRanges);
         };
         const removeDiagnosticsOverlappingInvalidCodeCharacter = invalidDiagnostic => {
-            const range = invalidDiagnostic?.range;
-            if (!range?.start || !range?.end || range.start.line !== range.end.line) return;
+            const range = getSingleLineDiagnosticRange(invalidDiagnostic);
+            if (!range) return;
+            const lineNumber = getDiagnosticStartLine(invalidDiagnostic);
             for (let index = diagnostics.length - 1; index >= 0; index--) {
                 const diagnostic = diagnostics[index];
                 if (isInvalidCodeCharacterDiagnostic(diagnostic)) continue;
-                if (diagnostic?.range?.start?.line !== range.start.line) continue;
-                if (diagnostic?.range?.end?.line !== range.end.line) continue;
+                if (getDiagnosticStartLine(diagnostic) !== lineNumber) continue;
+                if (!isSingleLineDiagnostic(diagnostic)) continue;
                 if (!rangesOverlap(
                     diagnostic.range.start.character,
                     diagnostic.range.end.character,
@@ -264,16 +275,12 @@ function createLiveValidationScanner(deps) {
         const lineNumbers = (requestedSpecificLines || hasInactiveStockLines) ? new Set() : null;
         let orderedLineNumbers = requestedSpecificLines || hasInactiveStockLines ? [] : null;
         if (requestedSpecificLines) {
-            for (const line of options.lines) {
-                if (!Number.isInteger(line)) continue;
-                if (line < 0 || line >= document.lineCount) continue;
+            for (const line of toSortedUniqueLineNumbers(document.lineCount, options.lines)) {
                 if (inactiveStockLines?.has(line)) continue;
                 if (isInactivePreprocessorLine(line)) continue;
-                if (lineNumbers.has(line)) continue;
                 lineNumbers.add(line);
                 orderedLineNumbers.push(line);
             }
-            orderedLineNumbers.sort((left, right) => left - right);
         } else if (hasInactiveStockLines) {
             for (let line = 0; line < document.lineCount; line++) {
                 if (inactiveStockLines.has(line)) continue;
@@ -284,11 +291,7 @@ function createLiveValidationScanner(deps) {
         }
         const isFullScan = !requestedSpecificLines;
         const focusLineNumbers = Array.isArray(options.focusLines) && options.focusLines.length
-            ? [...new Set(options.focusLines.filter(line =>
-                Number.isInteger(line) &&
-                line >= 0 &&
-                line < document.lineCount
-            ))].sort((left, right) => left - right)
+            ? toSortedUniqueLineNumbers(document.lineCount, options.focusLines)
             : (orderedLineNumbers || EMPTY_DIAGNOSTICS);
         const targetLineCount = orderedLineNumbers ? orderedLineNumbers.length : document.lineCount;
         const shouldPreparseLocals = isFullScan || targetLineCount >= 320;
@@ -298,8 +301,8 @@ function createLiveValidationScanner(deps) {
             scanStats.analysisCacheCount = 0;
             scanStats.indexedLineCount = 0;
             scanStats.callLineCount = 0;
-            scanStats.issueMode = getLiveValidationIssueMode();
-            scanStats.warningsEnabled = areLiveValidationWarningsEnabled(getLiveValidationIssueMode());
+            scanStats.issueMode = issueMode;
+            scanStats.warningsEnabled = warningsEnabledForScan;
             scanStats.usageDiagnostics = 0;
             scanStats.usageDiagnosticsKept = 0;
             scanStats.candidateDiagnosticCacheHits = 0;
@@ -310,7 +313,7 @@ function createLiveValidationScanner(deps) {
         const validationCacheSignature = [
             LIVE_VALIDATION_DIAGNOSTIC_ENGINE_SIGNATURE,
             `stock:${settingsService?.getUnusedStockValidationMode?.() || 'reachable-only'}`,
-            `issues:${getLiveValidationIssueMode()}`,
+            `issues:${issueMode}`,
             `include:${settingsService?.getIncludeValidationMode?.() || 'balanced'}`,
             `callback:${settingsService?.getCallbackSignatureMode?.() || 'strict'}`,
             `locals:${shouldPreparseLocals ? 1 : 0}`
@@ -384,7 +387,7 @@ function createLiveValidationScanner(deps) {
                 if (invalidCodeCharacterDiagnostics.length) {
                     state.diagnostics = invalidCodeCharacterDiagnostics;
                     for (const diagnostic of invalidCodeCharacterDiagnostics) {
-                        const startCharacter = diagnostic?.range?.start?.line === lineNumber
+                        const startCharacter = getDiagnosticStartLine(diagnostic) === lineNumber
                             ? diagnostic.range.start.character
                             : -1;
                         if (
@@ -479,7 +482,7 @@ function createLiveValidationScanner(deps) {
                 return sequentialScanContextState.ctx;
             }
             const cachedCtx = getCachedLineContext(lineNumber);
-            if (!isFullScan && cachedCtx !== undefined) {
+            if (cachedCtx !== undefined) {
                 return cachedCtx;
             }
             const ctx = getDocumentContextForScan(lineNumber, {
@@ -754,13 +757,19 @@ function createLiveValidationScanner(deps) {
         const delimiterState = getDelimiterBalanceState();
         const delimiterTaintedLines = delimiterState?.taintedLines || null;
         const isDelimiterTaintedLine = lineNumber => !!delimiterTaintedLines?.[lineNumber];
+        const diagnosticLineFilter = createLiveDiagnosticLineFilter({
+            isInactivePreprocessorLine,
+            isDelimiterTaintedLine
+        });
+        const shouldSkipDiagnosticLine = diagnosticLineFilter.shouldSkipDiagnostic;
+        const shouldSkipLine = diagnosticLineFilter.shouldSkipLine;
         const delimiterDiagnostics = lineNumbers
             ? (delimiterState.diagnostics || EMPTY_DIAGNOSTICS).filter(diagnostic =>
-                lineNumbers.has(diagnostic?.range?.start?.line)
+                lineNumbers.has(getDiagnosticStartLine(diagnostic))
             )
             : (delimiterState.diagnostics || EMPTY_DIAGNOSTICS);
         for (const diagnostic of delimiterDiagnostics) {
-            if (isInactivePreprocessorLine(diagnostic?.range?.start?.line)) continue;
+            if (shouldSkipDiagnosticLine(diagnostic, { tainted: false })) continue;
             pushDiagnostic(diagnostic);
         }
         let hasUnresolvedRequiredIncludes = (rootCtx.preprocessedState?.unresolvedIncludeEntries || [])
@@ -772,34 +781,31 @@ function createLiveValidationScanner(deps) {
             docLength,
             preprocessorTargetLineNumbers
         )) {
-            if (isInactivePreprocessorLine(diagnostic.range.start.line)) continue;
-            if (isDelimiterTaintedLine(diagnostic.range.start.line)) continue;
+            if (shouldSkipDiagnosticLine(diagnostic)) continue;
             if (diagnostic.code === LIVE_UNRESOLVED_INCLUDE_DIAGNOSTIC_CODE) {
                 hasUnresolvedRequiredIncludes = true;
             }
             pushDiagnostic(diagnostic);
         }
-        const usageDiagnostics = hasUnresolvedRequiredIncludes
+        const usageDiagnostics = hasUnresolvedRequiredIncludes || !warningsEnabledForScan
             ? EMPTY_DIAGNOSTICS
             : collectUsageLiveDiagnostics(document, rootCtx, docLength);
         if (scanStats) {
             scanStats.usageDiagnostics = usageDiagnostics.length;
         }
         for (const diagnostic of usageDiagnostics) {
-            if (isInactivePreprocessorLine(diagnostic.range.start.line)) continue;
-            if (isDelimiterTaintedLine(diagnostic.range.start.line)) continue;
+            if (shouldSkipDiagnosticLine(diagnostic)) continue;
             const before = diagnostics.length;
             pushDiagnostic(diagnostic);
             if (scanStats && diagnostics.length > before) {
                 scanStats.usageDiagnosticsKept++;
             }
         }
-        if (!hasUnresolvedRequiredIncludes) {
+        if (!hasUnresolvedRequiredIncludes && warningsEnabledForScan) {
             for (const diagnostic of collectDynamicUsageLiveDiagnostics(document, rootCtx, docLength, {
                 inactiveStockLines: documentScanPlan.inactiveStockLines || null
             })) {
-                if (isInactivePreprocessorLine(diagnostic.range.start.line)) continue;
-                if (isDelimiterTaintedLine(diagnostic.range.start.line)) continue;
+                if (shouldSkipDiagnosticLine(diagnostic)) continue;
                 pushDiagnostic(diagnostic);
             }
         }
@@ -815,8 +821,7 @@ function createLiveValidationScanner(deps) {
             })(),
             targetLineNumbers: lineNumbers
         })) {
-            if (isInactivePreprocessorLine(diagnostic.range.start.line)) continue;
-            if (isDelimiterTaintedLine(diagnostic.range.start.line)) continue;
+            if (shouldSkipDiagnosticLine(diagnostic)) continue;
             pushDiagnostic(diagnostic);
         }
 
@@ -834,12 +839,14 @@ function createLiveValidationScanner(deps) {
         } = diagnosticLinePlan;
 
         for (const lineNumber of combinedDiagnosticLineNumbers) {
-            if (isInactivePreprocessorLine(lineNumber)) continue;
-            const invalidCodeCharacterState = collectInvalidCodeCharacterDiagnosticsForLineNumber(lineNumber);
-            const lineHasInvalidCodeCharacters = invalidCodeCharacterState.diagnostics.length > 0;
-            const firstInvalidCodeCharacter = invalidCodeCharacterState.firstCharacter;
+            if (shouldSkipLine(lineNumber, { tainted: false })) continue;
+            const invalidCodeCharacterState = invalidCodeCharacterCandidateLineFlags[lineNumber]
+                ? collectInvalidCodeCharacterDiagnosticsForLineNumber(lineNumber)
+                : null;
+            const lineHasInvalidCodeCharacters = !!invalidCodeCharacterState?.diagnostics.length;
+            const firstInvalidCodeCharacter = invalidCodeCharacterState?.firstCharacter ?? -1;
             if (hasUnresolvedRequiredIncludes) continue;
-            if (isDelimiterTaintedLine(lineNumber)) continue;
+            if (shouldSkipLine(lineNumber, { inactive: false })) continue;
             if (isBackslashContinuationLine(lineNumber)) continue;
             if (isEnumMemberLine(lineNumber)) continue;
             if (documentScanPlan.functionHeaderLines?.has(lineNumber)) continue;
@@ -847,8 +854,8 @@ function createLiveValidationScanner(deps) {
                 for (const diagnostic of collectCandidateDiagnosticsForLine(lineNumber)) {
                     if (
                         lineHasInvalidCodeCharacters &&
-                        diagnostic?.range?.start?.line === lineNumber &&
-                        diagnostic?.range?.end?.line === lineNumber &&
+                        getDiagnosticStartLine(diagnostic) === lineNumber &&
+                        isSingleLineDiagnostic(diagnostic) &&
                         diagnostic.range.end.character >= firstInvalidCodeCharacter
                     ) {
                         continue;
@@ -866,7 +873,7 @@ function createLiveValidationScanner(deps) {
         if (!hasUnresolvedRequiredIncludes && !isFullScan) {
             const touchedFunctions = new Set();
             for (const lineNumber of focusLineNumbers) {
-                if (isDelimiterTaintedLine(lineNumber)) continue;
+                if (shouldSkipLine(lineNumber, { inactive: false })) continue;
                 const { text: lineText } = getValidationLineSnapshot(lineNumber);
                 const probePosition = new vscode.Position(lineNumber, lineText.length);
                 if (lineText.includes('(')) {
@@ -894,7 +901,7 @@ function createLiveValidationScanner(deps) {
                     const funcKey = `${func.name}|${func.startLine}|${headerEndLine}`;
                     if (touchedFunctions.has(funcKey)) continue;
                     touchedFunctions.add(funcKey);
-                    if (isDelimiterTaintedLine(func.startLine)) continue;
+                    if (shouldSkipLine(func.startLine, { inactive: false })) continue;
                     for (const diagnostic of collectHeaderDiagnosticsForFunction(func)) {
                         pushDiagnostic(diagnostic);
                     }
@@ -903,7 +910,7 @@ function createLiveValidationScanner(deps) {
         } else if (!hasUnresolvedRequiredIncludes) {
             for (const func of headerCandidateFunctions) {
                 if (documentScanPlan.inactiveStockLines?.has(func.startLine)) continue;
-                if (isDelimiterTaintedLine(func.startLine)) continue;
+                if (shouldSkipLine(func.startLine, { inactive: false })) continue;
                 for (const diagnostic of collectHeaderDiagnosticsForFunction(func)) {
                     pushDiagnostic(diagnostic);
                 }
@@ -938,8 +945,7 @@ function createLiveValidationScanner(deps) {
         };
         if (!hasUnresolvedRequiredIncludes) {
             for (const diagnostic of collectStructuralDiagnosticsForScan()) {
-                if (isInactivePreprocessorLine(diagnostic.range.start.line)) continue;
-                if (isDelimiterTaintedLine(diagnostic.range.start.line)) continue;
+                if (shouldSkipDiagnosticLine(diagnostic)) continue;
                 pushDiagnostic(diagnostic);
             }
         }

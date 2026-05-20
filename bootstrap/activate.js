@@ -27,7 +27,9 @@ function activate(context) {
         hoverFeature,
         completionFeature,
         navigationFeature,
-        renameFeature
+        renameFeature,
+        semanticTokensFeature,
+        formatStringFeature
     } = buildLazyActivationRuntime({
         vscode,
         fs,
@@ -47,6 +49,8 @@ function activate(context) {
     completionFeature.register(context);
     navigationFeature.register(context);
     renameFeature.register(context);
+    semanticTokensFeature.register(context);
+    formatStringFeature.register(context);
 }
 
 exports.activate = activate;

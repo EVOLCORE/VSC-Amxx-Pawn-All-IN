@@ -2,11 +2,14 @@ const {
     containsPawnIdentifierStartChar
 } = require('./identifiers');
 const {
+    isAtPublicFunctionStartLine,
+    isExplicitDeclarationStartLine
+} = require('./declaration-start');
+const {
     PAWN_LOCAL_DECLARATION_KEYWORD_RE,
     PAWN_STRUCTURAL_KEYWORD_RE,
     startsWithBlockControlKeyword,
     startsWithControlKeyword: startsWithPawnControlKeyword,
-    startsWithDeclarationKeyword,
     startsWithDeclarationOrControlKeyword,
     startsWithLocalDeclarationKeyword,
     startsWithPawnKeyword
@@ -38,7 +41,6 @@ function createLineIndexCore() {
     const LINE_FLAG_POTENTIAL_TOP_LEVEL_CONTEXT_CHANGE = 1 << 7;
     const LINE_FLAG_POTENTIAL_BODY_CONTEXT_CHANGE = 1 << 8;
     const PUNCTUATION_ONLY_LINE_RE = /^[\[\]{}(),;:]+$/;
-    const AT_PUBLIC_FUNCTION_START_RE = /^@[A-Za-z_]\w*\s*\(/;
     const BITWISE_AND_OR_CANDIDATE_RE = /(?:^|[^&])&(?:[^&=]|$)|(?:^|[^|])\|(?:[^|=]|$)/;
     const COMPARISON_OR_LOGICAL_CANDIDATE_RE = /&&|\|\||==|!=|<=|>=|[<>]/;
     const SIZEOF_KEYWORD_RE = /\bsizeof\b/;
@@ -176,10 +178,7 @@ function createLineIndexCore() {
                         isDirectiveCandidate = true;
                     }
                 } else {
-                    isTopLevelCandidate = (
-                        AT_PUBLIC_FUNCTION_START_RE.test(trimmed) ||
-                        startsWithDeclarationKeyword(trimmed)
-                    );
+                    isTopLevelCandidate = isExplicitDeclarationStartLine(trimmed);
                     startsWithControlKeyword = startsWithPawnControlKeyword(trimmed);
                     isBodyCandidate = isTopLevelCandidate || startsWithControlKeyword;
                     isBodyDeclarationCandidate = (
@@ -247,7 +246,7 @@ function createLineIndexCore() {
                 const hasRationalLiteralCandidate = RATIONAL_LITERAL_CANDIDATE_RE.test(trimmed);
 
                 const startsWithKnownDeclarationOrControl =
-                    AT_PUBLIC_FUNCTION_START_RE.test(trimmed) ||
+                    isAtPublicFunctionStartLine(trimmed) ||
                     startsWithDeclarationOrControlKeyword(trimmed);
                 const mayNeedStrayTokenValidation =
                     !isPreprocessorLine &&

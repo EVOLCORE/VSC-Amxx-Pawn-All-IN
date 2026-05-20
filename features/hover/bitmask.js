@@ -9,6 +9,7 @@ const {
     createTopLevelScannerState,
     isTopLevelScannerState
 } = require('../../core/syntax/top-level');
+const { pushUniqueHoverMatch } = require('./match-dedupe');
 
 function createHoverBitmaskFeature(deps) {
     const {
@@ -167,7 +168,6 @@ function createHoverBitmaskFeature(deps) {
 
     function buildBitmaskParts(exprWords, funcArgs, locals, globals, functions, incDecls, lookup = null) {
         const parts = [];
-        const seen = new Set();
         for (const word of exprWords) {
             const matches = collectWordDeclMatches(
                 word,
@@ -181,10 +181,7 @@ function createHoverBitmaskFeature(deps) {
             );
             const match = matches.find(item => item.data.type === 'enum-item' || item.data.type === 'define') || matches[0];
             if (!match) continue;
-            const key = getDeclMatchKey(match.data);
-            if (seen.has(key)) continue;
-            seen.add(key);
-            parts.push(match);
+            pushUniqueHoverMatch(parts, match, getDeclMatchKey);
         }
         return parts;
     }

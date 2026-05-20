@@ -13,7 +13,10 @@ const {
     resolveLineStartOffset,
     splitPawnLines
 } = require('../../core/syntax/lines');
-const { buildInactivePreprocessorLineFlags } = require('../../core/syntax/preprocessor-lines');
+const {
+    buildInactivePreprocessorLineFlags,
+    isPreprocessorDirectiveLine
+} = require('../../core/syntax/preprocessor-lines');
 
 const PAWN_IDENTIFIER_WORD_RE = new RegExp(`\\b${PAWN_IDENTIFIER_SOURCE}\\b`, 'g');
 const PAWN_IDENTIFIER_AT_START_RE = new RegExp(`^(${PAWN_IDENTIFIER_SOURCE})\\b`);
@@ -67,6 +70,7 @@ function createStructuralDiagnostics(deps) {
         const diagnostics = [];
         const includeDocument = isIncludeDocument(document);
         const targetLines = targetLineNumbers instanceof Set ? targetLineNumbers : null;
+        const warningsEnabled = areWarningDiagnosticsEnabled();
         const rawLines = rootCtx.rawLines || splitPawnLines(rootCtx.text);
         const strippedLines = rootCtx.strippedLines || rawLines;
         let fallbackInactivePreprocessorLineFlags = null;
@@ -361,7 +365,7 @@ function createStructuralDiagnostics(deps) {
         const isExecutableStatementForUnreachable = trimmedLine => {
             if (!trimmedLine) return false;
             if (/^[{};]+$/.test(trimmedLine)) return false;
-            if (/^#/.test(trimmedLine)) return false;
+            if (isPreprocessorDirectiveLine(trimmedLine)) return false;
             if (isUnreachableResetLine(trimmedLine)) return false;
             return true;
         };
@@ -497,7 +501,7 @@ function createStructuralDiagnostics(deps) {
         const isCompilerLaststIgnoredLine = trimmedLine =>
             !trimmedLine ||
             /^[{}]+;?$/.test(trimmedLine) ||
-            /^#/.test(trimmedLine);
+            isPreprocessorDirectiveLine(trimmedLine);
         const getCompilerMultilineRangeForLine = (lineNumber, baseDepth, endLine = scanBounds.end) =>
             getCompilerMultilineStatementRange(strippedLines, lineNumber, {
                 startLine: scanBounds.start,
@@ -840,6 +844,7 @@ function createStructuralDiagnostics(deps) {
             if (!trimmedLine) continue;
             if (isPreprocessorDirectiveOrContinuationLine(rootCtx, lineNumber, trimmedLine)) continue;
             const statement = classifyPawnStatementLine(structuralLine);
+            const includeTargetLine = shouldIncludeTargetLine(targetLines, lineNumber);
 
             controlContextTracker.beginLine(lineNumber, currentDepth, trimmedLine);
             const {
@@ -860,7 +865,7 @@ function createStructuralDiagnostics(deps) {
                 !functionBodyRangeByLine[lineNumber] &&
                 !isFunctionHeaderLine(rootCtx, lineNumber)
             ) {
-                if (trimmedLine.startsWith('{') && isTopLevelBraceStartWithoutHeader(lineNumber) && shouldIncludeTargetLine(targetLines, lineNumber)) {
+                if (trimmedLine.startsWith('{') && isTopLevelBraceStartWithoutHeader(lineNumber) && includeTargetLine) {
                     diagnostics.push(
                         createLiveValidationDiagnostic(
                             createKeywordRange(lineNumber, '{'),
@@ -888,7 +893,7 @@ function createStructuralDiagnostics(deps) {
                 )
                     ? statement.firstKeyword
                     : '';
-                if (invalidOutsideKeyword && shouldIncludeTargetLine(targetLines, lineNumber)) {
+                if (invalidOutsideKeyword && includeTargetLine) {
                     diagnostics.push(
                         createLiveValidationDiagnostic(
                             createKeywordRange(lineNumber, invalidOutsideKeyword, statement.firstKeywordStart),
@@ -900,7 +905,7 @@ function createStructuralDiagnostics(deps) {
                 const invalidOutsideConstantIssue = isInsideLineStartGroupContext(lineNumber)
                     ? null
                     : getNoEffectConstantStatementIssue(structuralLine);
-                if (invalidOutsideConstantIssue && shouldIncludeTargetLine(targetLines, lineNumber)) {
+                if (invalidOutsideConstantIssue && includeTargetLine) {
                     diagnostics.push(
                         createLiveValidationDiagnostic(
                             createKeywordRange(lineNumber, invalidOutsideConstantIssue.text, invalidOutsideConstantIssue.start),
@@ -921,7 +926,7 @@ function createStructuralDiagnostics(deps) {
                         inlinePrefix.startOffset > 0 &&
                         inlinePrefix.text.trim() === ';';
                 }
-                if (shouldIncludeTargetLine(targetLines, lineNumber) && (isWholeLineEmptyStatement || isInlineEmptyStatement)) {
+                if (includeTargetLine && (isWholeLineEmptyStatement || isInlineEmptyStatement)) {
                     diagnostics.push(
                         createLiveValidationDiagnostic(
                             createKeywordRange(lineNumber, ';'),
@@ -934,7 +939,7 @@ function createStructuralDiagnostics(deps) {
                 const noEffectConstantIssue = isInsideLineStartGroupContext(lineNumber)
                     ? null
                     : getNoEffectConstantStatementIssue(structuralLine);
-                if (shouldIncludeTargetLine(targetLines, lineNumber) && noEffectConstantIssue) {
+                if (includeTargetLine && noEffectConstantIssue) {
                     const warningIssue = getStatementHasNoEffectIssue(noEffectConstantIssue);
                     diagnostics.push(
                         createLiveValidationDiagnostic(
@@ -947,7 +952,7 @@ function createStructuralDiagnostics(deps) {
                 }
 
                 const constantControlTestIssue = getConstantControlTestIssue(lineNumber, structuralLine, statement);
-                if (areWarningDiagnosticsEnabled() && shouldIncludeTargetLine(targetLines, lineNumber) && constantControlTestIssue) {
+                if (warningsEnabled && includeTargetLine && constantControlTestIssue) {
                     diagnostics.push(
                         createLiveValidationDiagnostic(
                             createKeywordRange(lineNumber, statement.firstKeyword, statement.firstKeywordStart),
@@ -957,7 +962,7 @@ function createStructuralDiagnostics(deps) {
                     );
                 }
                 const conditionAssignmentIssue = getConditionAssignmentIssue(structuralLine, statement);
-                if (areWarningDiagnosticsEnabled() && shouldIncludeTargetLine(targetLines, lineNumber) && conditionAssignmentIssue) {
+                if (warningsEnabled && includeTargetLine && conditionAssignmentIssue) {
                     diagnostics.push(
                         createLiveValidationDiagnostic(
                             createKeywordRange(lineNumber, '=', conditionAssignmentIssue.start),
@@ -1009,7 +1014,7 @@ function createStructuralDiagnostics(deps) {
                     }
                 }
                 if (
-                    shouldIncludeTargetLine(targetLines, lineNumber) &&
+                    includeTargetLine &&
                     (inlineLocalDeclAfterControl || (startsWithLocalDecl && (activeSingleStatementContext || previousLineControlLocalDecl)))
                 ) {
                     const localDeclSource = inlinePrefixForLine?.text || trimmedLine;
@@ -1026,7 +1031,7 @@ function createStructuralDiagnostics(deps) {
                 }
             }
 
-            if ((caseMatch || defaultMatch) && !activeSwitch && shouldIncludeTargetLine(targetLines, lineNumber)) {
+            if ((caseMatch || defaultMatch) && !activeSwitch && includeTargetLine) {
                 diagnostics.push(
                     createLiveValidationDiagnostic(
                         createKeywordRange(lineNumber, caseMatch ? 'case' : 'default', switchLabel.keywordStart),
@@ -1040,7 +1045,7 @@ function createStructuralDiagnostics(deps) {
                 inlineCaseBody &&
                 !inlineCaseBody.startsWith('{') &&
                 countTopLevelSemicolonStatements(inlineCaseBody) > 1 &&
-                shouldIncludeTargetLine(targetLines, lineNumber)
+                includeTargetLine
             ) {
                 diagnostics.push(
                     createLiveValidationDiagnostic(
@@ -1052,7 +1057,7 @@ function createStructuralDiagnostics(deps) {
 
             if (activeBlockSwitch && currentDepth === activeBlockSwitch.bodyDepth) {
                 if (caseMatch) {
-                    if (activeBlockSwitch.seenDefault && shouldIncludeTargetLine(targetLines, lineNumber)) {
+                    if (activeBlockSwitch.seenDefault && includeTargetLine) {
                         diagnostics.push(
                             createLiveValidationDiagnostic(
                                 createKeywordRange(lineNumber, 'case', switchLabel.keywordStart),
@@ -1066,7 +1071,7 @@ function createStructuralDiagnostics(deps) {
                         : caseMatch;
                     const rawValue = stripTrailingSemicolon(valueCaseMatch.label);
                     const resolvedCaseValues = resolveSwitchCaseLabelValues(rawValue, rootCtx.allDecls);
-                    if (resolvedCaseValues.invalidRange && shouldIncludeTargetLine(targetLines, lineNumber)) {
+                    if (resolvedCaseValues.invalidRange && includeTargetLine) {
                         diagnostics.push(
                             createLiveValidationDiagnostic(
                                 createSwitchCaseLabelRange(lineNumber, caseMatch),
@@ -1074,7 +1079,7 @@ function createStructuralDiagnostics(deps) {
                             )
                         );
                     }
-                    if (resolvedCaseValues.invalidConstant && shouldIncludeTargetLine(targetLines, lineNumber)) {
+                    if (resolvedCaseValues.invalidConstant && includeTargetLine) {
                         diagnostics.push(
                             createLiveValidationDiagnostic(
                                 createSwitchCaseLabelRange(lineNumber, caseMatch),
@@ -1090,7 +1095,7 @@ function createStructuralDiagnostics(deps) {
                         }
                         rememberSwitchCaseEntry(activeBlockSwitch, entry);
                     }
-                    if (duplicateValue && shouldIncludeTargetLine(targetLines, lineNumber)) {
+                    if (duplicateValue && includeTargetLine) {
                         diagnostics.push(
                             createLiveValidationDiagnostic(
                                 createSwitchCaseLabelRange(lineNumber, caseMatch),
@@ -1100,7 +1105,7 @@ function createStructuralDiagnostics(deps) {
                     }
                 } else if (defaultMatch) {
                     if (activeBlockSwitch.seenDefault) {
-                        if (shouldIncludeTargetLine(targetLines, lineNumber)) {
+                        if (includeTargetLine) {
                             diagnostics.push(
                                 createLiveValidationDiagnostic(
                                     createKeywordRange(lineNumber, 'default', switchLabel.keywordStart),
@@ -1119,7 +1124,7 @@ function createStructuralDiagnostics(deps) {
                 const isValid = keyword === 'break'
                     ? (hasActiveBreakContext || hasInlineContextBefore(structuralLine, controlMatch.start, keyword))
                     : (hasActiveLoop || hasInlineContextBefore(structuralLine, controlMatch.start, keyword));
-                if (!isValid && shouldIncludeTargetLine(targetLines, lineNumber)) {
+                if (!isValid && includeTargetLine) {
                     diagnostics.push(
                         createLiveValidationDiagnostic(
                             createKeywordRange(lineNumber, keyword, controlMatch.start),
@@ -1136,7 +1141,7 @@ function createStructuralDiagnostics(deps) {
             if (functionBody && statement.firstKeyword === 'state') {
                 const stateIssues = getStateStatementIssues(structuralLine, rootCtx.parsedDecls?.functions || []);
                 for (const issue of stateIssues) {
-                    if (!shouldIncludeTargetLine(targetLines, lineNumber)) continue;
+                    if (!includeTargetLine) continue;
                     const rangeStart = Number.isInteger(issue.rangeStart) ? issue.rangeStart : statement.firstKeywordStart;
                     const rangeEnd = Number.isInteger(issue.rangeEnd)
                         ? issue.rangeEnd
@@ -1169,7 +1174,7 @@ function createStructuralDiagnostics(deps) {
                     const returnValueText = effectiveReturnInfo.valueText;
                     const usesValue = !!returnValueText;
                     if (usesValue ? state.sawVoid : state.sawValue) {
-                        if (shouldIncludeTargetLine(targetLines, lineNumber)) {
+                        if (includeTargetLine) {
                             diagnostics.push(
                                 createLiveValidationDiagnostic(
                                     createKeywordRange(lineNumber, 'return', effectiveReturnInfo.start),
@@ -1197,7 +1202,7 @@ function createStructuralDiagnostics(deps) {
                             }
                         }
                         if (returnsArray ? state.sawScalar : state.sawArray) {
-                            if (shouldIncludeTargetLine(targetLines, lineNumber)) {
+                            if (includeTargetLine) {
                                 diagnostics.push(
                                     createLiveValidationDiagnostic(
                                         createKeywordRange(lineNumber, 'return', effectiveReturnInfo.start),
@@ -1217,7 +1222,7 @@ function createStructuralDiagnostics(deps) {
                                         state.firstArrayReturnAnalysisCache || returnTypeInfo.analysisCache,
                                         returnTypeInfo.escapeChar
                                     );
-                                    if (shapeIssue && shouldIncludeTargetLine(targetLines, lineNumber)) {
+                                    if (shapeIssue && includeTargetLine) {
                                         diagnostics.push(
                                             createLiveValidationDiagnostic(
                                                 createKeywordRange(lineNumber, 'return', effectiveReturnInfo.start),
@@ -1243,23 +1248,32 @@ function createStructuralDiagnostics(deps) {
                     returnStyleByFunction.set(funcKey, state);
             }
 
-            const firstControlStartByType = new Map();
+            let firstSwitchStart = -1;
+            let firstForStart = -1;
+            let firstWhileStart = -1;
+            let firstDoStart = -1;
             for (const controlStart of statement.controlStarts) {
-                if (!firstControlStartByType.has(controlStart.keyword)) {
-                    firstControlStartByType.set(controlStart.keyword, controlStart.start);
+                if (controlStart.keyword === 'switch') {
+                    if (firstSwitchStart < 0) firstSwitchStart = controlStart.start;
+                } else if (controlStart.keyword === 'for') {
+                    if (firstForStart < 0) firstForStart = controlStart.start;
+                } else if (controlStart.keyword === 'while') {
+                    if (firstWhileStart < 0) firstWhileStart = controlStart.start;
+                } else if (controlStart.keyword === 'do') {
+                    if (firstDoStart < 0) firstDoStart = controlStart.start;
                 }
             }
-            if (firstControlStartByType.has('switch')) {
-                pushControlContext('switch', lineNumber, structuralLine, currentDepth, firstControlStartByType.get('switch'));
+            if (firstSwitchStart >= 0) {
+                pushControlContext('switch', lineNumber, structuralLine, currentDepth, firstSwitchStart);
             }
-            if (firstControlStartByType.has('for')) {
-                pushControlContext('for', lineNumber, structuralLine, currentDepth, firstControlStartByType.get('for'));
+            if (firstForStart >= 0) {
+                pushControlContext('for', lineNumber, structuralLine, currentDepth, firstForStart);
             }
-            if (firstControlStartByType.has('while') && !isDoWhileClosingLine(lineNumber)) {
-                pushControlContext('while', lineNumber, structuralLine, currentDepth, firstControlStartByType.get('while'));
+            if (firstWhileStart >= 0 && !isDoWhileClosingLine(lineNumber)) {
+                pushControlContext('while', lineNumber, structuralLine, currentDepth, firstWhileStart);
             }
-            if (firstControlStartByType.has('do')) {
-                pushControlContext('do', lineNumber, structuralLine, currentDepth, firstControlStartByType.get('do'));
+            if (firstDoStart >= 0) {
+                pushControlContext('do', lineNumber, structuralLine, currentDepth, firstDoStart);
             }
             const macroProvidedControl = getMacroProvidedControlContext(structuralLine);
             if (macroProvidedControl) {
@@ -1275,7 +1289,7 @@ function createStructuralDiagnostics(deps) {
             controlContextTracker.finishLine(lineNumber, structuralLine);
         }
 
-        if (areWarningDiagnosticsEnabled()) {
+        if (warningsEnabled) {
             for (const [func, returnState] of returnStyleByFunction) {
                 if (!shouldIncludeTargetLine(targetLines, func.startLine ?? func.lineNumber ?? -1)) continue;
                 const issue = getFunctionShouldReturnValueIssue(

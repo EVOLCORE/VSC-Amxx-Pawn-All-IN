@@ -1,4 +1,5 @@
 const { splitPawnLines } = require('./lines');
+const { parsePragmaDirectiveLine } = require('./preprocessor-directives');
 const { skipPawnHorizontalWhitespace } = require('./whitespace');
 const {
     getPawnIncludeNameFromLine,
@@ -32,6 +33,15 @@ function createCtrlCharSyntaxCore(deps) {
     };
 
     const getActiveCtrlChar = () => ctrlCharStack[ctrlCharStack.length - 1] || DEFAULT_CTRL_CHAR;
+    const normalizeDirectiveProbeText = line => {
+        const text = String(line || '');
+        return /[A-Z]/.test(text) ? text.toLowerCase() : text;
+    };
+    const lineMayReferenceInclude = line => normalizeDirectiveProbeText(line).indexOf('include') >= 0;
+    const lineMayAffectCtrlChar = line => {
+        const text = normalizeDirectiveProbeText(line);
+        return text.indexOf('ctrlchar') >= 0 || text.indexOf('include') >= 0;
+    };
 
     const collectDirectiveLineNumbers = strippedLines => {
         const directiveLines = [];
@@ -71,6 +81,64 @@ function createCtrlCharSyntaxCore(deps) {
         ctrlCharStateCache.set(normalizedPath, filtered.slice(0, 3));
     };
 
+    const getStrippedLinesForDefaultCtrlCharState = (normalizedPath, content, rawLines, precomputedStrippedLines = null) => {
+        if (Array.isArray(precomputedStrippedLines)) {
+            return precomputedStrippedLines;
+        }
+        if (!content.includes('/*') && !content.includes('//')) {
+            return rawLines;
+        }
+        const cachedAnalysis = getCachedCommentAnalysis(normalizedPath, content);
+        if (cachedAnalysis) return cachedAnalysis.strippedLines;
+        const analysis = buildCommentAnalysis(rawLines);
+        setCachedCommentAnalysis(normalizedPath, content, analysis);
+        return analysis.strippedLines;
+    };
+
+    const buildDefaultCtrlCharState = (
+        content,
+        normalizedPath = '',
+        rawLines = null,
+        strippedLines = null,
+        hasDirectiveMarker = null
+    ) => {
+        const sourceText = String(content || '');
+        const resolvedRawLines = Array.isArray(rawLines) ? rawLines : splitPawnLines(sourceText);
+        const resolvedStrippedLines = getStrippedLinesForDefaultCtrlCharState(
+            normalizedPath,
+            sourceText,
+            resolvedRawLines,
+            strippedLines
+        );
+        const containsDirectiveMarker = hasDirectiveMarker == null
+            ? sourceText.indexOf('#') >= 0
+            : !!hasDirectiveMarker;
+        return {
+            rawLines: resolvedRawLines,
+            strippedLines: resolvedStrippedLines,
+            lineCtrlChars: [],
+            directiveCandidateLines: containsDirectiveMarker
+                ? collectDirectiveLineNumbers(resolvedStrippedLines)
+                : EMPTY_DIRECTIVE_CANDIDATE_LINES,
+            finalCtrlChar: DEFAULT_CTRL_CHAR
+        };
+    };
+
+    const cacheDefaultCtrlCharState = (
+        normalizedPath,
+        content,
+        rawLines = null,
+        strippedLines = null,
+        hasDirectiveMarker = null
+    ) => {
+        if (!normalizedPath || getCachedCtrlCharState(normalizedPath, content)) return;
+        setCachedCtrlCharState(
+            normalizedPath,
+            content,
+            buildDefaultCtrlCharState(content, normalizedPath, rawLines, strippedLines, hasDirectiveMarker)
+        );
+    };
+
     const getCtrlCharGraphCacheKey = normalizedPath =>
         normalizedPath ? `${normalizedPath}::ctrlchar-graph-presence` : '';
 
@@ -103,7 +171,12 @@ function createCtrlCharSyntaxCore(deps) {
     ) => {
         const text = String(content || '');
         if (text.indexOf('ctrlchar') >= 0) return true;
-        if (text.indexOf('#') < 0 || text.indexOf('include') < 0) return false;
+        const hasDirectiveMarker = text.indexOf('#') >= 0;
+        if (!hasDirectiveMarker || text.indexOf('include') < 0) {
+            const currentPath = fromFilePath ? normalizeFsPath(fromFilePath) : '';
+            cacheDefaultCtrlCharState(currentPath, text, null, strippedLines, hasDirectiveMarker);
+            return false;
+        }
 
         const currentPath = fromFilePath ? normalizeFsPath(fromFilePath) : '';
         const cached = getCachedCtrlCharGraphPresence(currentPath, text);
@@ -119,7 +192,9 @@ function createCtrlCharSyntaxCore(deps) {
         const directiveLines = collectDirectiveLineNumbers(lines);
         let maySetCtrlChar = false;
         for (const lineIndex of directiveLines) {
-            const includeTarget = parsePawnIncludeDirectiveTarget(String(lines[lineIndex] || '').trim());
+            const line = String(lines[lineIndex] || '').trim();
+            if (!lineMayReferenceInclude(line)) continue;
+            const includeTarget = parsePawnIncludeDirectiveTarget(line);
             const includeName = includeTarget?.name || '';
             if (!includeName) continue;
             const includePath = resolveInclude(includeName, searchPaths, fromFilePath, {
@@ -145,6 +220,9 @@ function createCtrlCharSyntaxCore(deps) {
         }
         if (currentPath) visited.delete(currentPath);
         setCachedCtrlCharGraphPresence(currentPath, text, maySetCtrlChar);
+        if (!maySetCtrlChar) {
+            cacheDefaultCtrlCharState(currentPath, text, lines, strippedLines, hasDirectiveMarker);
+        }
         return maySetCtrlChar;
     };
 
@@ -216,15 +294,13 @@ function createCtrlCharSyntaxCore(deps) {
                 )
             )
         ) {
-            const state = {
+            const state = buildDefaultCtrlCharState(
+                content,
+                currentPath,
                 rawLines,
                 strippedLines,
-                lineCtrlChars: [],
-                directiveCandidateLines: hasDirectiveMarker
-                    ? collectDirectiveLineNumbers(strippedLines)
-                    : EMPTY_DIRECTIVE_CANDIDATE_LINES,
-                finalCtrlChar: ctrlChar
-            };
+                hasDirectiveMarker
+            );
             setCachedCtrlCharState(currentPath, content, state);
             return state;
         }
@@ -237,9 +313,13 @@ function createCtrlCharSyntaxCore(deps) {
             fillLineCtrlCharRange(lineCtrlChars, nextUnfilledLine, lineIndex + 1, ctrlChar);
             nextUnfilledLine = lineIndex + 1;
             const line = String(strippedLines[lineIndex] || '').trim();
-            const pragmaMatch = line.match(/^\s*#pragma\s+ctrlchar\s+(['"])([^\r\n])\1/);
-            if (pragmaMatch) {
-                ctrlChar = pragmaMatch[2];
+            if (!lineMayAffectCtrlChar(line)) continue;
+            const pragma = parsePragmaDirectiveLine(line);
+            const ctrlCharMatch = pragma?.name === 'ctrlchar'
+                ? String(pragma.value || '').match(/^(['"])([^\r\n])\1/)
+                : null;
+            if (ctrlCharMatch) {
+                ctrlChar = ctrlCharMatch[2];
                 continue;
             }
 

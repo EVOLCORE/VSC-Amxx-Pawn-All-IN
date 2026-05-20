@@ -9,6 +9,7 @@ const {
     canUseLocalBodyEditedValidation
 } = require('../../core/document-context/edit-impact');
 const { createFastFunctionRangeCore } = require('../../core/syntax/function-ranges');
+const { toSortedUniqueLineNumbers } = require('../../core/syntax/line-number-lists');
 
 const { unrefTimer } = require('../../core/utils/timers');
 
@@ -146,9 +147,9 @@ function createLiveValidationScheduler(deps) {
     }
 
     function expandLinesToValidationLines(document, baseLines = [], options = {}) {
-        const lines = new Set(baseLines || []);
+        const baseLineNumbers = toSortedUniqueLineNumbers(document.lineCount, baseLines);
+        const lines = new Set(baseLineNumbers);
         if (!lines.size) return [];
-        const baseLineNumbers = [...lines].sort((left, right) => left - right);
         const semanticEquivalentEdit = options.editImpact?.semanticEquivalent === true;
         const bodyOnlyIncrementalEdit = !!(
             options.editImpact?.kind === 'incremental' &&
@@ -182,7 +183,7 @@ function createLiveValidationScheduler(deps) {
                 return baseLineNumbers;
             }
             addRootFunctionRangeLines(document, lines, [...lines], rootCtx);
-            const rootExpandedLineNumbers = [...lines].sort((left, right) => left - right);
+            const rootExpandedLineNumbers = toSortedUniqueLineNumbers(document.lineCount, lines);
             if (
                 semanticEquivalentEdit &&
                 rootExpandedLineNumbers.length > SEMANTIC_EQUIVALENT_NARROW_LINE_THRESHOLD
@@ -228,7 +229,7 @@ function createLiveValidationScheduler(deps) {
             addRootFunctionRangeLines(document, lines, fallbackLines, rootCtx);
         }
 
-        const expandedLineNumbers = [...lines].sort((left, right) => left - right);
+        const expandedLineNumbers = toSortedUniqueLineNumbers(document.lineCount, lines);
         if (
             semanticEquivalentEdit &&
             expandedLineNumbers.length > SEMANTIC_EQUIVALENT_NARROW_LINE_THRESHOLD
@@ -389,7 +390,7 @@ function createLiveValidationScheduler(deps) {
                 const targetLines = expandLinesToValidationLines(document, [...mergedLines], {
                     editImpact: options.editImpact || null
                 });
-                const focusLines = [...mergedLines].sort((left, right) => left - right);
+                const focusLines = toSortedUniqueLineNumbers(document.lineCount, mergedLines);
                 const cacheStartedAt = Date.now();
                 const cachedEditedResult = getCachedEditedResultEntry(document, targetLines, focusLines, {
                     settingsSignature

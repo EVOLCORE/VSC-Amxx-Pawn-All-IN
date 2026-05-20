@@ -47,18 +47,21 @@ function createSymbolDiagnostics(deps) {
     } = deps;
     function collectUnknownSymbolLiveDiagnosticsForLine(document, lineNumber, ctx, analysisCacheOrFactory, lineText, strippedLineText, lineStartOffset, docLength, declarationSourceState = null, lookupState = null) {
         const diagnostics = [];
-        if (isIncludeDocument(document) && !isStrictIncludeValidationEnabled()) return diagnostics;
-        if (!containsPawnIdentifierStartChar(lineText) && !nonAsciiCharRe.test(lineText)) return diagnostics;
-        const multilineStringLineFlags = getMultilineStringLineFlags(ctx);
-        if (multilineStringLineFlags[lineNumber]) return diagnostics;
+        const includeDocument = isIncludeDocument(document);
+        if (includeDocument && !isStrictIncludeValidationEnabled()) return diagnostics;
         const getAnalysisCache = () => (
             typeof analysisCacheOrFactory === 'function'
                 ? analysisCacheOrFactory()
                 : analysisCacheOrFactory
         );
 
-        const trimmedLine = String(strippedLineText || lineText || '').trim();
+        const rawLineText = String(lineText || '');
+        const strippedScanText = String(strippedLineText || rawLineText);
+        const trimmedLine = strippedScanText.trim();
         if (!trimmedLine || isPreprocessorDirectiveLine(trimmedLine)) return diagnostics;
+        if (!containsPawnIdentifierStartChar(strippedScanText) && !nonAsciiCharRe.test(strippedScanText)) return diagnostics;
+        const multilineStringLineFlags = getMultilineStringLineFlags(ctx);
+        if (multilineStringLineFlags[lineNumber]) return diagnostics;
 
         if (isFunctionHeaderLine(ctx, lineNumber)) return diagnostics;
         if (isEnumMemberDeclarationLine(ctx, lineNumber)) return diagnostics;
@@ -102,12 +105,12 @@ function createSymbolDiagnostics(deps) {
         };
         const seen = new Set();
         const escapeChar = ctx.resolver.ctrlCharAtLine(lineNumber);
-        const rawLineText = String(lineText || '');
-        const strippedScanText = String(strippedLineText || rawLineText);
         const canTrustStrippedScan = strippedScanText.length === rawLineText.length;
         const identifierScanText = canTrustStrippedScan ? strippedScanText : rawLineText;
+        const mayContainGotoKeyword = identifierScanText.includes('goto');
         const bareIdentifierName = getPawnIdentifierName(trimmedLine);
         const stateStatement = parseStateStatement(strippedLineText || lineText);
+        const warningsEnabled = areWarningDiagnosticsEnabled();
         const isStateStatementSyntaxName = (start, end) => !!(
             stateStatement &&
             (
@@ -117,7 +120,7 @@ function createSymbolDiagnostics(deps) {
             )
         );
         const pushSymbolTruncationWarning = (name, start, end) => {
-            if (!areWarningDiagnosticsEnabled()) return false;
+            if (!warningsEnabled) return false;
             const issue = getSymbolTruncationIssue(name);
             if (!issue) return false;
             const key = `truncated:${start}:${end}:${name}`;
@@ -239,10 +242,9 @@ function createSymbolDiagnostics(deps) {
             const nextIndex = findFirstNonWhitespaceIndex(identifierScanText, end);
             const prevChar = prevIndex >= 0 ? identifierScanText[prevIndex] : '';
             const nextChar = nextIndex >= 0 ? identifierScanText[nextIndex] : '';
-            const previousWord = findPreviousWordBefore(start);
             if (nextChar === ':') continue;
             if (prevChar === '.' && nextChar === '=') continue;
-            if (previousWord === 'goto') continue;
+            if (mayContainGotoKeyword && findPreviousWordBefore(start) === 'goto') continue;
 
             if (nextChar === '(') {
                 const isKnownFunction = !!findFunctionLikeDeclByName(name);
@@ -256,7 +258,7 @@ function createSymbolDiagnostics(deps) {
                 );
                 if (isKnownFunction || isKnownFunctionAlias) continue;
                 if (findAnyDeclByName(name)) continue;
-                if (isIncludeDocument(document)) continue;
+                if (includeDocument) continue;
                 // Function-call unknowns are emitted by collectCallLiveDiagnostics().
                 continue;
             }

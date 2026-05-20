@@ -15,7 +15,9 @@ function buildFeatureActivationRuntime(deps) {
     const {
         completionFeature,
         navigationFeature,
-        renameFeature
+        renameFeature,
+        semanticTokensFeature,
+        formatStringFeature
     } = buildCompletionNavigationFeatures(deps, support);
     const editorLifecycleFeature = buildEditorLifecycleFeature(deps, support, liveValidationRuntime);
 
@@ -26,7 +28,9 @@ function buildFeatureActivationRuntime(deps) {
         buildHoverAtPosition,
         completionFeature,
         navigationFeature,
-        renameFeature
+        renameFeature,
+        semanticTokensFeature,
+        formatStringFeature
     };
 }
 

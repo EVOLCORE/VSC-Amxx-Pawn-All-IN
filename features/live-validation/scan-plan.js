@@ -3,6 +3,10 @@ const {
     resolveLineStartOffset,
     splitPawnLines
 } = require('../../core/syntax/lines');
+const {
+    createLineNumberFlags,
+    mergeSortedUniqueLineNumbers
+} = require('../../core/syntax/line-number-lists');
 const { buildInactivePreprocessorLineFlags } = require('../../core/syntax/preprocessor-lines');
 const { createLineMembership } = require('../../core/utils/line-membership');
 
@@ -302,37 +306,13 @@ function createDocumentScanPlanBuilder(deps = {}) {
 }
 
 function buildDiagnosticLinePlan(lineCount, analysisLineNumbers, generalLineNumbers) {
-    const analysisLineFlags = new Uint8Array(lineCount);
-    const generalLineFlags = new Uint8Array(lineCount);
-    for (const lineNumber of analysisLineNumbers || []) {
-        if (lineNumber >= 0 && lineNumber < lineCount) analysisLineFlags[lineNumber] = 1;
-    }
-    for (const lineNumber of generalLineNumbers || []) {
-        if (lineNumber >= 0 && lineNumber < lineCount) generalLineFlags[lineNumber] = 1;
-    }
-    const combinedDiagnosticLineNumbers = [];
-    let analysisIndex = 0;
-    let generalIndex = 0;
-    let previousLine = -1;
-    const safeAnalysisLineNumbers = analysisLineNumbers || [];
-    const safeGeneralLineNumbers = generalLineNumbers || [];
-    while (analysisIndex < safeAnalysisLineNumbers.length || generalIndex < safeGeneralLineNumbers.length) {
-        let lineNumber;
-        if (
-            generalIndex >= safeGeneralLineNumbers.length ||
-            (
-                analysisIndex < safeAnalysisLineNumbers.length &&
-                safeAnalysisLineNumbers[analysisIndex] <= safeGeneralLineNumbers[generalIndex]
-            )
-        ) {
-            lineNumber = safeAnalysisLineNumbers[analysisIndex++];
-        } else {
-            lineNumber = safeGeneralLineNumbers[generalIndex++];
-        }
-        if (lineNumber < 0 || lineNumber >= lineCount || lineNumber === previousLine) continue;
-        previousLine = lineNumber;
-        combinedDiagnosticLineNumbers.push(lineNumber);
-    }
+    const analysisLineFlags = createLineNumberFlags(lineCount, analysisLineNumbers);
+    const generalLineFlags = createLineNumberFlags(lineCount, generalLineNumbers);
+    const combinedDiagnosticLineNumbers = mergeSortedUniqueLineNumbers(
+        lineCount,
+        analysisLineNumbers,
+        generalLineNumbers
+    );
     return {
         analysisLineFlags,
         generalLineFlags,

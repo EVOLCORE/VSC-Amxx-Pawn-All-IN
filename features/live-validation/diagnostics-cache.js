@@ -6,6 +6,10 @@ const {
 const { createUtilityCore } = require('../../core/utils');
 const { makeLiveValidationDiagnosticKey } = require('./diagnostic-key');
 const {
+    getDiagnosticLineSpan,
+    getDiagnosticStartLine
+} = require('./diagnostic-line-filter');
+const {
     LIVE_VALIDATION_DIAGNOSTIC_ENGINE_SIGNATURE
 } = require('./diagnostic-engine-signature');
 
@@ -465,8 +469,8 @@ function createLiveDiagnosticsCache(deps) {
     function summarizeDiagnosticLines(diagnostics) {
         const byLine = new Map();
         for (const diagnostic of diagnostics || []) {
-            const startLine = diagnostic?.range?.start?.line;
-            if (!Number.isInteger(startLine) || startLine < 0) continue;
+            const startLine = getDiagnosticStartLine(diagnostic);
+            if (startLine < 0) continue;
             let lineEntry = byLine.get(startLine);
             if (!lineEntry) {
                 lineEntry = { total: 0, error: 0, warning: 0, info: 0, hint: 0, unknown: 0 };
@@ -529,10 +533,10 @@ function createLiveDiagnosticsCache(deps) {
         const replaceDiagnosticCodes = new Set(options.replaceDiagnosticCodes || []);
         const retained = current.filter(diagnostic => {
             if (replaceDiagnosticCodes.has(diagnostic?.code)) return false;
-            const startLine = diagnostic.range.start.line;
-            const endLine = diagnostic.range.end.line;
+            const span = getDiagnosticLineSpan(diagnostic);
+            if (!span) return true;
             for (const line of targetLines) {
-                if (line >= startLine && line <= endLine) return false;
+                if (line >= span.startLine && line <= span.endLine) return false;
             }
             return true;
         });

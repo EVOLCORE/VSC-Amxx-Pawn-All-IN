@@ -1376,7 +1376,8 @@ function createDeclarationParsingCore(deps) {
         if (changeWindow.startLine < 0) return true;
 
         const structuralMarkerRe = /#|\{|\}|\/\*|\*\//;
-        const topLevelDeclCandidateRe = /^(?:#|@[A-Za-z_]\w*\s*\(|enum\b|new\b|static\b|stock\b|public\b|private\b|const\b|forward\b|native\b)/;
+        const isTopLevelDeclarationCandidate = line =>
+            isPreprocessorDirectiveLine(line) || isExplicitDeclarationStartLine(line);
         for (let lineNumber = changeWindow.startLine; lineNumber <= changeWindow.endLine; lineNumber++) {
             const previousRawLine = String(previousBase.rawLines[lineNumber] || '');
             const nextRawLine = String(nextRawLines[lineNumber] || '');
@@ -1388,7 +1389,7 @@ function createDeclarationParsingCore(deps) {
             }
             const previousTrimmed = String(previousBase.strippedLines[lineNumber] || '').trim();
             const nextTrimmed = String(nextStrippedLines[lineNumber] || '').trim();
-            if (topLevelDeclCandidateRe.test(previousTrimmed) || topLevelDeclCandidateRe.test(nextTrimmed)) {
+            if (isTopLevelDeclarationCandidate(previousTrimmed) || isTopLevelDeclarationCandidate(nextTrimmed)) {
                 return false;
             }
         }

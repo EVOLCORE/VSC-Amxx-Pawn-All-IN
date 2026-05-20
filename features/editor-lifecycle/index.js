@@ -1,5 +1,12 @@
 const { createUtilityCore } = require('../../core/utils');
 const { getEffectiveIncludeFileExtensions } = require('../../core/include-extensions');
+const {
+    contentChangesCrossLineBoundary,
+    getFirstContentChangeStartLine,
+    normalizeContentChangeLineRange
+} = require('../../core/document-context/incremental-lines');
+const { isPawnIncludeDirectiveCandidateLine } = require('../../core/syntax/includes');
+const { sortUniqueLineNumbers } = require('../../core/syntax/line-number-lists');
 const { unrefTimer } = require('../../core/utils/timers');
 
 const {
@@ -62,7 +69,6 @@ function createEditorLifecycleFeature(deps) {
         themeRecommendationFeature,
         liveValidationTimers,
         getDocumentFingerprint = defaultGetDocumentFingerprint,
-        parsePreprocessorDirectiveLine,
         liveValidationOutputChannel = null
     } = deps;
 
@@ -117,7 +123,7 @@ function createEditorLifecycleFeature(deps) {
     const hasIncludeDirectiveCandidate = lineText => {
         const lines = String(lineText || '').split(/\r\n|\r|\n/);
         for (const line of lines) {
-            if (parsePreprocessorDirectiveLine(line)?.keyword === 'include') return true;
+            if (isPawnIncludeDirectiveCandidateLine(line)) return true;
         }
         return false;
     };
@@ -131,13 +137,16 @@ function createEditorLifecycleFeature(deps) {
         for (const change of contentChanges) {
             const changeText = String(change?.text || '');
             if (hasIncludeDirectiveCandidate(changeText)) return true;
-            const range = change?.range;
-            const startLine = Number.isInteger(range?.start?.line) ? range.start.line : null;
-            if (startLine == null) continue;
-            const endLine = Number.isInteger(range?.end?.line) ? range.end.line : startLine;
-            const insertedLineCount = changeText ? changeText.split(/\r\n|\r|\n/).length - 1 : 0;
-            const scanStart = Math.max(0, startLine - 1);
-            const scanEnd = Math.min(lineCount - 1, Math.max(startLine, endLine + insertedLineCount) + 1);
+            const scanRange = normalizeContentChangeLineRange(change, {
+                lineCount,
+                paddingBefore: 1,
+                paddingAfter: 1,
+                includeInsertedLineBreaks: true,
+                fallbackLine: null
+            });
+            if (!scanRange) continue;
+            const scanStart = scanRange.startLine;
+            const scanEnd = scanRange.endLine;
             for (let lineNumber = scanStart; lineNumber <= scanEnd; lineNumber++) {
                 if (hasIncludeDirectiveCandidate(document.lineAt(lineNumber)?.text || '')) {
                     return true;
@@ -372,33 +381,8 @@ function createEditorLifecycleFeature(deps) {
         const line = editor?.selection?.active?.line;
         return Number.isInteger(line) ? line : null;
     };
-    const getChangeStartLine = contentChanges => {
-        for (const change of contentChanges || []) {
-            const line = change?.range?.start?.line;
-            if (Number.isInteger(line)) return line;
-        }
-        return null;
-    };
-    const didChangeLineBoundary = contentChanges => {
-        let firstStartLine = null;
-        for (const change of contentChanges || []) {
-            const text = String(change?.text || '');
-            if (/[\r\n]/.test(text)) return true;
-            const startLine = change?.range?.start?.line;
-            const endLine = change?.range?.end?.line;
-            if (Number.isInteger(startLine)) {
-                if (firstStartLine == null) {
-                    firstStartLine = startLine;
-                } else if (firstStartLine !== startLine) {
-                    return true;
-                }
-            }
-            if (Number.isInteger(startLine) && Number.isInteger(endLine) && startLine !== endLine) {
-                return true;
-            }
-        }
-        return false;
-    };
+    const getChangeStartLine = getFirstContentChangeStartLine;
+    const didChangeLineBoundary = contentChangesCrossLineBoundary;
     const mergeTextValidationPlans = (left, right) => {
         if (!left) return right || null;
         if (!right) return left;
@@ -412,7 +396,7 @@ function createEditorLifecycleFeature(deps) {
         for (const line of left.lines || []) lines.add(line);
         for (const line of right.lines || []) lines.add(line);
         return {
-            lines: [...lines].sort((a, b) => a - b),
+            lines: sortUniqueLineNumbers(lines),
             reason: right.reason || left.reason,
             editImpact: right.editImpact || left.editImpact
         };

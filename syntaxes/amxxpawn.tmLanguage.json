@@ -398,8 +398,8 @@
             "3": {
               "name": "keyword.control.directive.define.pawn"
             },
-            "4": {
-              "name": "constant.other.preprocessor.pawn"
+            "5": {
+              "name": "variable.other.preprocessor.pawn"
             },
             "6": {
               "name": "invalid.illegal.invalid-usage-of-preprocessor-directive.pawn"
@@ -437,6 +437,10 @@
           },
           "end": "$",
           "patterns": [
+            {
+              "name": "keyword.control.directive.pawn",
+              "match": "\\bdefined\\b"
+            },
             {
               "include": "#strings"
             },

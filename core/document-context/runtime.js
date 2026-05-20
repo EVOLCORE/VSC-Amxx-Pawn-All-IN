@@ -4,6 +4,14 @@ const path = require('path');
 // separate from cache-key helpers and from feature-specific code such as hover or
 // live validation.
 const { splitPawnLines } = require('../syntax/lines');
+const {
+    forEachEditImpactLine,
+    patchChangedLineArray
+} = require('./incremental-lines');
+const {
+    isPreferredIncludeCandidate,
+    normalizeIncludePriority
+} = require('../include-priority');
 
 const { unrefTimer } = require('../utils/timers');
 
@@ -93,10 +101,11 @@ function createDocumentContextCore(deps) {
         return null;
     }
 
-    function buildIncrementalPreprocessedState(previousSharedContext, rawLines, editImpact) {
+    function buildIncrementalPreprocessedState(previousSharedContext, textSnapshot, editImpact) {
         if (!previousSharedContext?.preprocessedState || editImpact?.kind !== 'incremental') {
             return null;
         }
+        const rawLines = textSnapshot?.rawLines || [];
         const previousContent = String(previousSharedContext.preprocessedState.content || '');
         const previousLines = splitPawnLines(previousContent);
         if (!previousLines.length || previousLines.length !== rawLines.length) {
@@ -104,17 +113,44 @@ function createDocumentContextCore(deps) {
         }
 
         const nextLines = previousLines.slice();
-        for (const range of editImpact.ranges || []) {
-            const startLine = Math.max(0, range?.startLine ?? 0);
-            const endLine = Math.min(rawLines.length - 1, Math.max(startLine, range?.endLine ?? startLine));
-            for (let lineNumber = startLine; lineNumber <= endLine; lineNumber++) {
-                nextLines[lineNumber] = String(rawLines[lineNumber] || '');
-            }
-        }
+        const previousStrippedLines = Array.isArray(previousSharedContext.preprocessedState.strippedLines)
+            ? previousSharedContext.preprocessedState.strippedLines
+            : previousLines;
+        const currentStrippedLines = Array.isArray(textSnapshot?.strippedLines)
+            ? textSnapshot.strippedLines
+            : rawLines;
+        const nextStrippedLines = previousStrippedLines.length === rawLines.length
+            ? previousStrippedLines.slice()
+            : nextLines.slice();
+        const previousLineCtrlChars = Array.isArray(previousSharedContext.preprocessedState.lineCtrlChars)
+            ? previousSharedContext.preprocessedState.lineCtrlChars
+            : [];
+        const currentLineCtrlChars = Array.isArray(textSnapshot?.lineCtrlChars)
+            ? textSnapshot.lineCtrlChars
+            : [];
+        const nextLineCtrlChars = previousLineCtrlChars.length === rawLines.length
+            ? previousLineCtrlChars.slice()
+            : new Array(rawLines.length).fill('');
+        patchChangedLineArray(nextLines, rawLines, editImpact, {
+            lineCount: rawLines.length,
+            readLine: lineNumber => String(rawLines[lineNumber] || '')
+        });
+        patchChangedLineArray(nextStrippedLines, currentStrippedLines, editImpact, {
+            lineCount: rawLines.length,
+            readLine: lineNumber => String(currentStrippedLines[lineNumber] ?? rawLines[lineNumber] ?? '')
+        });
+        patchChangedLineArray(nextLineCtrlChars, currentLineCtrlChars, editImpact, {
+            lineCount: rawLines.length,
+            readLine: lineNumber => currentLineCtrlChars[lineNumber] || ''
+        });
 
         return {
             ...previousSharedContext.preprocessedState,
             content: nextLines.join('\n'),
+            rawLines: nextLines,
+            strippedLines: nextStrippedLines,
+            lineCtrlChars: nextLineCtrlChars,
+            finalCtrlChar: textSnapshot?.finalCtrlChar || previousSharedContext.preprocessedState.finalCtrlChar || '^',
             includePreprocessedStates: null
         };
     }
@@ -136,19 +172,18 @@ function createDocumentContextCore(deps) {
             return false;
         }
 
-        for (const range of editImpact.ranges || []) {
-            const startLine = Math.max(0, range?.startLine ?? 0);
-            const endLine = Math.min(nextStrippedLines.length - 1, Math.max(startLine, range?.endLine ?? startLine));
-            for (let lineNumber = startLine; lineNumber <= endLine; lineNumber++) {
-                if (String(previousStrippedLines[lineNumber] || '') !== String(nextStrippedLines[lineNumber] || '')) {
-                    return false;
-                }
-                if ((previousLineCtrlChars[lineNumber] || null) !== (nextLineCtrlChars[lineNumber] || null)) {
-                    return false;
-                }
+        let equivalent = true;
+        forEachEditImpactLine(editImpact, nextStrippedLines.length, lineNumber => {
+            if (!equivalent) return;
+            if (String(previousStrippedLines[lineNumber] || '') !== String(nextStrippedLines[lineNumber] || '')) {
+                equivalent = false;
+                return;
             }
-        }
-        return true;
+            if ((previousLineCtrlChars[lineNumber] || null) !== (nextLineCtrlChars[lineNumber] || null)) {
+                equivalent = false;
+            }
+        });
+        return equivalent;
     }
 
     function createSemanticSessionState() {
@@ -199,7 +234,7 @@ function createDocumentContextCore(deps) {
             sharedContext = withCtrlCharForContent(text, () => {
                 const reusedPreprocessedState = buildIncrementalPreprocessedState(
                     previousSharedContext,
-                    textSnapshot.rawLines,
+                    textSnapshot,
                     editImpact
                 );
                 const semanticEquivalentIncrementalEdit = reusedPreprocessedState && previousSharedContext
@@ -283,6 +318,8 @@ function createDocumentContextCore(deps) {
             parsedDecls,
             incDecls: sharedContext.incDecls,
             semanticSession: sharedContext.semanticSession,
+            getIncludeSourceMetaForPath: filePath =>
+                getSharedIncludeMetadata(sharedContext).includeSourceMetaByPath.get(normalizeFsPath(filePath)) || null,
             lookup: null,
             allDecls: null
         };
@@ -354,6 +391,7 @@ function createDocumentContextCore(deps) {
 
     function buildSharedIncludeMetadata(sharedContext) {
         const includeRootLineByPath = new Map();
+        const includeSourceMetaByPath = new Map();
         let currentRootIncludeLine = -1;
         let maxRootIncludeLine = -1;
         for (const entry of sharedContext.includeEntries || []) {
@@ -364,6 +402,15 @@ function createDocumentContextCore(deps) {
             const includeLine = currentRootIncludeLine;
             const key = normalizeFsPath(entry.filePath);
             if (!key || includeLine < 0) continue;
+            const sourcePriority = normalizeIncludePriority(entry.sourcePriority);
+            const previousSourceMeta = includeSourceMetaByPath.get(key);
+            if (isPreferredIncludeCandidate({ sourcePriority }, previousSourceMeta)) {
+                includeSourceMetaByPath.set(key, {
+                    sourcePath: entry.sourcePath || '',
+                    sourcePriority,
+                    resolutionKind: entry.resolutionKind || ''
+                });
+            }
             const previousLine = includeRootLineByPath.get(key);
             if (previousLine == null || includeLine < previousLine) {
                 includeRootLineByPath.set(key, includeLine);
@@ -384,6 +431,7 @@ function createDocumentContextCore(deps) {
             : sharedContext.incDecls;
         return {
             includeRootLineByPath,
+            includeSourceMetaByPath,
             maxRootIncludeLine,
             includeDeclsCacheKey,
             enumEvalOuterDecls,

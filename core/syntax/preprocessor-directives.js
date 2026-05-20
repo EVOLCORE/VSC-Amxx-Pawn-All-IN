@@ -1,5 +1,8 @@
 const { getPreprocessorDirectiveStartIndex } = require('./preprocessor-lines');
-const { isPawnIdentifierContinueChar } = require('./identifiers');
+const {
+    isPawnIdentifierContinueChar,
+    readPawnIdentifierAt
+} = require('./identifiers');
 const { isPawnHorizontalWhitespaceCode } = require('./whitespace');
 
 const PREPROCESSOR_DIRECTIVE_COMPLETIONS = Object.freeze([
@@ -182,11 +185,85 @@ function isPragmaDirectiveName(value) {
     return PRAGMA_DIRECTIVE_NAME_SET.has(String(value || '').toLowerCase());
 }
 
+function normalizePreprocessorDirectiveName(value = '') {
+    return String(value || '').toLowerCase();
+}
+
+function skipPreprocessorIdentifierWhitespace(source = '', cursor = 0) {
+    const text = String(source || '');
+    let index = Math.max(0, cursor | 0);
+    while (
+        index < text.length &&
+        isPawnHorizontalWhitespaceCode(text.charCodeAt(index))
+    ) {
+        index++;
+    }
+    return index;
+}
+
+function readPreprocessorIdentifierToken(source = '', cursor = 0) {
+    const text = String(source || '');
+    const start = skipPreprocessorIdentifierWhitespace(text, cursor);
+    const token = readPawnIdentifierAt(text, start);
+    if (!token) return null;
+    return {
+        name: token.name,
+        start: token.start,
+        end: token.end
+    };
+}
+
+function readPreprocessorDirectiveNameContext(line = '') {
+    const source = String(line || '');
+    if (source.indexOf('#') < 0) return null;
+    const hashStart = getPreprocessorDirectiveStartIndex(source);
+    if (hashStart < 0) return null;
+
+    const token = readPreprocessorIdentifierToken(source, hashStart + 1);
+    const tokenStart = token?.start ?? skipPreprocessorIdentifierWhitespace(source, hashStart + 1);
+    const tokenEnd = token?.end ?? tokenStart;
+    const directiveNameRaw = token?.name ?? '';
+
+    return {
+        hashStart,
+        tokenStart,
+        tokenEnd,
+        directiveNameRaw,
+        directiveName: normalizePreprocessorDirectiveName(directiveNameRaw)
+    };
+}
+
+function isPreprocessorDirectiveNamedLine(line = '', directiveName = '') {
+    const expected = normalizePreprocessorDirectiveName(directiveName);
+    return !!expected && readPreprocessorDirectiveNameContext(line)?.directiveName === expected;
+}
+
+function parsePragmaDirectiveLine(line = '') {
+    const source = String(line || '');
+    const directive = readPreprocessorDirectiveNameContext(source);
+    if (!directive || directive.directiveName !== 'pragma') return null;
+
+    const token = readPreprocessorIdentifierToken(source, directive.tokenEnd);
+    const nameStart = token?.start ?? skipPreprocessorIdentifierWhitespace(source, directive.tokenEnd);
+    const nameEnd = token?.end ?? nameStart;
+
+    const name = normalizePreprocessorDirectiveName(token?.name ?? '');
+    const valueStart = nameEnd;
+    return {
+        name,
+        nameStart,
+        nameEnd,
+        value: source.slice(valueStart).trim(),
+        valueStart,
+        directive
+    };
+}
+
 function getPreprocessorDirectiveCompletionContext(line = '', character = 0) {
     const source = String(line || '');
     const cursor = Math.max(0, Math.min(source.length, character | 0));
-    const hashStart = getPreprocessorDirectiveStartIndex(source);
-    if (hashStart < 0 || cursor <= hashStart) {
+    const nameContext = readPreprocessorDirectiveNameContext(source);
+    if (!nameContext || cursor <= nameContext.hashStart) {
         return {
             inPreprocessorLine: false,
             canCompleteDirective: false,
@@ -198,13 +275,7 @@ function getPreprocessorDirectiveCompletionContext(line = '', character = 0) {
         };
     }
 
-    let tokenStart = hashStart + 1;
-    while (
-        tokenStart < source.length &&
-        isPawnHorizontalWhitespaceCode(source.charCodeAt(tokenStart))
-    ) {
-        tokenStart++;
-    }
+    const { hashStart, tokenStart, tokenEnd } = nameContext;
 
     if (cursor < tokenStart) {
         return {
@@ -217,14 +288,6 @@ function getPreprocessorDirectiveCompletionContext(line = '', character = 0) {
             replaceStart: cursor,
             replaceEnd: cursor
         };
-    }
-
-    let tokenEnd = tokenStart;
-    while (
-        tokenEnd < source.length &&
-        isPreprocessorDirectiveIdentifierChar(source[tokenEnd])
-    ) {
-        tokenEnd++;
     }
 
     if (cursor <= tokenEnd) {
@@ -303,6 +366,11 @@ module.exports = {
     PRAGMA_DIRECTIVE_COMPLETIONS,
     PRAGMA_DIRECTIVE_NAMES,
     getPreprocessorDirectiveCompletionContext,
+    isPreprocessorDirectiveNamedLine,
     isPreprocessorDirectiveName,
-    isPragmaDirectiveName
+    isPragmaDirectiveName,
+    normalizePreprocessorDirectiveName,
+    parsePragmaDirectiveLine,
+    readPreprocessorIdentifierToken,
+    readPreprocessorDirectiveNameContext
 };

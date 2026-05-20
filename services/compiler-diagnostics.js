@@ -1,3 +1,11 @@
+const {
+    getDiagnosticLineSpan
+} = require('../core/diagnostics/ranges');
+const {
+    compareContentChangesByStartDescending,
+    normalizeContentChangeLineRange
+} = require('../core/document-context/incremental-lines');
+
 function createCompilerDiagnosticService(deps) {
     const {
         fs,
@@ -287,24 +295,21 @@ function createCompilerDiagnosticService(deps) {
     }
 
     function shouldRemoveCompilerDiagnosticForChange(diagnostic, change) {
-        const range = diagnostic?.range;
-        const changedRange = change?.range;
-        if (!range?.start || !range?.end || !changedRange?.start || !changedRange?.end) return false;
-
-        const startLine = changedRange.start.line;
-        const endLine = changedRange.end.line;
-        if (range.end.line < startLine || range.start.line > endLine) return false;
-        return true;
+        const diagnosticSpan = getDiagnosticLineSpan(diagnostic);
+        const changeRange = normalizeContentChangeLineRange(change, { fallbackLine: null });
+        if (!diagnosticSpan || !changeRange) return false;
+        return diagnosticSpan.endLine >= changeRange.rangeStartLine &&
+            diagnosticSpan.startLine <= changeRange.rangeEndLine;
     }
 
     function remapCompilerDiagnosticsAfterChange(diagnostics, change) {
-        const changedRange = change?.range;
-        if (!changedRange?.start || !changedRange?.end) return diagnostics;
+        const changeRange = normalizeContentChangeLineRange(change, { fallbackLine: null });
+        if (!changeRange) return diagnostics;
 
-        const oldLineCount = Math.max(0, changedRange.end.line - changedRange.start.line);
+        const oldLineCount = Math.max(0, changeRange.rangeEndLine - changeRange.rangeStartLine);
         const newLineCount = countLineBreaks(change?.text || '');
         const lineDelta = newLineCount - oldLineCount;
-        const shiftAfterLine = changedRange.end.line;
+        const shiftAfterLine = changeRange.rangeEndLine;
         const remapped = [];
 
         for (const diagnostic of diagnostics || []) {
@@ -313,7 +318,7 @@ function createCompilerDiagnosticService(deps) {
             }
             if (
                 lineDelta &&
-                diagnostic?.range?.start?.line > shiftAfterLine
+                getDiagnosticLineSpan(diagnostic)?.startLine > shiftAfterLine
             ) {
                 remapped.push(shiftCompilerDiagnosticLines(diagnostic, lineDelta));
                 continue;
@@ -335,10 +340,7 @@ function createCompilerDiagnosticService(deps) {
         let diagnostics = diagnosticCollection.get(document.uri) || [];
         if (!Array.isArray(diagnostics) || !diagnostics.length) return;
 
-        const orderedChanges = [...changes].sort((left, right) =>
-            (right.range?.start?.line ?? 0) - (left.range?.start?.line ?? 0) ||
-            (right.range?.start?.character ?? 0) - (left.range?.start?.character ?? 0)
-        );
+        const orderedChanges = [...changes].sort(compareContentChangesByStartDescending);
         for (const change of orderedChanges) {
             diagnostics = remapCompilerDiagnosticsAfterChange(diagnostics, change);
             if (!diagnostics.length) break;

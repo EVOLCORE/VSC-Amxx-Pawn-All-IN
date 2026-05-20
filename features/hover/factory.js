@@ -5,6 +5,7 @@ const { createHoverHelpersFeature } = require('./helpers');
 const { createHoverBitmaskFeature } = require('./bitmask');
 const { createHoverSignatureFeature } = require('./signature');
 const { createHoverEnumInitializerFeature } = require('./enum-initializer');
+const { createHoverValidationPolicy } = require('./validation-policy');
 
 function createHoverRuntimeFeature(deps) {
     const {
@@ -14,6 +15,7 @@ function createHoverRuntimeFeature(deps) {
         HOVER_RELEVANT_CONFIG_KEYS,
         getHoverMode,
         getHoverContentMode,
+        getIncludeValidationMode,
         hoverOutputChannel = null,
         getLiveValidationIssueMode,
         normalizeLiveValidationIssueMode,
@@ -78,6 +80,8 @@ function createHoverRuntimeFeature(deps) {
         isOriginalDeclarationHover,
         buildStructuredEnumFieldHover,
         findFunctionCallNameContext,
+        findCallContext,
+        findMatchingParenOffset,
         getPreferredFunctionHoverMatch,
         parseFuncArgs,
         finalizeDeclMatches,
@@ -93,10 +97,15 @@ function createHoverRuntimeFeature(deps) {
             // Hover logging must never affect hover rendering.
         }
     };
+    const { shouldSuppressHoverValidationForDocument } = createHoverValidationPolicy({
+        getIncludeFileExtensions,
+        getIncludeValidationMode
+    });
     const getHoverCacheSignature = () => [
         `mode:${getHoverMode() || ''}`,
         `content:${getHoverContentMode() || ''}`,
         `issues:${normalizeLiveValidationIssueMode(getLiveValidationIssueMode())}`,
+        `includeValidation:${getIncludeValidationMode?.() || 'balanced'}`,
         `links:${isHoverGoToDefinitionLinksEnabled() ? 1 : 0}`,
         `includeExt:${(getIncludeFileExtensions() || []).join(',')}`,
         `global:${(getGlobalIncludePaths() || []).join('|')}`,
@@ -235,11 +244,14 @@ function createHoverRuntimeFeature(deps) {
         isHoverAtActiveCursor: isHoverAtActiveCursor || hoverIsHoverAtActiveCursor,
         findNestedParentCallNameContext,
         findFunctionCallNameContext,
+        findCallContext,
+        findMatchingParenOffset,
         getPreferredFunctionHoverMatch,
         extractCallSiteArgs: deps.extractCallSiteArgs,
         hasIncludeFunctionTwin,
         splitTopLevel,
         splitTopLevelWithRanges,
+        isEscapedQuote,
         parseFuncArgs,
         parseDimsParts,
         createHoverTypeAnalysisCache,
@@ -255,6 +267,7 @@ function createHoverRuntimeFeature(deps) {
         expandObjectLikeDefineTupleCallArgs,
         isMeaningfulCallCursorPosition,
         isMeaningfulCallPosition,
+        shouldSuppressHoverValidationForDocument,
         getHoverCacheSignature,
         logHover
     });
