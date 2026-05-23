@@ -34,15 +34,20 @@ function createDocumentScanPlanBuilder(deps = {}) {
         const parsedDecls = rootCtx?.parsedDecls || null;
         const unusedStockValidationMode = settingsService?.getUnusedStockValidationMode?.() || 'reachable-only';
         const rawLines = rootCtx.rawLines || splitPawnLines(rootCtx.text);
+        const lineIndex = rootCtx.lineIndex;
         const inactivePreprocessorLineFlags = buildInactivePreprocessorLineFlags(
             rawLines,
             rootCtx.preprocessedState?.rawLines,
-            document.lineCount
+            document.lineCount,
+            {
+                isPreprocessorDirectiveLineNumber: line =>
+                    typeof lineIndex?.isPreprocessorDirectiveLine === 'function' &&
+                    lineIndex.isPreprocessorDirectiveLine(line)
+            }
         );
         const lineCtrlChars = rootCtx.lineCtrlChars ||
             rootCtx.resolver.lineCtrlChars ||
             getCtrlCharStateForContent(rootCtx.text, document.fileName).lineCtrlChars;
-        const lineIndex = rootCtx.lineIndex;
         const getPlanForStockMode = structuralPlan => {
             let inactiveStockLines = structuralPlan.inactiveStockLinesByMode.get(unusedStockValidationMode);
             if (!inactiveStockLines) {
@@ -265,6 +270,15 @@ function createDocumentScanPlanBuilder(deps = {}) {
         const generalDiagnosticCandidateLines = [];
         for (const line of lineIndex.generalDiagnosticCandidateLines || []) {
             if (line < 0 || line >= document.lineCount) continue;
+            if (
+                !lineIndex.unknownSymbolCandidateLineFlags?.[line] &&
+                !lineIndex.declarationDiagnosticCandidateLineFlags?.[line] &&
+                !lineIndex.expressionOperatorCandidateLineFlags?.[line] &&
+                !lineIndex.strayTokenCandidateLineFlags?.[line] &&
+                !lineIndex.invalidCodeCharacterCandidateLineFlags?.[line]
+            ) {
+                continue;
+            }
             generalDiagnosticCandidateFlags[line] = 1;
             generalDiagnosticCandidateLines.push(line);
         }

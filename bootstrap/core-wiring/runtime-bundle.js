@@ -84,6 +84,7 @@ function createSharedRuntimeBundle(sources) {
         getNestedSearchPaths: documentSystemRuntime.getNestedSearchPaths,
         getIncludeCompletionEntries: documentSystemRuntime.getIncludeCompletionEntries,
         resolveInclude: documentSystemRuntime.resolveInclude,
+        readNormalizedFileContent: documentStateRuntime.readNormalizedFileContent,
         getCtrlCharStateForContent: baseSyntaxRuntime.getCtrlCharStateForContent,
         scheduleWarmDocumentContext: documentSystemRuntime.scheduleWarmDocumentContext,
         clearAllScheduledWarmups: documentSystemRuntime.clearAllScheduledWarmups,

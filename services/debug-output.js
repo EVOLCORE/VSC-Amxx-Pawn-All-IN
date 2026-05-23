@@ -10,6 +10,7 @@ function createDebugOutputChannel(outputChannel, settingsService) {
     };
 
     return {
+        isEnabled,
         append(value) {
             callWhenEnabled('append', [value]);
         },

@@ -1,4 +1,4 @@
-const { createHoverRuntimeFeature } = require('../../features/hover');
+const { createHoverRuntimeFeature } = require('../../features/hover/factory');
 const { createPersistentHoverFeature } = require('../../features/persistent-hover');
 
 function buildHoverFeatures(deps, support) {

@@ -4,7 +4,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { createCompilerDiagnosticService } = require('./compiler-diagnostics');
 const { createRuntimeLocalization } = require('./localization');
-const { createUtilityCore } = require('../core/utils');
+const { createUtilityCore } = require('../core/utils/runtime');
 const {
     collectCompilerIncludeDirectories,
     defaultNormalizeFsPath
@@ -97,7 +97,7 @@ function refreshCompilerSettings() {
         : [];
     const rawProjectLocalIncludePaths = config.get('projectLocalIncludePaths', ['include']);
     compilerSettings.projectLocalIncludePaths =
-        Array.isArray(rawProjectLocalIncludePaths) && rawProjectLocalIncludePaths.length
+        Array.isArray(rawProjectLocalIncludePaths)
             ? rawProjectLocalIncludePaths
             : ['include'];
     compilerSettings.compileRevealTarget = resolveCompileRevealTarget(config);
@@ -765,7 +765,7 @@ function registerCompilerIntegration(context) {
         );
     }
 
-    const compileCommand = vscode.commands.registerCommand(COMPILE_COMMAND_ID, async () => {
+    const compileCurrentFile = async () => {
         const editor = vscode.window.activeTextEditor;
         const document = editor?.document || null;
 
@@ -900,9 +900,14 @@ function registerCompilerIntegration(context) {
         } finally {
             activeCompileJobs.delete(compileJobKey);
         }
-    });
+    };
 
+    const compileCommand = vscode.commands.registerCommand(COMPILE_COMMAND_ID, compileCurrentFile);
     context.subscriptions.push(compileCommand);
+
+    return {
+        compileCurrentFile
+    };
 }
 
 module.exports = {

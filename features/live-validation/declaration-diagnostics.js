@@ -280,11 +280,17 @@ function createDeclarationDiagnostics(deps) {
                 );
         };
 
+        const sameLineDeclCountByName = new Map();
+        const firstSameLineDeclByName = new Map();
         for (let currentIndex = 0; currentIndex < currentVariableDecls.length; currentIndex++) {
             const decl = currentVariableDecls[currentIndex];
-            const sameNameOccurrenceIndex = currentVariableDecls
-                .slice(0, currentIndex)
-                .filter(item => item?.name === decl?.name).length;
+            const declName = decl?.name || '';
+            const sameNameOccurrenceIndex = declName ? (sameLineDeclCountByName.get(declName) || 0) : 0;
+            const earlierSameLineDecl = declName ? (firstSameLineDeclByName.get(declName) || null) : null;
+            if (declName) {
+                sameLineDeclCountByName.set(declName, sameNameOccurrenceIndex + 1);
+                if (!earlierSameLineDecl) firstSameLineDeclByName.set(declName, decl);
+            }
             if (decl?.name) {
                 pushDeclWarning(
                     decl,
@@ -293,9 +299,6 @@ function createDeclarationDiagnostics(deps) {
                 );
             }
             const priorSameName = (() => {
-                const earlierSameLineDecl = currentVariableDecls
-                    .slice(0, currentIndex)
-                    .find(item => item.name === decl.name);
                 if (earlierSameLineDecl) return earlierSameLineDecl;
                 if (isSingleStatementForInitLine(lineText, decl.name)) return null;
                 if (currentArgs.includes(decl)) {
@@ -324,7 +327,15 @@ function createDeclarationDiagnostics(deps) {
             })();
             if (priorSameName) {
                 const constantRedefinitionIssue = getConstantRedefinitionIssue(priorSameName, decl, {
-                    evaluateConstantValue: value => evaluatePawnNumericExpr(value, ctx.allDecls)
+                    evaluateConstantValue: value => {
+                        const analysisCache = getDeclarationAnalysisCache();
+                        return evaluatePawnNumericExpr(
+                            value,
+                            getTypeAnalysisSourceDecls(ctx, analysisCache),
+                            new Set(),
+                            analysisCache
+                        );
+                    }
                 });
                 if (constantRedefinitionIssue?.severity === 'silent') {
                     continue;
@@ -432,7 +443,7 @@ function createDeclarationDiagnostics(deps) {
             const getAssignmentAnalysis = () => {
                 if (!cachedAnalysisCache) {
                     cachedAnalysisCache = getDeclarationAnalysisCache();
-                    cachedAnalysisDecls = ctx.allDecls;
+                    cachedAnalysisDecls = getTypeAnalysisSourceDecls(ctx, cachedAnalysisCache);
                 }
                 return {
                     analysisCache: cachedAnalysisCache,
@@ -659,7 +670,7 @@ function createDeclarationDiagnostics(deps) {
             if (mutation?.target) {
                 const targetLooksAssignable = isSyntacticAssignableExpression(mutation.target);
                 const analysisCache = targetLooksAssignable ? getDeclarationAnalysisCache() : null;
-                const analysisDecls = ctx.allDecls;
+                const analysisDecls = getTypeAnalysisSourceDecls(ctx, analysisCache);
                 const assignable = targetLooksAssignable
                     ? getExpressionAssignableInfo(mutation.target, analysisDecls, analysisCache, { escapeChar })
                     : null;
@@ -693,7 +704,7 @@ function createDeclarationDiagnostics(deps) {
             if (invalidTailDecls.has(decl)) continue;
             if (decl?.type !== 'variable' || decl.dims || !decl.value) continue;
             const analysisCache = getDeclarationAnalysisCache();
-            const analysisDecls = ctx.allDecls;
+            const analysisDecls = getTypeAnalysisSourceDecls(ctx, analysisCache);
             const valueText = String(decl.value || '').trim();
             if (
                 warningsEnabled

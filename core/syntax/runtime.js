@@ -85,7 +85,105 @@ function createSyntaxCore(deps) {
 
     function splitTopLevelCore(str, baseOffset = 0, escapeChar = getActiveCtrlChar(), keepEmpty = false, withRanges = false) {
         const source = String(str || '');
-        if (!source.trim()) return [];
+        let sourceTrimmed = null;
+        const getSourceTrimmed = () => {
+            if (sourceTrimmed == null) sourceTrimmed = source.trim();
+            return sourceTrimmed;
+        };
+        if (!getSourceTrimmed()) return [];
+        const firstComma = source.indexOf(',');
+        if (firstComma < 0) {
+            const trimmed = getSourceTrimmed();
+            if (!trimmed && !keepEmpty) return [];
+            if (!withRanges) return [trimmed];
+            const leadingTrim = source.search(/\S|$/);
+            const endOffset = leadingTrim + trimmed.length;
+            return [{
+                text: trimmed,
+                startOffset: baseOffset + leadingTrim,
+                endOffset: baseOffset + endOffset
+            }];
+        }
+        if (firstComma >= 0) {
+            let hasComplexSyntax = false;
+            for (let index = 0; index < source.length; index++) {
+                const code = source.charCodeAt(index);
+                if (
+                    code === 34 || code === 39 || code === 47 ||
+                    code === 40 || code === 41 ||
+                    code === 91 || code === 93 ||
+                    code === 123 || code === 125
+                ) {
+                    hasComplexSyntax = true;
+                    break;
+                }
+            }
+            if (!hasComplexSyntax) {
+                const parts = [];
+                let start = 0;
+                if (!withRanges) {
+                    for (let index = 0; index <= source.length; index++) {
+                        if (index < source.length && source.charCodeAt(index) !== 44) continue;
+                        const trimmed = source.slice(start, index).trim();
+                        if (trimmed || keepEmpty) parts.push(trimmed);
+                        start = index + 1;
+                    }
+                    return parts;
+                }
+                for (let index = 0; index <= source.length; index++) {
+                    if (index < source.length && source.charCodeAt(index) !== 44) continue;
+                    const rawPiece = source.slice(start, index);
+                    const leadingTrim = rawPiece.search(/\S|$/);
+                    const trimmed = rawPiece.trim();
+                    if (trimmed || keepEmpty) {
+                        parts.push({
+                            text: trimmed,
+                            startOffset: baseOffset + start + leadingTrim,
+                            endOffset: baseOffset + start + leadingTrim + trimmed.length
+                        });
+                    }
+                    start = index + 1;
+                }
+                return parts;
+            }
+        }
+        if (!withRanges && source.indexOf('/') < 0) {
+            const parts = [];
+            let depth = 0;
+            let inStr = false;
+            let strCh = '';
+            let start = 0;
+            const pushSlice = end => {
+                const part = source.slice(start, end).trim();
+                if (part || keepEmpty) parts.push(part);
+                start = end + 1;
+            };
+            for (let index = 0; index < source.length; index++) {
+                const char = source[index];
+                if (inStr) {
+                    if (char === strCh && !isEscapedQuote(source, index, escapeChar)) inStr = false;
+                    continue;
+                }
+                if (char === '"' || char === "'") {
+                    inStr = true;
+                    strCh = char;
+                    continue;
+                }
+                if (char === '[' || char === '(' || char === '{') {
+                    depth++;
+                    continue;
+                }
+                if (char === ']' || char === ')' || char === '}') {
+                    depth--;
+                    continue;
+                }
+                if (char === ',' && depth === 0) {
+                    pushSlice(index);
+                }
+            }
+            pushSlice(source.length);
+            return parts;
+        }
         const parts = [];
         let d = 0, inStr = false, strCh = '', inLineComment = false, inBlockComment = false, start = 0;
         let current = '';
@@ -159,11 +257,11 @@ function createSyntaxCore(deps) {
                 appendCurrent(c, i);
                 continue;
             }
-            if ('[({'.includes(c)) {
+            if (c === '[' || c === '(' || c === '{') {
                 d++;
                 appendCurrent(c, i);
             }
-            else if ('])}'.includes(c)) {
+            else if (c === ']' || c === ')' || c === '}') {
                 d--;
                 appendCurrent(c, i);
             }

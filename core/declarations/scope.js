@@ -449,33 +449,53 @@ function createDeclarationScopeCore(deps) {
     }
 
     function hasTrailingLineContinuation(line, escapeChar = getActiveCtrlChar(), preparedLine = null) {
-        const stripped = String(preparedLine ?? stripLineComment(String(line || ''), escapeChar)).trimEnd();
+        const raw = String(line || '');
+        if (raw.indexOf('\\') < 0) return false;
+        const stripped = String(preparedLine ?? stripLineComment(raw, escapeChar)).trimEnd();
         return hasOddTrailingBackslashContinuation(stripped);
     }
 
     function netParenBraceDepth(line, escapeChar = getActiveCtrlChar()) {
         const source = String(line || '');
+        if (
+            source.indexOf('(') < 0 &&
+            source.indexOf(')') < 0 &&
+            source.indexOf('{') < 0 &&
+            source.indexOf('}') < 0
+        ) {
+            return { parenDepth: 0, braceDepth: 0 };
+        }
         let parenDepth = 0;
         let braceDepth = 0;
         let inStr = false;
-        let strCh = '';
+        let strCh = 0;
         for (let i = 0; i < source.length; i++) {
-            const c = source[i];
+            const code = source.charCodeAt(i);
             if (inStr) {
-                if (c === strCh && !isEscapedQuote(source, i, escapeChar)) inStr = false;
+                if (code === strCh && !isEscapedQuote(source, i, escapeChar)) inStr = false;
                 continue;
             }
-            if (c === '"' || c === "'") {
+            if (code === 34 || code === 39) {
                 inStr = true;
-                strCh = c;
+                strCh = code;
                 continue;
             }
-            if (c === '(') parenDepth++;
-            else if (c === ')') parenDepth--;
-            else if (c === '{') braceDepth++;
-            else if (c === '}') braceDepth--;
+            if (code === 40) parenDepth++;
+            else if (code === 41) parenDepth--;
+            else if (code === 123) braceDepth++;
+            else if (code === 125) braceDepth--;
         }
         return { parenDepth, braceDepth };
+    }
+
+    function endsWithAssignmentIgnoringTrailingWhitespace(line) {
+        const source = String(line || '');
+        for (let index = source.length - 1; index >= 0; index--) {
+            const code = source.charCodeAt(index);
+            if (code === 32 || code === 9) continue;
+            return code === 61;
+        }
+        return false;
     }
 
     function isDeclarationGapLine(rawLine, preparedLine, escapeChar = getActiveCtrlChar()) {
@@ -497,7 +517,7 @@ function createDeclarationScopeCore(deps) {
         let joined = sourceLines[i] || '';
         const initialRawLine = rawLines[i] || '';
         const initialTrimmed = joined.trimEnd();
-        const startsBraceInitializer = /=\s*$/.test(initialTrimmed);
+        const startsBraceInitializer = endsWithAssignmentIgnoringTrailingWhitespace(initialTrimmed);
         const startsBareDeclarationKeyword = isBareDeclarationKeywordLine(initialTrimmed);
         if (
             joined.indexOf('(') < 0 &&

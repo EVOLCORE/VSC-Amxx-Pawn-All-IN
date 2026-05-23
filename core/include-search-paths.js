@@ -29,7 +29,7 @@ function getWorkspaceRootForFile({ vscode }, docFilePath = '') {
 }
 
 function normalizeProjectIncludeHints(rawHints, fallback = ['include']) {
-    const source = Array.isArray(rawHints) && rawHints.length ? rawHints : fallback;
+    const source = Array.isArray(rawHints) ? rawHints : fallback;
     return source
         .map(value => String(value || '').trim())
         .filter(Boolean);

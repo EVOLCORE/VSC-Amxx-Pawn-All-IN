@@ -5,9 +5,11 @@ function createBraceDepthSyntaxCore(deps) {
         getActiveCtrlChar,
         isEscapedQuote
     } = deps;
-    const depthSpecialCharRe = /[{}()\/]/;
     function hasDepthSpecialChar(line) {
-        return depthSpecialCharRe.test(String(line || ''));
+        if (!line) return false;
+        return line.indexOf('{') >= 0 ||
+            line.indexOf('}') >= 0 ||
+            line.indexOf('/') >= 0;
     }
 
     function computeLineDepths(lines, lineCtrlChars = [], lineIndex = null) {
@@ -16,6 +18,7 @@ function createBraceDepthSyntaxCore(deps) {
         let braceD = 0, blockCmt = false;
         const defaultEscapeChar = getActiveCtrlChar();
         const indexedLineFlags = lineIndex?.lineFlags || null;
+        const braceOnlyLineFlags = lineIndex?.braceOnlyLineFlags || null;
         const indexedDepthSpecialCharMask = indexedLineFlags
             ? (lineIndex?.depthSpecialCharMask || 0)
             : 0;
@@ -33,6 +36,14 @@ function createBraceDepthSyntaxCore(deps) {
                 } else if (!hasDepthSpecialChar(line)) {
                     continue;
                 }
+            }
+            if (!blockCmt && braceOnlyLineFlags?.[lineNo]) {
+                for (let j = 0; j < line.length; j++) {
+                    const code = line.charCodeAt(j);
+                    if (code === 123) braceD++;
+                    else if (code === 125 && braceD > 0) braceD--;
+                }
+                continue;
             }
             const escapeChar = lineCtrlChars[lineNo] || defaultEscapeChar;
             let parenD = 0, inStr = false, strCh = '', lineCmt = false;

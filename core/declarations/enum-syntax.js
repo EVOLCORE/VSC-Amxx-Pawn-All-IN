@@ -16,29 +16,47 @@ function createEnumSyntaxDiagnosticsCore(deps) {
     } = deps;
 
     function splitTopLevelWithOffsets(source) {
-        if (!String(source || '').trim()) return [];
+        const text = typeof source === 'string' ? source : String(source || '');
+        if (!text) return [];
         const parts = [];
-        const escapeChar = getActiveCtrlChar();
-        let depth = 0;
-        let inStr = false;
-        let strCh = '';
+        const firstComma = text.indexOf(',');
+        if (firstComma < 0) {
+            let trimStart = 0;
+            let trimStartLineOffset = 0;
+            while (trimStart < text.length && isWhitespaceCharCode(text.charCodeAt(trimStart))) {
+                if (text.charCodeAt(trimStart) === 10) trimStartLineOffset++;
+                trimStart++;
+            }
+            let trimEnd = text.length;
+            while (trimEnd > trimStart && isWhitespaceCharCode(text.charCodeAt(trimEnd - 1))) {
+                trimEnd--;
+            }
+            return trimStart < trimEnd
+                ? [{
+                    text: text.slice(trimStart, trimEnd),
+                    startOffset: trimStart,
+                    startLineOffset: trimStartLineOffset
+                }]
+                : [];
+        }
+
         let startOffset = 0;
         let startLineOffset = 0;
         let lineOffset = 0;
         const pushPart = endOffset => {
             let trimStart = startOffset;
             let trimStartLineOffset = startLineOffset;
-            while (trimStart < endOffset && isWhitespaceCharCode(source.charCodeAt(trimStart))) {
-                if (source[trimStart] === '\n') trimStartLineOffset++;
+            while (trimStart < endOffset && isWhitespaceCharCode(text.charCodeAt(trimStart))) {
+                if (text.charCodeAt(trimStart) === 10) trimStartLineOffset++;
                 trimStart++;
             }
             let trimEnd = endOffset;
-            while (trimEnd > trimStart && isWhitespaceCharCode(source.charCodeAt(trimEnd - 1))) {
+            while (trimEnd > trimStart && isWhitespaceCharCode(text.charCodeAt(trimEnd - 1))) {
                 trimEnd--;
             }
             if (trimStart < trimEnd) {
                 parts.push({
-                    text: source.slice(trimStart, trimEnd),
+                    text: text.slice(trimStart, trimEnd),
                     startOffset: trimStart,
                     startLineOffset: trimStartLineOffset
                 });
@@ -46,29 +64,33 @@ function createEnumSyntaxDiagnosticsCore(deps) {
             startOffset = endOffset + 1;
             startLineOffset = lineOffset;
         };
-        for (let index = 0; index < source.length; index++) {
-            const char = source[index];
-            if (char === '\n') {
+        const escapeChar = getActiveCtrlChar();
+        let depth = 0;
+        let inStr = false;
+        let strCh = 0;
+        for (let index = 0; index < text.length; index++) {
+            const code = text.charCodeAt(index);
+            if (code === 10) {
                 lineOffset++;
             }
             if (inStr) {
-                if (char === strCh && !isEscapedQuote(source, index, escapeChar)) {
+                if (code === strCh && !isEscapedQuote(text, index, escapeChar)) {
                     inStr = false;
                 }
                 continue;
             }
-            if (char === '"' || char === "'") {
+            if (code === 34 || code === 39) {
                 inStr = true;
-                strCh = char;
+                strCh = code;
                 continue;
             }
-            if (char === '[' || char === '(' || char === '{') depth++;
-            else if (char === ']' || char === ')' || char === '}') depth--;
-            else if (char === ',' && depth === 0) {
+            if (code === 91 || code === 40 || code === 123) depth++;
+            else if (code === 93 || code === 41 || code === 125) depth--;
+            else if (code === 44 && depth === 0) {
                 pushPart(index);
             }
         }
-        pushPart(source.length);
+        pushPart(text.length);
         return parts;
     }
 
@@ -118,6 +140,19 @@ function createEnumSyntaxDiagnosticsCore(deps) {
         };
     }
 
+    function isEnumMemberStartIssueBoundaryCode(code) {
+        return (
+            code === 40 || // (
+            code === 41 || // )
+            code === 44 || // ,
+            code === 59 || // ;
+            code === 91 || // [
+            code === 93 || // ]
+            code === 123 || // {
+            code === 125    // }
+        );
+    }
+
     function readUnexpectedEnumMemberStartIssue(source) {
         const piece = String(source || '');
         let cursor = 0;
@@ -129,7 +164,7 @@ function createEnumSyntaxDiagnosticsCore(deps) {
         while (
             end < piece.length &&
             !isWhitespaceCharCode(piece.charCodeAt(end)) &&
-            !/[,;[\](){}]/.test(piece[end] || '')
+            !isEnumMemberStartIssueBoundaryCode(piece.charCodeAt(end))
         ) {
             end++;
         }

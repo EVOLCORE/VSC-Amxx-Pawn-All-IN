@@ -1,4 +1,4 @@
-const { createUtilityCore } = require('../utils');
+const { createUtilityCore } = require('../utils/runtime');
 const { normalizePathKey } = require('../utils/path');
 const {
     isAnyPawnTagName,
@@ -8,7 +8,9 @@ const {
 const {
     containsPawnIdentifierStartChar,
     getPawnIdentifierName,
-    isPawnIdentifierName
+    isPawnIdentifierContinueCode,
+    isPawnIdentifierName,
+    isPawnIdentifierStartCode
 } = require('../syntax/identifiers');
 const {
     getObjectAliasTargetName,
@@ -56,6 +58,7 @@ function createValidationCore(deps) {
         unwrapOuterParens,
         extractEnumSymbolName,
         findDeclByNameCached,
+        getDeclNameBuckets,
         isFunctionLikeDecl,
         BUILTIN_DECLS,
         FORBIDDEN,
@@ -72,6 +75,9 @@ function createValidationCore(deps) {
         isIdentifierStartChar: isPawnIdentifierStartChar,
         isIdentifierContinueChar: isPawnIdentifierContinueChar
     });
+    const usesDefaultPawnIdentifierPredicates =
+        isPawnIdentifierStartChar === defaultIsPawnIdentifierStartChar &&
+        isPawnIdentifierContinueChar === defaultIsPawnIdentifierContinueChar;
     const macroExpansionCore = createMacroExpansionSyntaxCore({
         isEscapedQuote,
         isIdentifierStartChar: isPawnIdentifierStartChar,
@@ -267,6 +273,7 @@ function createValidationCore(deps) {
     const createHoverTypeAnalysisCache = createTypeAnalysisCacheFactory({
         BUILTIN_DECLS,
         findDeclByNameCached,
+        getDeclNameBuckets,
         parseDimSpec,
         parseDimsParts,
         parseParamMeta
@@ -338,44 +345,54 @@ function createValidationCore(deps) {
 
     function getExpressionAssignableInfo(expr, decls = [], analysisCache = null, options = {}) {
         const escapeChar = options?.escapeChar ?? getActiveCtrlChar();
+        const cacheKey = analysisCache?.assignableInfoByExpr
+            ? `${escapeChar}\0${String(expr || '').trim()}`
+            : '';
+        if (cacheKey && analysisCache.assignableInfoByExpr.has(cacheKey)) {
+            return analysisCache.assignableInfoByExpr.get(cacheKey);
+        }
+        const finish = result => {
+            if (cacheKey) analysisCache.assignableInfoByExpr.set(cacheKey, result);
+            return result;
+        };
         const source = stripTagCastsForValidation(expr, escapeChar);
         if (!source) {
-            return { isLValue: false, isConst: false, dims: '', baseDecl: null, name: '', isIndexedAccess: false };
+            return finish({ isLValue: false, isConst: false, dims: '', baseDecl: null, name: '', isIndexedAccess: false });
         }
         const expandedSource = expandExpressionMacrosForTypeInference(source, decls, analysisCache);
         if (expandedSource) {
-            return getExpressionAssignableInfo(expandedSource, decls, analysisCache, options);
+            return finish(getExpressionAssignableInfo(expandedSource, decls, analysisCache, options));
         }
 
         const bareName = getPawnIdentifierName(source);
         if (bareName) {
             const decl = findVariableOrObjectAliasTargetDeclByNameFromSources(decls, bareName, analysisCache);
             if (!decl) {
-                return { isLValue: false, isConst: false, dims: '', baseDecl: null, name: bareName, isIndexedAccess: false };
+                return finish({ isLValue: false, isConst: false, dims: '', baseDecl: null, name: bareName, isIndexedAccess: false });
             }
             const inferred = inferArgType(source, decls, analysisCache);
-            return {
+            return finish({
                 isLValue: true,
                 isConst: isConstVariableDecl(decl),
                 dims: inferred?.dims || '',
                 baseDecl: decl,
                 name: bareName,
                 isIndexedAccess: false
-            };
+            });
         }
 
         const indexedExpr = parseAssignableAccessExpression(source, escapeChar);
         if (indexedExpr?.baseName) {
             const baseDecl = findVariableOrObjectAliasTargetDeclByNameFromSources(decls, indexedExpr.baseName, analysisCache);
             if (!baseDecl) {
-                return {
+                return finish({
                     isLValue: false,
                     isConst: false,
                     dims: '',
                     baseDecl: null,
                     name: indexedExpr.baseName,
                     isIndexedAccess: true
-                };
+                });
             }
             const inferred = inferArgType(source, decls, analysisCache);
             let allowsScalarAssignmentToArrayField = false;
@@ -392,7 +409,7 @@ function createValidationCore(deps) {
                     Array.isArray(lastStep.nextDimParts) &&
                     lastStep.nextDimParts.length > 0;
             }
-            return {
+            return finish({
                 isLValue: true,
                 isConst: isConstVariableDecl(baseDecl),
                 dims: inferred?.dims || '',
@@ -400,10 +417,10 @@ function createValidationCore(deps) {
                 name: indexedExpr.baseName,
                 isIndexedAccess: true,
                 allowsScalarAssignmentToArrayField
-            };
+            });
         }
 
-        return { isLValue: false, isConst: false, dims: '', baseDecl: null, name: '', isIndexedAccess: false };
+        return finish({ isLValue: false, isConst: false, dims: '', baseDecl: null, name: '', isIndexedAccess: false });
     }
 
     function isSyntacticAssignableExpression(expr, options = {}) {
@@ -501,19 +518,26 @@ function createValidationCore(deps) {
         const text = String(source || '');
         if (!containsPawnIdentifierStartChar(text)) return false;
         let inStr = false;
-        let strCh = '';
+        let strCh = 0;
         for (let index = 0; index < text.length; index++) {
-            const char = text[index];
+            const code = text.charCodeAt(index);
             if (inStr) {
-                if (char === strCh && !isEscapedQuote(text, index, escapeChar)) inStr = false;
+                if (code === strCh && !isEscapedQuote(text, index, escapeChar)) inStr = false;
                 continue;
             }
-            if (char === '"' || char === "'") {
+            if (code === 34 || code === 39) {
                 inStr = true;
-                strCh = char;
+                strCh = code;
                 continue;
             }
-            if ('+-*/%&|^<>?:!~'.includes(char)) return true;
+            if (
+                code === 33 || code === 37 || code === 38 || code === 42 ||
+                code === 43 || code === 45 || code === 47 || code === 58 ||
+                code === 60 || code === 62 || code === 63 || code === 94 ||
+                code === 124 || code === 126
+            ) {
+                return true;
+            }
         }
         return false;
     }
@@ -628,15 +652,25 @@ function createValidationCore(deps) {
     function expandExpressionMacrosForTypeInference(expr, decls = [], analysisCache = null, disabledNames = new Set()) {
         const source = String(expr || '').trim();
         if (!source || source.length > 512 || !containsPawnIdentifierStartChar(source)) return '';
+        const findDefineForMacroExpansion = name => {
+            const key = String(name || '');
+            if (!key) return null;
+            const cache = analysisCache?.macroDefineByName;
+            if (cache?.has(key)) return cache.get(key);
+            const decl = findAnyDeclByNameFromSources(
+                decls,
+                key,
+                item => item.type === 'define',
+                analysisCache
+            );
+            const result = decl?.type === 'define' ? decl : null;
+            cache?.set(key, result);
+            return result;
+        };
         const expanded = macroExpansionCore.expandMacros(source, decls, {
             escapeChar: getActiveCtrlChar(),
             disabledNames,
-            getDefine: name => findAnyDeclByNameFromSources(
-                decls,
-                name,
-                item => item.type === 'define',
-                analysisCache
-            ),
+            getDefine: findDefineForMacroExpansion,
             maxInputLength: 512,
             maxOutputLength: 2048
         });
@@ -1618,6 +1652,16 @@ function createValidationCore(deps) {
         return semanticSyntaxCore.parseWholeCallExpression(expr, { escapeChar });
     }
 
+    function isIgnoredReferenceName(name) {
+        return FORBIDDEN.has(name) ||
+            name === '_' ||
+            name === 'true' ||
+            name === 'false' ||
+            name === 'cellmin' ||
+            name === 'cellmax' ||
+            name === 'char';
+    }
+
     function findUnresolvedReferenceNames(expr, decls = [], analysisCache = null, escapeChar = getActiveCtrlChar()) {
         const cacheKey = String(expr || '').trim();
         if (analysisCache?.unresolvedRefsByExpr.has(cacheKey)) {
@@ -1631,10 +1675,6 @@ function createValidationCore(deps) {
             if (analysisCache) analysisCache.unresolvedRefsByExpr.set(cacheKey, expandedResult);
             return expandedResult;
         }
-        const unresolved = new Set();
-        let inStr = false;
-        let strCh = '';
-
         const hasKnownSymbol = (name, isCallLike) => {
             const predicate = isCallLike
                 ? item => isFunctionLikeDecl(item)
@@ -1651,6 +1691,25 @@ function createValidationCore(deps) {
             return false;
         };
 
+        const bareName = getPawnIdentifierName(cacheKey);
+        if (bareName) {
+            const result = isIgnoredReferenceName(bareName) || hasKnownSymbol(bareName, false)
+                ? []
+                : [bareName];
+            if (analysisCache) analysisCache.unresolvedRefsByExpr.set(cacheKey, result);
+            return result;
+        }
+
+        const unresolved = new Set();
+        let inStr = false;
+        let strCh = '';
+        const isIdentifierStartAt = usesDefaultPawnIdentifierPredicates
+            ? index => isPawnIdentifierStartCode(source.charCodeAt(index))
+            : index => isIdentifierStartChar(source[index] || '');
+        const isIdentifierContinueAt = usesDefaultPawnIdentifierPredicates
+            ? index => isPawnIdentifierContinueCode(source.charCodeAt(index))
+            : index => isIdentifierContinueChar(source[index] || '');
+
         for (let i = 0; i < source.length; i++) {
             const c = source[i];
             if (inStr) {
@@ -1662,26 +1721,16 @@ function createValidationCore(deps) {
                 strCh = c;
                 continue;
             }
-            if (!isIdentifierStartChar(c)) continue;
+            if (!isIdentifierStartAt(i)) continue;
             if (isHexLiteralIdentifierTail(source, i)) continue;
 
             const start = i;
             let end = i + 1;
-            while (end < source.length && isIdentifierContinueChar(source[end])) end++;
+            while (end < source.length && isIdentifierContinueAt(end)) end++;
             const name = source.slice(i, end);
             i = end - 1;
 
-            if (
-                FORBIDDEN.has(name) ||
-                name === '_' ||
-                name === 'true' ||
-                name === 'false' ||
-                name === 'cellmin' ||
-                name === 'cellmax' ||
-                name === 'char'
-            ) {
-                continue;
-            }
+            if (isIgnoredReferenceName(name)) continue;
 
             const prevIndex = findPreviousNonWhitespaceIndex(source, start - 1);
             const nextIndex = findFirstNonWhitespaceIndex(source, end);

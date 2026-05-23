@@ -1,5 +1,7 @@
 const PRECOMPUTED_DECL_NAME_BUCKETS = '__pawnDeclNameBuckets';
 const PRECOMPUTED_VARIABLE_NAME_BUCKETS = '__pawnVariableNameBuckets';
+const LAZY_PRECOMPUTE_MIN_DECLS = 8;
+const EMPTY_VARIABLE_NAME_BUCKETS = new Map();
 
 function getPrecomputedDeclNameBuckets(decls) {
     return Array.isArray(decls) && decls[PRECOMPUTED_DECL_NAME_BUCKETS] instanceof Map
@@ -13,19 +15,31 @@ function getPrecomputedVariableNameBuckets(decls) {
         : null;
 }
 
+function hasPrecomputedDeclBucketProperties(decls) {
+    if (!Array.isArray(decls)) return false;
+    return !!(
+        Object.getOwnPropertyDescriptor(decls, PRECOMPUTED_DECL_NAME_BUCKETS) &&
+        Object.getOwnPropertyDescriptor(decls, PRECOMPUTED_VARIABLE_NAME_BUCKETS)
+    );
+}
+
 function buildDeclBuckets(decls = []) {
     const nameBuckets = new Map();
-    const variableBuckets = new Map();
+    let variableBuckets = null;
     for (const decl of decls || []) {
-        if (!decl?.name) continue;
-        const bucket = nameBuckets.get(decl.name);
+        if (!decl) continue;
+        const name = decl.name;
+        if (!name) continue;
+        const bucket = nameBuckets.get(name);
         if (bucket) bucket.push(decl);
-        else nameBuckets.set(decl.name, [decl]);
-        if (decl.type === 'variable' && !variableBuckets.get(decl.name)) {
-            variableBuckets.set(decl.name, decl);
+        else nameBuckets.set(name, [decl]);
+        if (decl.type !== 'variable') continue;
+        if (!variableBuckets) variableBuckets = new Map();
+        if (!variableBuckets.get(name)) {
+            variableBuckets.set(name, decl);
         }
     }
-    return { nameBuckets, variableBuckets };
+    return { nameBuckets, variableBuckets: variableBuckets || EMPTY_VARIABLE_NAME_BUCKETS };
 }
 
 function attachPrecomputedDeclBuckets(decls, nameBuckets, variableBuckets) {
@@ -54,8 +68,8 @@ function attachBuiltPrecomputedDeclBuckets(decls) {
 
 function attachLazyPrecomputedDeclBuckets(decls) {
     if (!Array.isArray(decls)) return decls;
-    if (decls.length <= 1) return decls;
-    if (getPrecomputedDeclNameBuckets(decls) && getPrecomputedVariableNameBuckets(decls)) {
+    if (decls.length < LAZY_PRECOMPUTE_MIN_DECLS) return decls;
+    if (hasPrecomputedDeclBucketProperties(decls)) {
         return decls;
     }
 

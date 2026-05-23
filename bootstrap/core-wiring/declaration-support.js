@@ -1,10 +1,12 @@
 const {
-    createDeclarationScopeCore,
+    createDeclarationScopeCore
+} = require('../../core/declarations/scope');
+const {
     createDeclarationPredicateCore
-} = require('../../core/declarations/index');
-const { createDeclLookupCore } = require('../../core/lookup/index');
-const { createEnumCore } = require('../../core/enums/index');
-const { createRenderCore } = require('../../core/render/index');
+} = require('../../core/declarations/predicates');
+const { createDeclLookupCore } = require('../../core/lookup/runtime');
+const { createEnumCore } = require('../../core/enums/runtime');
+const { createRenderCore } = require('../../core/render/runtime');
 
 function createDeclarationSupportRuntime(deps) {
     const {

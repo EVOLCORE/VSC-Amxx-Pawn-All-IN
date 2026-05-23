@@ -1,5 +1,5 @@
 const { isPreprocessorDirectiveLine } = require('./preprocessor-lines');
-const { readPreprocessorIdentifierToken } = require('./preprocessor-directives');
+const { readPreprocessorIdentifierToken } = require('./preprocessor-directive-context');
 const { parsePawnIncludeDirectiveTarget } = require('./includes');
 const { readPawnIdentifierAt } = require('./identifiers');
 const { splitPawnLines } = require('./lines');

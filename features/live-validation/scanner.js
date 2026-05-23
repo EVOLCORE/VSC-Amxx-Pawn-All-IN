@@ -1,4 +1,4 @@
-const { createUtilityCore } = require('../../core/utils');
+const { createUtilityCore } = require('../../core/utils/runtime');
 const {
     createDocumentScanPlanBuilder,
     buildDiagnosticLinePlan
@@ -237,6 +237,10 @@ function createLiveValidationScanner(deps) {
             return !!documentScanPlan.backslashContinuationLines[lineNumber];
         };
         const isPreprocessorDirectiveLine = lineNumber => {
+            const lineIndex = documentScanPlan.lineIndex;
+            if (typeof lineIndex?.isPreprocessorDirectiveLine === 'function') {
+                return lineIndex.isPreprocessorDirectiveLine(lineNumber);
+            }
             return isPreprocessorDirectiveTextLine(documentScanPlan.rawLines[lineNumber]);
         };
         let sequentialContextBarrierPrefix = null;
@@ -436,12 +440,20 @@ function createLiveValidationScanner(deps) {
         const findFunctionBodyRangeForLine = lineNumber => {
             return documentScanPlan.functionBodyRangeByLine[lineNumber] || null;
         };
+        const isOnlyBraceLineText = text => {
+            if (!text) return false;
+            for (let index = 0; index < text.length; index++) {
+                const code = text.charCodeAt(index);
+                if (code !== 123 && code !== 125) return false;
+            }
+            return true;
+        };
         const computeReusableContextEndLine = (lineNumber, lineCtx) => {
             const locals = lineCtx?.parsedDecls?.locals || [];
             const funcArgs = lineCtx?.parsedDecls?.funcArgs || [];
             const bodyRange = findFunctionBodyRangeForLine(lineNumber);
             const trimmedRawLine = String(documentScanPlan.rawLines[lineNumber] || '').trim();
-            if (/^[{}]+$/.test(trimmedRawLine)) {
+            if (isOnlyBraceLineText(trimmedRawLine)) {
                 return lineNumber;
             }
             if (isEnumMemberLine(lineNumber)) {
@@ -457,8 +469,11 @@ function createLiveValidationScanner(deps) {
                 }
                 return document.lineCount - 1;
             }
+            if (!bodyRange) {
+                return lineNumber;
+            }
 
-            let validThroughLine = bodyRange?.endLine ?? lineNumber;
+            let validThroughLine = bodyRange.endLine;
             for (const local of locals) {
                 const scopeEndLine = local.scopeEndLine ?? local.lineNumber;
                 if (scopeEndLine >= lineNumber) {
@@ -763,14 +778,16 @@ function createLiveValidationScanner(deps) {
             isDelimiterTaintedLine
         });
         const shouldSkipDiagnosticLine = diagnosticLineFilter.shouldSkipDiagnostic;
-        const shouldSkipLine = diagnosticLineFilter.shouldSkipLine;
+        const shouldSkipInactiveDiagnosticLine = diagnosticLineFilter.shouldSkipInactiveDiagnostic;
+        const shouldSkipInactiveLine = diagnosticLineFilter.shouldSkipInactiveLine;
+        const shouldSkipTaintedLine = diagnosticLineFilter.shouldSkipTaintedLine;
         const delimiterDiagnostics = lineNumbers
             ? (delimiterState.diagnostics || EMPTY_DIAGNOSTICS).filter(diagnostic =>
                 lineNumbers.has(getDiagnosticStartLine(diagnostic))
             )
             : (delimiterState.diagnostics || EMPTY_DIAGNOSTICS);
         for (const diagnostic of delimiterDiagnostics) {
-            if (shouldSkipDiagnosticLine(diagnostic, { tainted: false })) continue;
+            if (shouldSkipInactiveDiagnosticLine(diagnostic)) continue;
             pushDiagnostic(diagnostic);
         }
         let hasUnresolvedRequiredIncludes = (rootCtx.preprocessedState?.unresolvedIncludeEntries || [])
@@ -840,15 +857,14 @@ function createLiveValidationScanner(deps) {
         } = diagnosticLinePlan;
 
         for (const lineNumber of combinedDiagnosticLineNumbers) {
-            if (shouldSkipLine(lineNumber, { tainted: false })) continue;
+            if (shouldSkipInactiveLine(lineNumber)) continue;
             const invalidCodeCharacterState = invalidCodeCharacterCandidateLineFlags[lineNumber]
                 ? collectInvalidCodeCharacterDiagnosticsForLineNumber(lineNumber)
                 : null;
             const lineHasInvalidCodeCharacters = !!invalidCodeCharacterState?.diagnostics.length;
             const firstInvalidCodeCharacter = invalidCodeCharacterState?.firstCharacter ?? -1;
-            if (isDelimiterTaintedLine(lineNumber)) continue;
+            if (shouldSkipTaintedLine(lineNumber)) continue;
             if (hasUnresolvedRequiredIncludes) continue;
-            if (shouldSkipLine(lineNumber, { inactive: false })) continue;
             if (isBackslashContinuationLine(lineNumber)) continue;
             if (isEnumMemberLine(lineNumber)) continue;
             if (documentScanPlan.functionHeaderLines?.has(lineNumber)) continue;
@@ -875,7 +891,7 @@ function createLiveValidationScanner(deps) {
         if (!hasUnresolvedRequiredIncludes && !isFullScan) {
             const touchedFunctions = new Set();
             for (const lineNumber of focusLineNumbers) {
-                if (shouldSkipLine(lineNumber, { inactive: false })) continue;
+                if (shouldSkipTaintedLine(lineNumber)) continue;
                 const { text: lineText } = getValidationLineSnapshot(lineNumber);
                 const probePosition = new vscode.Position(lineNumber, lineText.length);
                 if (lineText.includes('(')) {
@@ -903,7 +919,7 @@ function createLiveValidationScanner(deps) {
                     const funcKey = `${func.name}|${func.startLine}|${headerEndLine}`;
                     if (touchedFunctions.has(funcKey)) continue;
                     touchedFunctions.add(funcKey);
-                    if (shouldSkipLine(func.startLine, { inactive: false })) continue;
+                    if (shouldSkipTaintedLine(func.startLine)) continue;
                     for (const diagnostic of collectHeaderDiagnosticsForFunction(func)) {
                         pushDiagnostic(diagnostic);
                     }
@@ -912,7 +928,7 @@ function createLiveValidationScanner(deps) {
         } else if (!hasUnresolvedRequiredIncludes) {
             for (const func of headerCandidateFunctions) {
                 if (documentScanPlan.inactiveStockLines?.has(func.startLine)) continue;
-                if (shouldSkipLine(func.startLine, { inactive: false })) continue;
+                if (shouldSkipTaintedLine(func.startLine)) continue;
                 for (const diagnostic of collectHeaderDiagnosticsForFunction(func)) {
                     pushDiagnostic(diagnostic);
                 }

@@ -116,7 +116,8 @@ function buildLiveValidationFeature(deps, support) {
         getLiveValidationFullCacheKey,
         buildDependencyStampMap,
         getDependencyFreshnessVersion,
-        areDependencyStampsFresh
+        areDependencyStampsFresh,
+        readNormalizedFileContent
     } = sharedRuntime;
 
     const {
@@ -161,6 +162,7 @@ function buildLiveValidationFeature(deps, support) {
         buildDependencyStampMap,
         getDependencyFreshnessVersion,
         areDependencyStampsFresh,
+        readNormalizedFileContent,
         createHoverTypeAnalysisCache,
         collectIndexedAccessExpressionsFromLine,
         findVariableDeclarationSpanInRange,

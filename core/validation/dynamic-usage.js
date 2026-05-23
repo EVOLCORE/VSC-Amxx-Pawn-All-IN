@@ -1,4 +1,4 @@
-const { parsePragmaDirectiveLine } = require('../syntax/preprocessor-directives');
+const { parsePragmaDirectiveLine } = require('../syntax/pragma-directives');
 
 function createDynamicUsageDiagnostics(deps = {}) {
     const {
@@ -15,15 +15,20 @@ function createDynamicUsageDiagnostics(deps = {}) {
             rootCtx?.strippedLines ||
             rootCtx?.rawLines ||
             [];
-        const decls = rootCtx?.allDecls || [];
         let limit = DEFAULT_DYNAMIC_CELLS;
+        let decls = null;
+        const getDecls = () => {
+            if (analysisCache) return [];
+            if (!decls) decls = rootCtx?.allDecls || [];
+            return decls;
+        };
 
         for (const line of lines) {
             const pragma = parsePragmaDirectiveLine(line);
             if (pragma?.name !== 'dynamic') continue;
             const expr = String(pragma.value || '').trim();
             if (!expr) continue;
-            const value = evaluatePawnNumericExpr(expr, decls, new Set(), analysisCache);
+            const value = evaluatePawnNumericExpr(expr, getDecls(), new Set(), analysisCache);
             if (Number.isFinite(value) && value >= 0) {
                 limit = Math.floor(value);
             }
@@ -39,11 +44,16 @@ function createDynamicUsageDiagnostics(deps = {}) {
         const dimParts = getEffectiveDeclDimParts(decl);
         if (!dimParts.length) return 1;
 
-        const decls = rootCtx?.allDecls || [];
+        let decls = null;
+        const getDecls = () => {
+            if (analysisCache) return [];
+            if (!decls) decls = rootCtx?.allDecls || [];
+            return decls;
+        };
         let cells = 1;
         for (const part of dimParts) {
             const spec = analysisCache?.getDimSpec?.(part) ||
-                parseDimSpec(part, decls, new Set(), analysisCache);
+                parseDimSpec(part, getDecls(), new Set(), analysisCache);
             const capacity = spec?.capacity;
             if (!Number.isFinite(capacity) || capacity <= 0) return null;
             cells *= Math.floor(capacity);

@@ -1,4 +1,4 @@
-const { createUtilityCore } = require('./utils');
+const { createUtilityCore } = require('./utils/runtime');
 
 const COMPILER_INCLUDE_FILE_EXTENSIONS = Object.freeze(['.inc', '.p', '.i', '.pawn']);
 const DEFAULT_CUSTOM_INCLUDE_FILE_EXTENSIONS = Object.freeze(['.inl']);

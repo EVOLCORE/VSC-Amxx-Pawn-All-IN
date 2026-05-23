@@ -1,20 +1,17 @@
-const {
-    createCommentAnalysisCore,
-    createSyntaxCore,
-    createSyntaxConstantCore,
-    createCtrlCharSyntaxCore,
-    createLookupTokenSyntaxCore,
-    createBraceDepthSyntaxCore,
-    createLiteralSyntaxCore,
-    createLabelSyntaxCore,
-    createStateSyntaxCore,
-    createRationalPolicySyntaxCore
-} = require('../../core/syntax/index');
-const {
-    createDocumentContextUtilityCore,
-    createFileSnapshotCore
-} = require('../../core/document-context/index');
-const { createUtilityCore, createPathUtilityCore } = require('../../core/utils/index');
+const { createCommentAnalysisCore } = require('../../core/syntax/comment-analysis');
+const { createSyntaxCore } = require('../../core/syntax/runtime');
+const { createSyntaxConstantCore } = require('../../core/syntax/constants');
+const { createCtrlCharSyntaxCore } = require('../../core/syntax/ctrlchar');
+const { createLookupTokenSyntaxCore } = require('../../core/syntax/token-lookup');
+const { createBraceDepthSyntaxCore } = require('../../core/syntax/brace-depth');
+const { createLiteralSyntaxCore } = require('../../core/syntax/literals');
+const { createLabelSyntaxCore } = require('../../core/syntax/labels');
+const { createStateSyntaxCore } = require('../../core/syntax/states');
+const { createRationalPolicySyntaxCore } = require('../../core/syntax/rational-policy');
+const { createDocumentContextUtilityCore } = require('../../core/document-context/document-utils');
+const { createFileSnapshotCore } = require('../../core/document-context/file-snapshot');
+const { createUtilityCore } = require('../../core/utils/runtime');
+const { createPathUtilityCore } = require('../../core/utils/path');
 
 function createCoreSyntaxPrelude({ t }) {
     return {

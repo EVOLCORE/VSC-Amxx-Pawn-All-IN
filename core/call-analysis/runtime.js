@@ -3,7 +3,11 @@
 // gradually shrinking the main extension file.
 const { createCallArgLayoutCore } = require('./arg-layout');
 const { createPawnFunctionCallRegex } = require('../declarations/line-utils');
-const { getPawnIdentifierName } = require('../syntax/identifiers');
+const {
+    getPawnIdentifierName,
+    isPawnIdentifierContinueCode,
+    isPawnIdentifierStartCode
+} = require('../syntax/identifiers');
 const { buildLineStartOffsets } = require('../syntax/lines');
 
 function createCallAnalysisCore(deps) {
@@ -11,8 +15,6 @@ function createCallAnalysisCore(deps) {
         vscode,
         t,
         escapeRegExp,
-        isIdentifierStartChar,
-        isIdentifierContinueChar,
         parseParamMeta,
         isVariadicParam,
         inferArgType,
@@ -358,14 +360,17 @@ function createCallAnalysisCore(deps) {
 
     function getCallNameInfoBeforeIndex(text, endIndex) {
         let cursor = endIndex - 1;
-        while (cursor >= 0 && /\s/.test(text[cursor])) cursor--;
-        if (cursor < 0 || !isIdentifierContinueChar(text[cursor])) return null;
+        while (cursor >= 0) {
+            const code = text.charCodeAt(cursor);
+            if (code > 32) break;
+            cursor--;
+        }
+        if (cursor < 0 || !isPawnIdentifierContinueCode(text.charCodeAt(cursor))) return null;
 
         const end = cursor + 1;
-        while (cursor >= 0 && isIdentifierContinueChar(text[cursor])) cursor--;
+        while (cursor >= 0 && isPawnIdentifierContinueCode(text.charCodeAt(cursor))) cursor--;
         const start = cursor + 1;
-        const firstChar = text[start] || '';
-        if (!isIdentifierStartChar(firstChar)) return null;
+        if (!isPawnIdentifierStartCode(text.charCodeAt(start))) return null;
 
         const funcName = text.slice(start, end);
         return FORBIDDEN.has(funcName)
@@ -645,28 +650,29 @@ function createCallAnalysisCore(deps) {
         const callStack = [];
         const completedCalls = [];
         let index = 0;
-        let inStr = false, strChar = '', lineComment = false, blockComment = false;
+        let inStr = false, strChar = 0, lineComment = false, blockComment = false;
 
         while (index < linePrefix.length) {
-            const c = linePrefix[index];
+            const code = linePrefix.charCodeAt(index);
+            const nextCode = linePrefix.charCodeAt(index + 1);
 
             if (blockComment) {
-                if (c === '*' && linePrefix[index + 1] === '/') { blockComment = false; index += 2; }
+                if (code === 42 && nextCode === 47) { blockComment = false; index += 2; }
                 else index++;
                 continue;
             }
             if (lineComment) break;
             if (inStr) {
-                if (c === strChar && !isEscapedQuote(linePrefix, index, escapeChar)) inStr = false;
+                if (code === strChar && !isEscapedQuote(linePrefix, index, escapeChar)) inStr = false;
                 index++;
                 continue;
             }
 
-            if (c === '/' && linePrefix[index + 1] === '/') { lineComment = true; index += 2; continue; }
-            if (c === '/' && linePrefix[index + 1] === '*') { blockComment = true; index += 2; continue; }
-            if (c === '"' || c === "'") { inStr = true; strChar = c; index++; continue; }
+            if (code === 47 && nextCode === 47) { lineComment = true; index += 2; continue; }
+            if (code === 47 && nextCode === 42) { blockComment = true; index += 2; continue; }
+            if (code === 34 || code === 39) { inStr = true; strChar = code; index++; continue; }
 
-            if (c === '(') {
+            if (code === 40) {
                 const callNameInfo = getCallNameInfoBeforeIndex(linePrefix, index);
                 callStack.push({
                     funcName: callNameInfo?.funcName || null,
@@ -675,7 +681,7 @@ function createCallAnalysisCore(deps) {
                     openOffset: lineStartOffset + index,
                     argIndex: 0
                 });
-            } else if (c === ')') {
+            } else if (code === 41) {
                 if (callStack.length > 0) {
                     const closedCall = callStack.pop();
                     if (includeClosedCalls && closedCall?.funcName) {
@@ -685,7 +691,7 @@ function createCallAnalysisCore(deps) {
                         });
                     }
                 }
-            } else if (c === ',' && callStack.length > 0) {
+            } else if (code === 44 && callStack.length > 0) {
                 callStack[callStack.length - 1].argIndex++;
             }
 

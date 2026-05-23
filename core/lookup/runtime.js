@@ -23,6 +23,10 @@ function createDeclLookupCore(deps) {
         const matches = buckets.get(name);
         if (!matches?.length) return null;
         if (!predicate) return matches[0];
+        if (matches.length === 1) {
+            const match = matches[0];
+            return predicate(match) ? match : null;
+        }
         for (const decl of matches) {
             if (predicate(decl)) return decl;
         }
@@ -30,13 +34,27 @@ function createDeclLookupCore(deps) {
     };
 
     const filterDeclsInNameBuckets = (buckets, name, predicate = null) => {
-        const matches = buckets.get(name) || [];
-        return predicate ? matches.filter(predicate) : [...matches];
+        const matches = buckets.get(name);
+        if (!matches?.length) return [];
+        if (!predicate) return matches.slice();
+        if (matches.length === 1) {
+            const match = matches[0];
+            return predicate(match) ? [match] : [];
+        }
+        const result = [];
+        for (const decl of matches) {
+            if (predicate(decl)) result.push(decl);
+        }
+        return result;
     };
 
     const findBestDeclInNameBuckets = (buckets, name, predicate = null, score = null) => {
         const matches = buckets.get(name);
         if (!matches?.length) return null;
+        if (matches.length === 1) {
+            const match = matches[0];
+            return !predicate || predicate(match) ? match : null;
+        }
         let best = null;
         let bestScore = -Infinity;
         for (const decl of matches) {
@@ -62,22 +80,26 @@ function createDeclLookupCore(deps) {
 
         const buckets = new Map();
         const shouldBuildVariableBuckets = !variableNameBucketCache.has(decls);
-        const variableBuckets = shouldBuildVariableBuckets ? new Map() : null;
+        let variableBuckets = null;
         for (const decl of decls) {
-            if (!decl?.name) continue;
-            const bucket = buckets.get(decl.name);
+            if (!decl) continue;
+            const name = decl.name;
+            if (!name) continue;
+            const bucket = buckets.get(name);
             if (bucket) {
                 bucket.push(decl);
             } else {
-                buckets.set(decl.name, [decl]);
+                buckets.set(name, [decl]);
             }
-            if (variableBuckets && decl.type === 'variable' && !variableBuckets.get(decl.name)) {
-                variableBuckets.set(decl.name, decl);
+            if (shouldBuildVariableBuckets && decl.type === 'variable') {
+                if (!variableBuckets) variableBuckets = new Map();
+                if (variableBuckets.get(name)) continue;
+                variableBuckets.set(name, decl);
             }
         }
         declNameBucketCache.set(decls, buckets);
-        if (variableBuckets) {
-            variableNameBucketCache.set(decls, variableBuckets);
+        if (shouldBuildVariableBuckets) {
+            variableNameBucketCache.set(decls, variableBuckets || EMPTY_VARIABLE_NAME_BUCKETS);
         }
         return buckets;
     };
@@ -140,14 +162,16 @@ function createDeclLookupCore(deps) {
         const shouldBuildNameBuckets = !declNameBucketCache.has(decls);
         const nameBuckets = shouldBuildNameBuckets ? new Map() : null;
         for (const decl of decls) {
-            if (!decl?.name) continue;
+            if (!decl) continue;
+            const name = decl.name;
+            if (!name) continue;
             if (nameBuckets) {
-                const bucket = nameBuckets.get(decl.name);
+                const bucket = nameBuckets.get(name);
                 if (bucket) bucket.push(decl);
-                else nameBuckets.set(decl.name, [decl]);
+                else nameBuckets.set(name, [decl]);
             }
-            if (decl.type !== 'variable' || buckets.get(decl.name)) continue;
-            buckets.set(decl.name, decl);
+            if (decl.type !== 'variable' || buckets.get(name)) continue;
+            buckets.set(name, decl);
         }
         variableNameBucketCache.set(decls, buckets);
         if (nameBuckets) {
@@ -354,13 +378,20 @@ function createDeclLookupCore(deps) {
     function collectWordDeclMatches(word, funcArgs, locals, globals, functions, incDecls, builtins = BUILTIN_DECLS, lookup = null) {
         const rawMatches = [];
         const pushIf = data => { if (data) rawMatches.push(data); };
-        pushIf(lookup?.findFuncArg(word) ?? funcArgs.find(d => d.name === word));
-        pushIf(lookup?.findLocal(word) ?? locals.find(d => d.name === word));
-        pushIf(lookup?.findGlobal(word) ?? globals.find(d => d.name === word));
-        pushIf(lookup?.findFunction(word) ?? functions.find(d => d.name === word));
+        if (lookup) {
+            pushIf(lookup.findFuncArg(word));
+            pushIf(lookup.findLocal(word));
+            pushIf(lookup.findGlobal(word));
+            pushIf(lookup.findFunction(word));
+        } else {
+            pushIf(funcArgs.find(d => d.name === word));
+            pushIf(locals.find(d => d.name === word));
+            pushIf(globals.find(d => d.name === word));
+            pushIf(functions.find(d => d.name === word));
+        }
         const preferredFunctionMatch = lookup?.getPreferredFunctionMatch(word) || null;
         const preferredIncludeFunc = preferredFunctionMatch?.data || null;
-        if (preferredIncludeFunc?.aliasDefineDecl) {
+        if (lookup && preferredIncludeFunc?.aliasDefineDecl) {
             rawMatches.push(preferredIncludeFunc);
         }
         rawMatches.push(...(lookup?.filterIncludes(word) ?? incDecls.filter(d =>

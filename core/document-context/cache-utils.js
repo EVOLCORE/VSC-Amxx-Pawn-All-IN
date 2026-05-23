@@ -22,9 +22,9 @@ function createDocumentCacheUtils(deps) {
 
     const getIncludeDeclCacheKey = (filePath, defineDecls = [], precomputedDefineStateKey = '') =>
         `${normalizeFsPath(filePath)}::${getDefineStateSignature(defineDecls, precomputedDefineStateKey || getDefineStateKey(defineDecls))}`;
-    const getActiveIncludeDeclsCacheKey = (filePath, includeEntries = []) => {
+    const getActiveIncludeDeclsCacheKey = (filePath, includeEntries = [], precomputedIncludeSignature = '') => {
         const normalizedPath = normalizeFsPath(filePath);
-        const includeSignature = getIncludeEntriesSignatureHash(
+        const includeSignature = precomputedIncludeSignature || getIncludeEntriesSignatureHash(
             includeEntries,
             normalizeFsPath,
             entry => getDefineStateSignature(entry?.defineDecls || [], entry?.defineStateKey || '')

@@ -1,11 +1,11 @@
 const fs = require('fs');
-const { createUtilityCore } = require('../utils');
+const { createUtilityCore } = require('../utils/runtime');
 const { normalizePathKey } = require('../utils/path');
 const { createMacroExpansionSyntaxCore } = require('../syntax/macro-expander');
 const { createVirtualExpandedLineContextCore } = require('../syntax/virtual-expanded-line-context');
 const { findBalancedGroupEnd } = require('../syntax/balanced');
 const { readPawnAssignmentOperatorAt } = require('../syntax/operators');
-const { parsePragmaDirectiveLine } = require('../syntax/preprocessor-directives');
+const { parsePragmaDirectiveLine } = require('../syntax/pragma-directives');
 const { splitPawnLines } = require('../syntax/lines');
 const {
     advanceTopLevelScannerState,
@@ -36,6 +36,7 @@ function createSymbolUsageDiagnostics(deps = {}) {
         splitTopLevel,
         getPreferredFunctionHoverMatch,
         hasIncludeFunctionTwin,
+        readFileContent = null,
         isIdentifierStartChar = defaultIsIdentifierStartChar,
         isIdentifierContinueChar = defaultIsIdentifierContinueChar,
         isIdentifierStartCode = defaultIsIdentifierStartCode,
@@ -283,7 +284,9 @@ function createSymbolUsageDiagnostics(deps = {}) {
     function collectPragmaUnusedNames(lines) {
         const names = new Set();
         for (const line of lines || []) {
-            const pragma = parsePragmaDirectiveLine(line);
+            const text = String(line || '');
+            if (text.indexOf('#') < 0 || text.indexOf('unused') < 0) continue;
+            const pragma = parsePragmaDirectiveLine(text);
             if (pragma?.name !== 'unused') continue;
             for (const piece of String(pragma.value || '').split(',')) {
                 const name = readPawnIdentifierAt(piece.trim(), 0)?.name || '';
@@ -669,18 +672,26 @@ function createSymbolUsageDiagnostics(deps = {}) {
             }
         }
 
-        const resolveVariableEntry = (name, lineNumber) => {
-            const candidates = variableEntriesByName.get(name) || [];
+        const isVariableEntryVisibleAtLine = (entry, lineNumber) => {
+            if (lineNumber < entry.scopeStartLine || lineNumber > entry.scopeEndLine) return false;
+            return !(
+                entry.functionDecl &&
+                functionBodyRangeByLine[lineNumber]?.func !== entry.functionDecl &&
+                !entry.decl.isArg
+            );
+        };
+
+        const variableEntryResolveCacheByLine = new Map();
+        const resolveVariableEntryUncached = (name, lineNumber) => {
+            const candidates = variableEntriesByName.get(name);
+            if (!candidates?.length) return null;
+            if (candidates.length === 1) {
+                const entry = candidates[0];
+                return isVariableEntryVisibleAtLine(entry, lineNumber) ? entry : null;
+            }
             let best = null;
             for (const entry of candidates) {
-                if (lineNumber < entry.scopeStartLine || lineNumber > entry.scopeEndLine) continue;
-                if (
-                    entry.functionDecl &&
-                    functionBodyRangeByLine[lineNumber]?.func !== entry.functionDecl &&
-                    !entry.decl.isArg
-                ) {
-                    continue;
-                }
+                if (!isVariableEntryVisibleAtLine(entry, lineNumber)) continue;
                 if (!best) {
                     best = entry;
                     continue;
@@ -694,6 +705,17 @@ function createSymbolUsageDiagnostics(deps = {}) {
                 }
             }
             return best;
+        };
+        const resolveVariableEntry = (name, lineNumber) => {
+            let lineCache = variableEntryResolveCacheByLine.get(lineNumber);
+            if (!lineCache) {
+                lineCache = new Map();
+                variableEntryResolveCacheByLine.set(lineNumber, lineCache);
+            }
+            if (lineCache.has(name)) return lineCache.get(name);
+            const entry = resolveVariableEntryUncached(name, lineNumber);
+            lineCache.set(name, entry);
+            return entry;
         };
 
         const markVariableOccurrence = (name, lineNumber, source, start, end, options = {}) => {
@@ -921,12 +943,6 @@ function createSymbolUsageDiagnostics(deps = {}) {
             const line = entry?.lineNumber ?? entry?.line;
             return Number.isInteger(line) ? line : -1;
         };
-        const hasPotentialUnreadGlobalEntry = () => entries.some(entry =>
-            entry.global &&
-            !entry.stock &&
-            !entry.public &&
-            !entry.read
-        );
         const includeUsageLinesByPath = new Map();
         const readIncludeUsageLines = filePath => {
             const normalized = normalizePath(filePath || '');
@@ -934,7 +950,10 @@ function createSymbolUsageDiagnostics(deps = {}) {
             if (includeUsageLinesByPath.has(normalized)) return includeUsageLinesByPath.get(normalized);
             let lines = [];
             try {
-                lines = splitPawnLines(fs.readFileSync(filePath, 'utf8'));
+                const content = typeof readFileContent === 'function'
+                    ? readFileContent(filePath)
+                    : fs.readFileSync(filePath, 'utf8');
+                lines = content == null ? [] : splitPawnLines(content);
             } catch {
                 lines = [];
             }
@@ -943,7 +962,20 @@ function createSymbolUsageDiagnostics(deps = {}) {
         };
         const scanDirectIncludeGlobalUsages = () => {
             const includeEntries = Array.isArray(rootCtx?.includeEntries) ? rootCtx.includeEntries : [];
-            if (!includeEntries.length || !hasPotentialUnreadGlobalEntry()) return;
+            if (!includeEntries.length) return;
+            const unreadGlobalEntryCandidates = entries.filter(entry =>
+                entry.global &&
+                !entry.stock &&
+                !entry.public
+            );
+            if (!unreadGlobalEntryCandidates.length) return;
+            const hasPotentialUnreadGlobalEntry = () => {
+                for (const entry of unreadGlobalEntryCandidates) {
+                    if (!entry.read) return true;
+                }
+                return false;
+            };
+            if (!hasPotentialUnreadGlobalEntry()) return;
             const scannedIncludePaths = new Set();
             for (const includeEntry of includeEntries) {
                 if (!hasPotentialUnreadGlobalEntry()) break;

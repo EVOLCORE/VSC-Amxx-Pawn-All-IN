@@ -9,6 +9,8 @@ function createFormatStringFeature(deps) {
         findMatchingParenOffset,
         splitTopLevelWithRanges,
         isEscapedQuote,
+        getPreferredFunctionHoverMatch = null,
+        buildCallArgLayout = null,
         createLazyCallContextOptions = null
     } = deps;
 
@@ -33,6 +35,19 @@ function createFormatStringFeature(deps) {
             : {};
         const callCtx = findCallContext(document, position, callContextOptions);
         if (!callCtx?.funcName) return null;
+        const signatureMatch = typeof getPreferredFunctionHoverMatch === 'function'
+            ? getPreferredFunctionHoverMatch(
+                callCtx.funcName,
+                ctx?.parsedDecls?.functions || [],
+                ctx?.incDecls || [],
+                {},
+                ctx?.lookup || null
+            )
+            : null;
+        const layout = typeof buildCallArgLayout === 'function' && signatureMatch?.data
+            ? buildCallArgLayout(signatureMatch.data.args || '', [], null, { useDynamicCache: false })
+            : null;
+        if (!layout || layout.variadicIndex < 0) return null;
 
         const offset = document.offsetAt(position);
         const escapeChar = resolver?.ctrlCharAtLine?.(position.line) || '';
@@ -41,7 +56,8 @@ function createFormatStringFeature(deps) {
             findMatchingParenOffset,
             ctrlCharResolver: resolver,
             isEscapedQuote,
-            escapeChar
+            escapeChar,
+            maxFormatArgIndexExclusive: layout.variadicIndex
         });
     }
 

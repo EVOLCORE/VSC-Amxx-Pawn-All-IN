@@ -36,6 +36,7 @@
   "validation.missingArgument": "missing argument",
   "validation.argumentHasNoDefaultValue": "argument has no default value",
   "validation.argumentCountMismatch": "argument count mismatch",
+  "validation.formatPlaceholderMissingArgument": "format placeholder {placeholder} requires {expected} argument(s), got {actual}",
   "validation.extraArgument": "extra argument",
   "validation.extraParameter": "extra parameter",
   "validation.missingParameterDeclaration": "missing parameter declaration",

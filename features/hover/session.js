@@ -24,60 +24,70 @@ function createLazyArray(resolveItems) {
     });
 }
 
-function createLazyIncludeLookup(baseLookup, getFullContext, t) {
+function createLazyIncludeLookup(baseLookupSource, getFullContext, t) {
+    let baseLookup = null;
     let fullLookup = null;
+    const getBaseLookup = () => {
+        if (!baseLookup) {
+            baseLookup = typeof baseLookupSource === 'function'
+                ? baseLookupSource()
+                : baseLookupSource;
+        }
+        return baseLookup || {};
+    };
     const getFullLookup = () => {
         if (!fullLookup) {
             const fullContext = typeof getFullContext === 'function' ? getFullContext() : null;
-            fullLookup = fullContext?.lookup || baseLookup;
+            fullLookup = fullContext?.lookup || getBaseLookup();
         }
         return fullLookup;
     };
 
     const findBuiltin = (name, predicate = null) =>
-        baseLookup.filterBuiltins(name, predicate)[0] || null;
+        getBaseLookup().filterBuiltins?.(name, predicate)?.[0] || null;
 
     const lazyLookup = {
-        findFuncArg: name => baseLookup.findFuncArg(name),
-        findLocal: name => baseLookup.findLocal(name),
-        findGlobal: name => baseLookup.findGlobal(name),
-        findFunction: name => baseLookup.findFunction(name),
+        findFuncArg: name => getBaseLookup().findFuncArg?.(name),
+        findLocal: name => getBaseLookup().findLocal?.(name),
+        findGlobal: name => getBaseLookup().findGlobal?.(name),
+        findFunction: name => getBaseLookup().findFunction?.(name),
         findAnyLocalDeclByName(name, predicate = null) {
-            return baseLookup.findAnyLocalDeclByName(name, predicate) ||
-                getFullLookup().findInclude(name, predicate);
+            return getBaseLookup().findAnyLocalDeclByName?.(name, predicate) ||
+                getFullLookup().findInclude?.(name, predicate);
         },
         findAnyDeclByName(name, predicate = null) {
-            return baseLookup.findAnyLocalDeclByName(name, predicate) ||
-                getFullLookup().findInclude(name, predicate) ||
+            return getBaseLookup().findAnyLocalDeclByName?.(name, predicate) ||
+                getFullLookup().findInclude?.(name, predicate) ||
                 findBuiltin(name, predicate);
         },
         findVariable(name) {
-            return baseLookup.findFuncArg(name) ||
-                baseLookup.findLocal(name) ||
-                baseLookup.findGlobal(name) ||
-                getFullLookup().findInclude(name, d => d.type === 'variable') ||
+            const localLookup = getBaseLookup();
+            return localLookup.findFuncArg?.(name) ||
+                localLookup.findLocal?.(name) ||
+                localLookup.findGlobal?.(name) ||
+                getFullLookup().findInclude?.(name, d => d.type === 'variable') ||
                 null;
         },
-        findInclude: (name, predicate = null) => getFullLookup().findInclude(name, predicate),
-        filterIncludes: (name, predicate = null) => getFullLookup().filterIncludes(name, predicate),
-        filterBuiltins: (name, predicate = null) => baseLookup.filterBuiltins(name, predicate),
-        hasIncludeFunctionTwin: name => getFullLookup().hasIncludeFunctionTwin(name),
+        findInclude: (name, predicate = null) => getFullLookup().findInclude?.(name, predicate),
+        filterIncludes: (name, predicate = null) => getFullLookup().filterIncludes?.(name, predicate) || [],
+        filterBuiltins: (name, predicate = null) => getBaseLookup().filterBuiltins?.(name, predicate) || [],
+        hasIncludeFunctionTwin: name => getFullLookup().hasIncludeFunctionTwin?.(name),
         getPreferredFunctionMatch(name, options = {}) {
             if (!options?.preferInclude) {
-                const localFunc = baseLookup.findFunction(name);
+                const localFunc = getBaseLookup().findFunction?.(name);
                 if (localFunc) {
                     return { label: t('hover.kind.function'), data: localFunc, nav: true };
                 }
             }
-            return getFullLookup().getPreferredFunctionMatch(name, options);
+            return getFullLookup().getPreferredFunctionMatch?.(name, options);
         },
-        collectWordDecls: name => getFullLookup().collectWordDecls(name)
+        collectWordDecls: name => getFullLookup().collectWordDecls?.(name) || []
     };
     Object.defineProperties(lazyLookup, {
-        argSet: { get: () => baseLookup.argSet },
-        localSet: { get: () => baseLookup.localSet },
-        globalSet: { get: () => baseLookup.globalSet },
-        functionSet: { get: () => baseLookup.functionSet }
+        argSet: { get: () => getBaseLookup().argSet },
+        localSet: { get: () => getBaseLookup().localSet },
+        globalSet: { get: () => getBaseLookup().globalSet },
+        functionSet: { get: () => getBaseLookup().functionSet }
     });
     return lazyLookup;
 }
@@ -126,7 +136,7 @@ function createHoverSessionFactory(deps) {
 
         const { fp, text, resolver, parsedDecls } = ctx;
         const incDecls = createLazyArray(() => getFullContext().incDecls);
-        const lookup = createLazyIncludeLookup(ctx.lookup, getFullContext, t);
+        const lookup = createLazyIncludeLookup(() => ctx.lookup, getFullContext, t);
         const allDecls = createLazyArray(() => getFullContext().allDecls);
         const { globals, functions, locals, funcArgs } = parsedDecls;
 

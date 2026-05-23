@@ -1,10 +1,12 @@
 const {
-    createDeclarationGuardsCore,
+    createDeclarationGuardsCore
+} = require('../../core/declarations/runtime');
+const {
     createDeclarationParsingCore
-} = require('../../core/declarations/index');
-const { createValidationCore } = require('../../core/validation/index');
-const { createCallAnalysisCore } = require('../../core/call-analysis/index');
-const { createIndexedAccessCore } = require('../../core/indexed-access/index');
+} = require('../../core/declarations/parsing');
+const { createValidationCore } = require('../../core/validation/runtime');
+const { createCallAnalysisCore } = require('../../core/call-analysis/runtime');
+const { createIndexedAccessCore } = require('../../core/indexed-access/runtime');
 const { createStatementClassifier } = require('../../core/syntax/statement-classifier');
 
 function createAnalysisRuntime(deps) {
@@ -24,6 +26,7 @@ function createAnalysisRuntime(deps) {
         looksLikePawnExpressionFragment,
         extractEnumSymbolName,
         findDeclByNameCached,
+        getDeclNameBuckets,
         isFunctionLikeDecl,
         BUILTIN_DECLS,
         FORBIDDEN,
@@ -60,6 +63,7 @@ function createAnalysisRuntime(deps) {
         isObjectLikeDefineDecl,
         isFunctionLikeDefineDecl,
         parseSingleStatementBodyDecls,
+        findStatementScopeEndLine,
         findForScopeEndLine,
         findDepthScopeEndLine,
         getFuncArgsParseCacheKey,
@@ -81,6 +85,7 @@ function createAnalysisRuntime(deps) {
         unwrapOuterParens,
         extractEnumSymbolName,
         findDeclByNameCached,
+        getDeclNameBuckets,
         isFunctionLikeDecl,
         BUILTIN_DECLS,
         FORBIDDEN,
@@ -181,6 +186,7 @@ function createAnalysisRuntime(deps) {
         isObjectLikeDefineDecl,
         isFunctionLikeDefineDecl,
         parseSingleStatementBodyDecls,
+        findStatementScopeEndLine,
         findForScopeEndLine,
         findDepthScopeEndLine
     });

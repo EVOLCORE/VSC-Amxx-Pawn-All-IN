@@ -6,6 +6,7 @@ const { createHoverBitmaskFeature } = require('./bitmask');
 const { createHoverSignatureFeature } = require('./signature');
 const { createHoverEnumInitializerFeature } = require('./enum-initializer');
 const { createHoverValidationPolicy } = require('./validation-policy');
+const { createPrefixedDebugLogger } = require('../../core/utils/debug-logger');
 
 function createHoverRuntimeFeature(deps) {
     const {
@@ -90,13 +91,7 @@ function createHoverRuntimeFeature(deps) {
         isHoverAtActiveCursor,
         isMeaningfulCallPosition
     } = deps;
-    const logHover = message => {
-        try {
-            hoverOutputChannel?.appendLine?.(`[hover] ${message}`);
-        } catch {
-            // Hover logging must never affect hover rendering.
-        }
-    };
+    const logHover = createPrefixedDebugLogger(hoverOutputChannel, 'hover');
     const { shouldSuppressHoverValidationForDocument } = createHoverValidationPolicy({
         getIncludeFileExtensions,
         getIncludeValidationMode

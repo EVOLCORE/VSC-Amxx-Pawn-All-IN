@@ -1,9 +1,22 @@
-const { parsePragmaDirectiveLine } = require('../syntax/preprocessor-directives');
+const { parsePragmaDirectiveLine } = require('../syntax/pragma-directives');
+
+const mayHaveDocsCacheByLines = new WeakMap();
 
 function mayHaveDocsForLine(rawLines, lineNumber) {
     if (!Array.isArray(rawLines) || lineNumber < 0 || lineNumber >= rawLines.length) return false;
+    let cachedFlags = mayHaveDocsCacheByLines.get(rawLines);
+    if (!cachedFlags || cachedFlags.length !== rawLines.length) {
+        cachedFlags = new Uint8Array(rawLines.length);
+        mayHaveDocsCacheByLines.set(rawLines, cachedFlags);
+    }
+    const cached = cachedFlags[lineNumber];
+    if (cached) return cached === 2;
+
     const ownLine = String(rawLines[lineNumber] || '');
-    if (ownLine.includes('//') || ownLine.includes('/*') || ownLine.includes('*/')) return true;
+    if (ownLine.includes('//') || ownLine.includes('/*') || ownLine.includes('*/')) {
+        cachedFlags[lineNumber] = 2;
+        return true;
+    }
 
     let blankGap = 0;
     for (let probeLine = lineNumber - 1; probeLine >= 0; probeLine--) {
@@ -14,10 +27,12 @@ function mayHaveDocsForLine(rawLines, lineNumber) {
             continue;
         }
         if (trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*')) {
+            cachedFlags[lineNumber] = 2;
             return true;
         }
         break;
     }
+    cachedFlags[lineNumber] = 1;
     return false;
 }
 
@@ -48,7 +63,9 @@ function attachLazyDocs(target, propName, resolveDocs, mayHaveDocs = true) {
 }
 
 function parseDeprecatedPragmaMessage(lineText) {
-    const pragma = parsePragmaDirectiveLine(lineText);
+    const source = String(lineText || '');
+    if (source.indexOf('#') < 0) return null;
+    const pragma = parsePragmaDirectiveLine(source);
     if (pragma?.name !== 'deprecated') return null;
     return String(pragma.value || '').trim();
 }

@@ -2,6 +2,7 @@ function createTypeAnalysisCacheFactory(deps) {
     const {
         BUILTIN_DECLS,
         findDeclByNameCached,
+        getDeclNameBuckets,
         parseDimSpec,
         parseDimsParts,
         parseParamMeta
@@ -57,6 +58,9 @@ function createTypeAnalysisCacheFactory(deps) {
         cache.sourceDecls = sourceDecls;
         cache.lookup = lookup || null;
         cache.declsByName = lookup?.findAnyLocalDeclByName ? null : (() => {
+            if (typeof getDeclNameBuckets === 'function') {
+                return getDeclNameBuckets(sourceDecls);
+            }
             const buckets = new Map();
             for (const decl of sourceDecls) {
                 if (!decl?.name) continue;
@@ -67,6 +71,7 @@ function createTypeAnalysisCacheFactory(deps) {
         })();
         cache.argTypeByExpr = new Map();
         cache.inferInProgressByExpr = new Set();
+        cache.assignableInfoByExpr = new Map();
         cache.unresolvedRefsByExpr = new Map();
         cache.paramMetaByText = new Map();
         cache.dimPartsByText = new Map();
@@ -75,6 +80,7 @@ function createTypeAnalysisCacheFactory(deps) {
         cache.numericExprByText = new Map();
         cache.indexedDimCompatByKey = new Map();
         cache.typeCompatByKey = new Map();
+        cache.macroDefineByName = new Map();
         return cache;
     };
 }

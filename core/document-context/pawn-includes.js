@@ -4,7 +4,7 @@ const {
     getDefineStateSignature,
     getIncludeEntriesSignatureHash: buildIncludeEntriesSignatureHash
 } = require('../utils/signature');
-const { createUtilityCore } = require('../utils');
+const { createUtilityCore } = require('../utils/runtime');
 const { getEffectiveIncludeFileExtensions } = require('../include-extensions');
 const {
     INCLUDE_RESOLUTION_PRIORITY,
@@ -81,11 +81,16 @@ function createDocumentIncludeSystem(deps) {
         persistentIncludeDeclCacheMaxBytes = 24 * 1024 * 1024
     } = deps;
     const directoryFileBaseNameCache = new Map();
+    const baseIncludeResolutionCache = new Map();
     const includeSourceKindCache = new Map();
     const includeCompletionSourceCache = new Map();
+    const ancestorIncludeBaseDirsCache = new Map();
+    const ancestorIncludeHintDirsCache = new Map();
     const searchPathSignatureCache = new Map();
+    const searchPathsArraySignatureCache = new Map();
     let includeResolutionInfoCache = null;
     const INCLUDE_SOURCE_KIND_CACHE_TTL_MS = 250;
+    const SEARCH_PATHS_ARRAY_SIGNATURE_CACHE_LIMIT = 128;
     const {
         INCLUDE_DECL_COMPACT_SIGNATURE,
         deserializeDependencyStamps,
@@ -117,12 +122,27 @@ function createDocumentIncludeSystem(deps) {
         const cacheKey = getSearchPathContextCacheKey(filePath);
         const cached = searchPathSignatureCache.get(cacheKey);
         if (cached !== undefined) return cached;
-        const searchPathSignature = (getSearchPaths(filePath) || [])
+        const searchPathSignature = getSearchPathsArraySignature(getSearchPaths(filePath) || []);
+        const signature = `${searchPathSignature}::ext:${getIncludeResolutionExtensionSignature()}`;
+        searchPathSignatureCache.set(cacheKey, signature);
+        return signature;
+    }
+
+    function getSearchPathsArraySignature(searchPaths = []) {
+        const paths = Array.isArray(searchPaths) ? searchPaths : [];
+        if (!paths.length) return '';
+        const rawKey = paths.join('\0');
+        const cached = searchPathsArraySignatureCache.get(rawKey);
+        if (cached !== undefined) return cached;
+        const signature = paths
             .map(sourcePath => normalizeFsPath(sourcePath))
             .filter(Boolean)
             .join('|');
-        const signature = `${searchPathSignature}::ext:${getIncludeResolutionExtensionSignature()}`;
-        searchPathSignatureCache.set(cacheKey, signature);
+        searchPathsArraySignatureCache.set(rawKey, signature);
+        if (searchPathsArraySignatureCache.size > SEARCH_PATHS_ARRAY_SIGNATURE_CACHE_LIMIT) {
+            const oldestKey = searchPathsArraySignatureCache.keys().next().value;
+            searchPathsArraySignatureCache.delete(oldestKey);
+        }
         return signature;
     }
 
@@ -351,6 +371,7 @@ function createDocumentIncludeSystem(deps) {
                 searchPathSignatureCache.delete(cacheKey);
             }
         }
+        baseIncludeResolutionCache.clear();
         resolvedIncludePathCache.clear();
         clearIncludeCompletionSourceCache(rootPath);
     }
@@ -366,6 +387,11 @@ function createDocumentIncludeSystem(deps) {
                 includeCompletionSourceCache.delete(cacheKey);
             }
         }
+    }
+
+    function clearAncestorIncludeDirCaches() {
+        ancestorIncludeBaseDirsCache.clear();
+        ancestorIncludeHintDirsCache.clear();
     }
 
     function resolveConfiguredPath(rawPath, docFilePath = '') {
@@ -439,7 +465,8 @@ function createDocumentIncludeSystem(deps) {
         return getSharedWorkspaceRootForFile({ vscode }, docFilePath);
     }
 
-    function buildProjectIncludeIndexFromRoot(rootPath = '', hints = [], exactSources = []) {
+    function buildProjectIncludeIndexFromRoot(rootPath = '', hints = [], exactSources = [], options = {}) {
+        const includeCompletionEntries = options.includeCompletionEntries === true;
         const emptyIndex = {
             discoveredSources: [],
             allSources: mergeUniqueSources(exactSources),
@@ -451,7 +478,7 @@ function createDocumentIncludeSystem(deps) {
         const discoveredSources = [];
         const allSources = mergeUniqueSources(exactSources);
         const includeIndex = new Map();
-        const includeCompletionEntryMap = new Map();
+        const includeCompletionEntryMap = includeCompletionEntries ? new Map() : null;
         const includeExtensionInfo = getIncludeResolutionInfo();
         const includeExtensions = includeExtensionInfo.extensions;
         const allowedExtensions = includeExtensionInfo.allowedSet;
@@ -538,7 +565,7 @@ function createDocumentIncludeSystem(deps) {
                     extensionPriority: fileExtensionPriority
                 });
             }
-            if (completionRelativeWithoutExt) {
+            if (includeCompletionEntryMap && completionRelativeWithoutExt) {
                 const completionKey = completionRelativeWithoutExt.toLowerCase();
                 const existing = includeCompletionEntryMap.get(completionKey);
                 if (isPreferredIncludeCandidate({
@@ -594,8 +621,10 @@ function createDocumentIncludeSystem(deps) {
             discoveredSources,
             allSources,
             includeIndex,
-            includeCompletionEntries: [...includeCompletionEntryMap.values()]
-                .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')))
+            includeCompletionEntries: includeCompletionEntryMap
+                ? [...includeCompletionEntryMap.values()]
+                    .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')))
+                : []
         };
     }
 
@@ -641,6 +670,7 @@ function createDocumentIncludeSystem(deps) {
 
     function markWorkspaceIncludeSourcesDirty(docFilePath = '') {
         directoryFileBaseNameCache.clear();
+        baseIncludeResolutionCache.clear();
         includeSourceKindCache.clear();
         const rootPath = getProjectRootForFile(docFilePath);
         if (!rootPath) {
@@ -651,6 +681,7 @@ function createDocumentIncludeSystem(deps) {
             searchPathSignatureCache.clear();
             resolvedIncludePathCache.clear();
             clearIncludeCompletionSourceCache();
+            clearAncestorIncludeDirCaches();
             return;
         }
         const hints = getConfiguredProjectIncludeHints();
@@ -661,6 +692,7 @@ function createDocumentIncludeSystem(deps) {
             projectIncludeSourceCache.set(cacheKey, cacheEntry);
         }
         clearRootScopedSearchPathCaches(rootPath);
+        clearAncestorIncludeDirCaches();
     }
 
     function collectProjectIncludeSourcesFromRoot(rootPath = '', options = {}) {
@@ -732,7 +764,9 @@ function createDocumentIncludeSystem(deps) {
             return cached.entries;
         }
 
-        const indexState = buildProjectIncludeIndexFromRoot(sourceRoot, [], [sourceRoot]);
+        const indexState = buildProjectIncludeIndexFromRoot(sourceRoot, [], [sourceRoot], {
+            includeCompletionEntries: true
+        });
         const entries = Array.isArray(indexState.includeCompletionEntries)
             ? indexState.includeCompletionEntries
             : [];
@@ -788,8 +822,12 @@ function createDocumentIncludeSystem(deps) {
             for (const ancestorBase of collectAncestorIncludeBaseDirs(docFilePath)) {
                 addSource(ancestorBase, 'local', { insideWorkspaceOnly: true });
             }
+        }
+
+        if (docFilePath) {
+            const hintSourceKind = includeLocalFirst ? 'local' : 'include';
             for (const hintedBase of collectAncestorIncludeHintDirs(docFilePath)) {
-                addSource(hintedBase, 'local', { insideWorkspaceOnly: true });
+                addSource(hintedBase, hintSourceKind, { insideWorkspaceOnly: true });
             }
         }
 
@@ -906,27 +944,39 @@ function createDocumentIncludeSystem(deps) {
     }
 
     function resolveIncludeFromBase(baseDir, name) {
+        const cacheKey = [
+            normalizeFsPath(baseDir),
+            String(name || '').replace(/\\/g, '/').toLowerCase(),
+            getIncludeResolutionExtensionSignature()
+        ].join('::');
+        if (baseIncludeResolutionCache.has(cacheKey)) {
+            return baseIncludeResolutionCache.get(cacheKey) || null;
+        }
+        const remember = value => {
+            baseIncludeResolutionCache.set(cacheKey, value || '');
+            return value || null;
+        };
         const requestedExt = path.extname(name).toLowerCase();
         if (requestedExt && !hasAllowedIncludeExtension(name)) {
-            return null;
+            return remember(null);
         }
         const exactPath = path.join(baseDir, name);
-        if (requestedExt && getIncludeSourceKind(exactPath) === 'file') return path.resolve(exactPath);
+        if (requestedExt && getIncludeSourceKind(exactPath) === 'file') return remember(path.resolve(exactPath));
 
-        if (requestedExt) return null;
+        if (requestedExt) return remember(null);
 
         for (const ext of getIncludeResolutionExtensions()) {
             const candidatePath = path.join(baseDir, name + ext);
-            if (getIncludeSourceKind(candidatePath) === 'file') return path.resolve(candidatePath);
+            if (getIncludeSourceKind(candidatePath) === 'file') return remember(path.resolve(candidatePath));
         }
 
         const relDir = path.dirname(name);
         const targetDir = relDir && relDir !== '.'
             ? path.join(baseDir, relDir)
             : baseDir;
-        if (getIncludeSourceKind(targetDir) !== 'directory') return null;
+        if (getIncludeSourceKind(targetDir) !== 'directory') return remember(null);
         const targetDirStat = getIncludeSourceStat(targetDir);
-        if (!targetDirStat) return null;
+        if (!targetDirStat) return remember(null);
 
         const baseName = path.basename(name);
         const normalizedDir = normalizeFsPath(targetDir);
@@ -942,7 +992,7 @@ function createDocumentIncludeSystem(deps) {
             try {
                 entries = fs.readdirSync(targetDir, { withFileTypes: true });
             } catch {
-                return null;
+                return remember(null);
             }
             for (const entry of entries) {
                 if (!entry?.name) continue;
@@ -969,9 +1019,9 @@ function createDocumentIncludeSystem(deps) {
         }
         const match = cachedEntry.byBaseName.get(baseName)?.name || '';
         if (!match) {
-            return null;
+            return remember(null);
         }
-        return path.resolve(path.join(targetDir, match));
+        return remember(path.resolve(path.join(targetDir, match)));
     }
 
     function isPathLikeIncludeName(name = '') {
@@ -979,14 +1029,12 @@ function createDocumentIncludeSystem(deps) {
         return value.includes('/') || value.includes('\\');
     }
 
-    function collectAncestorIncludeBaseDirs(fromFilePath = '') {
-        if (!fromFilePath) return [];
-
+    function collectAncestorDirs(fromFilePath = '', options = {}) {
         const workspaceRoot = getWorkspaceRootForFile(fromFilePath);
         const workspaceRootKey = workspaceRoot ? normalizeFsPath(workspaceRoot) : '';
         const seen = new Set();
         const results = [];
-        let currentBase = path.dirname(path.dirname(fromFilePath));
+        let currentBase = path.resolve(options.startDir || path.dirname(fromFilePath));
         for (let depth = 0; currentBase && depth < 24; depth++) {
             const currentKey = normalizeFsPath(currentBase);
             if (!currentKey || seen.has(currentKey)) break;
@@ -1001,6 +1049,27 @@ function createDocumentIncludeSystem(deps) {
         return results;
     }
 
+    function getAncestorDirCacheKey(fromFilePath = '', extra = '') {
+        return [
+            normalizeFsPath(fromFilePath),
+            normalizeFsPath(getWorkspaceRootForFile(fromFilePath)),
+            String(extra || '')
+        ].join('::');
+    }
+
+    function collectAncestorIncludeBaseDirs(fromFilePath = '') {
+        if (!fromFilePath) return [];
+        const cacheKey = getAncestorDirCacheKey(fromFilePath, 'base');
+        const cached = ancestorIncludeBaseDirsCache.get(cacheKey);
+        if (cached) return cached.slice();
+
+        const results = collectAncestorDirs(fromFilePath, {
+            startDir: path.dirname(path.dirname(fromFilePath))
+        });
+        ancestorIncludeBaseDirsCache.set(cacheKey, results);
+        return results.slice();
+    }
+
     function collectAncestorIncludeHintDirs(fromFilePath = '') {
         if (!fromFilePath) return [];
 
@@ -1008,17 +1077,13 @@ function createDocumentIncludeSystem(deps) {
             .filter(hint => hint && !path.isAbsolute(hint));
         if (!relativeHints.length) return [];
 
-        const workspaceRoot = getWorkspaceRootForFile(fromFilePath);
-        const workspaceRootKey = workspaceRoot ? normalizeFsPath(workspaceRoot) : '';
-        const seenBases = new Set();
+        const cacheKey = getAncestorDirCacheKey(fromFilePath, `hints:${relativeHints.join('|')}`);
+        const cached = ancestorIncludeHintDirsCache.get(cacheKey);
+        if (cached) return cached.slice();
+
         const seenHintDirs = new Set();
         const results = [];
-        let currentBase = path.dirname(fromFilePath);
-        for (let depth = 0; currentBase && depth < 24; depth++) {
-            const currentKey = normalizeFsPath(currentBase);
-            if (!currentKey || seenBases.has(currentKey)) break;
-            seenBases.add(currentKey);
-
+        for (const currentBase of collectAncestorDirs(fromFilePath)) {
             for (const hint of relativeHints) {
                 const hintedBase = path.join(currentBase, hint);
                 const hintedKey = normalizeFsPath(hintedBase);
@@ -1026,13 +1091,9 @@ function createDocumentIncludeSystem(deps) {
                 seenHintDirs.add(hintedKey);
                 results.push(hintedBase);
             }
-
-            if (workspaceRootKey && currentKey === workspaceRootKey) break;
-            const parent = path.dirname(currentBase);
-            if (!parent || parent === currentBase) break;
-            currentBase = parent;
         }
-        return results;
+        ancestorIncludeHintDirsCache.set(cacheKey, results);
+        return results.slice();
     }
 
     function resolveIncludeFromAncestorBases(fromFilePath, name) {
@@ -1124,7 +1185,9 @@ function createDocumentIncludeSystem(deps) {
         const delimiter = String(options?.delimiter || '');
         const includeLocalFirst = delimiter !== '<>';
         const includeAncestorLocalFallbacks = delimiter !== '<>';
-        const includeAncestorHintFallbacks = delimiter !== '<>';
+        // Angle includes do not search the source directory, but configured include
+        // hints such as "include" can still live under a nested scripting root.
+        const includeAncestorHintFallbacks = true;
         const returnMeta = options?.returnMeta === true;
         const makeResolveResult = (filePath, meta = {}) => {
             if (!returnMeta) return filePath;
@@ -1209,12 +1272,13 @@ function createDocumentIncludeSystem(deps) {
             normalizeFsPath(fromFilePath),
             String(name || ''),
             delimiter,
-            searchPaths.map(normalizeFsPath).join('|'),
+            getSearchPathsArraySignature(searchPaths),
             getIncludeResolutionExtensionSignature()
         ].join('::');
-        const cachedPath = resolvedIncludePathCache.get(cacheKey);
-        if (cachedPath && getIncludeSourceKind(cachedPath) === 'file') return makeCachedResolveResult(cachedPath);
-        if (cachedPath) {
+        if (resolvedIncludePathCache.has(cacheKey)) {
+            const cachedPath = resolvedIncludePathCache.get(cacheKey);
+            if (!cachedPath) return null;
+            if (getIncludeSourceKind(cachedPath) === 'file') return makeCachedResolveResult(cachedPath);
             resolvedIncludePathCache.delete(cacheKey);
         }
 
@@ -1266,10 +1330,11 @@ function createDocumentIncludeSystem(deps) {
         }
 
         if (fromFilePath) {
+            const searchPathKeys = new Set((searchPaths || []).map(sourcePath => normalizeFsPath(sourcePath)));
             const discoveredProjectSources = collectProjectIncludeSources(fromFilePath, { includeDiscovered: true })
-                .filter(sourcePath => !searchPaths.some(existing => normalizeFsPath(existing) === normalizeFsPath(sourcePath)));
+                .filter(sourcePath => !searchPathKeys.has(normalizeFsPath(sourcePath)));
             const discoveredCacheKey = discoveredProjectSources.length
-                ? `${cacheKey}::discovered::${discoveredProjectSources.map(normalizeFsPath).join('|')}`
+                ? `${cacheKey}::discovered::${getSearchPathsArraySignature(discoveredProjectSources)}`
                 : '';
             const cachedDiscoveredPath = discoveredCacheKey
                 ? resolvedIncludePathCache.get(discoveredCacheKey)
@@ -1297,6 +1362,7 @@ function createDocumentIncludeSystem(deps) {
             }
         }
 
+        resolvedIncludePathCache.set(cacheKey, '');
         return null;
     }
 
@@ -1462,16 +1528,28 @@ function createDocumentIncludeSystem(deps) {
         return `${filePath}\0${String(entry?.defineStateKey || '')}`;
     }
 
+    function getActiveIncludeEntryLogicalKey(entry) {
+        const includeName = String(entry?.name || '').trim()
+            .replace(/\\/g, '/')
+            .toLowerCase();
+        if (includeName) return `name:${includeName}`;
+        return getActiveIncludeEntryDedupeKey(entry);
+    }
+
     function dedupeActiveIncludeEntries(includeEntries = []) {
         if (!Array.isArray(includeEntries) || includeEntries.length <= 1) {
             return Array.isArray(includeEntries) ? includeEntries : [];
         }
-        const seen = new Set();
+        const seenLogicalKeys = new Set();
+        const seenFiles = new Set();
         const result = [];
         for (const entry of includeEntries) {
+            const logicalKey = getActiveIncludeEntryLogicalKey(entry);
+            if (logicalKey && seenLogicalKeys.has(logicalKey)) continue;
+            if (logicalKey) seenLogicalKeys.add(logicalKey);
             const key = getActiveIncludeEntryDedupeKey(entry);
-            if (key && seen.has(key)) continue;
-            if (key) seen.add(key);
+            if (key && seenFiles.has(key)) continue;
+            if (key) seenFiles.add(key);
             result.push(entry);
         }
         return result.length === includeEntries.length ? includeEntries : result;
@@ -1493,7 +1571,12 @@ function createDocumentIncludeSystem(deps) {
         const includeEntries = dedupeActiveIncludeEntries(
             collectActiveIncludeEntries(docContent, searchPaths, docFilePath, preprocessedState)
         );
-        const cacheKey = getActiveIncludeDeclsCacheKey(docFilePath, includeEntries);
+        const includeEntriesSignatureHash = buildIncludeEntriesSignatureHash(
+            includeEntries,
+            normalizeFsPath,
+            entry => getDefineStateSignature(entry?.defineDecls || [], entry?.defineStateKey || '')
+        );
+        const cacheKey = getActiveIncludeDeclsCacheKey(docFilePath, includeEntries, includeEntriesSignatureHash);
         const searchPathSignature = getSearchPathSignature(docFilePath);
         const cached = cacheKey ? activeIncludeDeclsCache.get(cacheKey) : null;
         if (
@@ -1509,7 +1592,8 @@ function createDocumentIncludeSystem(deps) {
         const persistentEntry = readPersistentActiveIncludeDeclCache(
             docFilePath,
             includeEntries,
-            searchPathSignature
+            searchPathSignature,
+            includeEntriesSignatureHash
         );
         if (persistentEntry?.decls) {
             if (includePreprocessedStates) {
@@ -1555,7 +1639,8 @@ function createDocumentIncludeSystem(deps) {
             includeEntries,
             searchPathSignature,
             decls,
-            dependencyStamps
+            dependencyStamps,
+            includeEntriesSignatureHash
         );
 
         return decls;

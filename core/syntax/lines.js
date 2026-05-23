@@ -1,14 +1,16 @@
 function splitPawnLines(source = '') {
     const text = String(source || '');
+    if (text.indexOf('\n') < 0) return [text];
     const lines = [];
     let lineStart = 0;
-    for (let index = 0; index < text.length; index++) {
-        if (text.charCodeAt(index) !== 10) continue;
-        const lineEnd = index > lineStart && text.charCodeAt(index - 1) === 13
-            ? index - 1
-            : index;
+    let lineBreak = text.indexOf('\n', lineStart);
+    while (lineBreak >= 0) {
+        const lineEnd = lineBreak > lineStart && text.charCodeAt(lineBreak - 1) === 13
+            ? lineBreak - 1
+            : lineBreak;
         lines.push(text.slice(lineStart, lineEnd));
-        lineStart = index + 1;
+        lineStart = lineBreak + 1;
+        lineBreak = text.indexOf('\n', lineStart);
     }
     lines.push(text.slice(lineStart));
     return lines;
@@ -19,8 +21,10 @@ function countLineBreaks(source = '', start = 0, end = String(source || '').leng
     const safeStart = Math.max(0, start | 0);
     const safeEnd = Math.min(text.length, Math.max(safeStart, end | 0));
     let count = 0;
-    for (let index = safeStart; index < safeEnd; index++) {
-        if (text.charCodeAt(index) === 10) count++;
+    let lineBreak = text.indexOf('\n', safeStart);
+    while (lineBreak >= 0 && lineBreak < safeEnd) {
+        count++;
+        lineBreak = text.indexOf('\n', lineBreak + 1);
     }
     return count;
 }
@@ -32,8 +36,10 @@ function countTextLines(source = '') {
 function buildLineStartOffsets(source = '') {
     const text = String(source || '');
     const offsets = [0];
-    for (let index = 0; index < text.length; index++) {
-        if (text.charCodeAt(index) === 10) offsets.push(index + 1);
+    let lineBreak = text.indexOf('\n');
+    while (lineBreak >= 0) {
+        offsets.push(lineBreak + 1);
+        lineBreak = text.indexOf('\n', lineBreak + 1);
     }
     return offsets;
 }

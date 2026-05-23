@@ -22,20 +22,20 @@ const isPawnIdentifierBoundaryChar = (char = '') =>
     !char || !isPawnIdentifierContinueChar(char);
 
 function containsPawnIdentifierStartChar(source = '') {
-    const text = String(source || '');
+    const text = typeof source === 'string' ? source : String(source || '');
     for (let index = 0; index < text.length; index++) {
         if (isPawnIdentifierStartCode(text.charCodeAt(index))) return true;
     }
     return false;
 }
 
-function readPawnIdentifierAt(source = '', index = 0, options = {}) {
-    const text = String(source || '');
-    const start = Math.max(0, Number.isInteger(index) ? index : 0);
-    const customStart = typeof options.isIdentifierStartChar === 'function'
+function readPawnIdentifierAt(source = '', index = 0, options = null) {
+    const text = typeof source === 'string' ? source : String(source || '');
+    const start = typeof index === 'number' && index > 0 ? index | 0 : 0;
+    const customStart = options && typeof options.isIdentifierStartChar === 'function'
         ? options.isIdentifierStartChar
         : null;
-    const customContinue = typeof options.isIdentifierContinueChar === 'function'
+    const customContinue = options && typeof options.isIdentifierContinueChar === 'function'
         ? options.isIdentifierContinueChar
         : null;
     let end = start + 1;
@@ -67,14 +67,16 @@ function createPawnIdentifierReader(options = {}) {
     const isIdentifierContinueChar = typeof options.isIdentifierContinueChar === 'function'
         ? options.isIdentifierContinueChar
         : null;
-    if (!isIdentifierStartChar && !isIdentifierContinueChar) {
+    const usesDefaultStart = !isIdentifierStartChar || isIdentifierStartChar === isPawnIdentifierStartChar;
+    const usesDefaultContinue = !isIdentifierContinueChar || isIdentifierContinueChar === isPawnIdentifierContinueChar;
+    if (usesDefaultStart && usesDefaultContinue) {
         return readPawnIdentifierAt;
     }
     const canStart = isIdentifierStartChar || isPawnIdentifierStartChar;
     const canContinue = isIdentifierContinueChar || isPawnIdentifierContinueChar;
     return (source = '', index = 0) => {
-        const text = String(source || '');
-        const start = Math.max(0, Number.isInteger(index) ? index : 0);
+        const text = typeof source === 'string' ? source : String(source || '');
+        const start = typeof index === 'number' && index > 0 ? index | 0 : 0;
         if (!canStart(text[start] || '')) return null;
         let end = start + 1;
         while (end < text.length && canContinue(text[end] || '')) end++;
@@ -91,13 +93,16 @@ function createPawnIdentifierReader(options = {}) {
 }
 
 function isPawnIdentifierName(value = '') {
-    const text = String(value || '');
-    const identifier = readPawnIdentifierAt(text, 0);
-    return !!identifier && identifier.end === text.length;
+    const text = typeof value === 'string' ? value : String(value || '');
+    if (!text || !isPawnIdentifierStartCode(text.charCodeAt(0))) return false;
+    for (let index = 1; index < text.length; index++) {
+        if (!isPawnIdentifierContinueCode(text.charCodeAt(index))) return false;
+    }
+    return true;
 }
 
 function getPawnIdentifierName(value = '') {
-    const text = String(value || '').trim();
+    const text = (typeof value === 'string' ? value : String(value || '')).trim();
     return isPawnIdentifierName(text) ? text : '';
 }
 

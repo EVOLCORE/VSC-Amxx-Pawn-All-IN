@@ -52,21 +52,30 @@ function createCommentAnalysisCore(deps) {
         let writeStart = 0;
         let changed = false;
         const segments = [];
+        let firstLineCommentIndex = -1;
+        let firstBlockCommentIndex = -1;
 
         if (!inBlockComment) {
-            const lineCommentIndex = source.indexOf('//');
-            if (lineCommentIndex >= 0) {
-                const blockCommentIndex = source.indexOf('/*');
+            firstLineCommentIndex = source.indexOf('//');
+            firstBlockCommentIndex = source.indexOf('/*');
+            if (firstLineCommentIndex < 0 && firstBlockCommentIndex < 0) {
+                return {
+                    strippedLine: source,
+                    inBlockComment: false,
+                    changed: false
+                };
+            }
+            if (firstLineCommentIndex >= 0) {
                 const doubleQuoteIndex = source.indexOf('"');
                 const singleQuoteIndex = source.indexOf("'");
-                const hasEarlierBlockComment = blockCommentIndex >= 0 && blockCommentIndex < lineCommentIndex;
+                const hasEarlierBlockComment = firstBlockCommentIndex >= 0 && firstBlockCommentIndex < firstLineCommentIndex;
                 const hasEarlierString = (
-                    (doubleQuoteIndex >= 0 && doubleQuoteIndex < lineCommentIndex) ||
-                    (singleQuoteIndex >= 0 && singleQuoteIndex < lineCommentIndex)
+                    (doubleQuoteIndex >= 0 && doubleQuoteIndex < firstLineCommentIndex) ||
+                    (singleQuoteIndex >= 0 && singleQuoteIndex < firstLineCommentIndex)
                 );
                 if (!hasEarlierBlockComment && !hasEarlierString) {
                     return {
-                        strippedLine: source.slice(0, lineCommentIndex) + getSpaceMask(source.length - lineCommentIndex),
+                        strippedLine: source.slice(0, firstLineCommentIndex) + getSpaceMask(source.length - firstLineCommentIndex),
                         inBlockComment: false,
                         changed: true
                     };
@@ -231,7 +240,7 @@ function createCommentAnalysisCore(deps) {
         const visitLine = lineNo => {
             const rawLine = String(sourceLines[lineNo] || '');
             const escapeChar = lineCtrlChars[lineNo] || defaultEscapeChar;
-            if (!inBlockComment && rawLine.indexOf('//') < 0 && rawLine.indexOf('/*') < 0 && rawLine.indexOf('*/') < 0) {
+            if (!inBlockComment && rawLine.indexOf('/') < 0) {
                 return;
             }
 

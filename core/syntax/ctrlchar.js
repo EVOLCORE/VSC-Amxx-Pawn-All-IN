@@ -1,6 +1,6 @@
 const { splitPawnLines } = require('./lines');
-const { parsePragmaDirectiveLine } = require('./preprocessor-directives');
-const { skipPawnHorizontalWhitespace } = require('./whitespace');
+const { parsePragmaDirectiveLine } = require('./pragma-directives');
+const { collectPreprocessorDirectiveLineNumbers } = require('./preprocessor-lines');
 const {
     getPawnIncludeNameFromLine,
     parsePawnIncludeDirectiveTarget
@@ -43,18 +43,7 @@ function createCtrlCharSyntaxCore(deps) {
         return text.indexOf('ctrlchar') >= 0 || text.indexOf('include') >= 0;
     };
 
-    const collectDirectiveLineNumbers = strippedLines => {
-        const directiveLines = [];
-        for (let lineIndex = 0; lineIndex < strippedLines.length; lineIndex++) {
-            const source = String(strippedLines[lineIndex] || '');
-            if (source.indexOf('#') < 0) continue;
-            const cursor = skipPawnHorizontalWhitespace(source, 0);
-            if (cursor < source.length && source.charCodeAt(cursor) === 35) {
-                directiveLines.push(lineIndex);
-            }
-        }
-        return directiveLines;
-    };
+    const collectDirectiveLineNumbers = collectPreprocessorDirectiveLineNumbers;
 
     const fillLineCtrlCharRange = (lineCtrlChars, startLine, endLineExclusive, ctrlChar) => {
         if (ctrlChar === DEFAULT_CTRL_CHAR) return;

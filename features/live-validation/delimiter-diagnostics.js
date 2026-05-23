@@ -1,4 +1,4 @@
-const { createDelimiterSyntaxCore } = require('../../core/syntax');
+const { createDelimiterSyntaxCore } = require('../../core/syntax/delimiters');
 const { buildLineStartOffsets } = require('../../core/syntax/lines');
 
 function createDelimiterDiagnostics(deps) {

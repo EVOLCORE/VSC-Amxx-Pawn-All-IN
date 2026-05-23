@@ -1,4 +1,4 @@
-const { createUtilityCore } = require('../../core/utils');
+const { createUtilityCore } = require('../../core/utils/runtime');
 const { createLabelSyntaxCore } = require('../../core/syntax/labels');
 const { createStateSyntaxCore } = require('../../core/syntax/states');
 const { createWarningPolicySyntaxCore } = require('../../core/syntax/warning-policy');
@@ -6,11 +6,17 @@ const { createRationalPolicySyntaxCore } = require('../../core/syntax/rational-p
 const { createTagOverridePolicySyntaxCore } = require('../../core/syntax/tag-override-policy');
 const { createStatementClassifier } = require('../../core/syntax/statement-classifier');
 const {
-    createInitializerDiagnostics,
-    createDeprecatedSymbolPolicy,
-    createSymbolUsageDiagnostics,
+    createInitializerDiagnostics
+} = require('../../core/validation/initializer-diagnostics');
+const {
+    createDeprecatedSymbolPolicy
+} = require('../../core/validation/deprecated-symbol');
+const {
+    createSymbolUsageDiagnostics
+} = require('../../core/validation/usage-diagnostics');
+const {
     createDynamicUsageDiagnostics
-} = require('../../core/validation');
+} = require('../../core/validation/dynamic-usage');
 const { computeFunctionRangeMaps: defaultComputeFunctionRangeMaps } = require('../../core/declarations/scope');
 const { createExpressionDiagnostics } = require('./expression-diagnostics');
 const { createIndexedAccessDiagnostics } = require('./indexed-access-diagnostics');
@@ -147,6 +153,7 @@ function createLiveValidationDiagnosticCore(deps) {
         getSymbolNeverUsedIssue = defaultGetSymbolNeverUsedIssue,
         getSymbolAssignedValueNeverUsedIssue = defaultGetSymbolAssignedValueNeverUsedIssue,
         getPreprocessorDirectiveIssues,
+        readNormalizedFileContent,
         computeFunctionRangeMaps = defaultComputeFunctionRangeMaps,
         isPawnIdentifierBoundaryChar = defaultIsPawnIdentifierBoundaryChar,
         areLiveValidationWarningsEnabled = defaultAreLiveValidationWarningsEnabled,
@@ -325,7 +332,8 @@ function createLiveValidationDiagnosticCore(deps) {
         isEscapedQuote,
         splitTopLevel,
         getPreferredFunctionHoverMatch,
-        hasIncludeFunctionTwin
+        hasIncludeFunctionTwin,
+        readFileContent: readNormalizedFileContent
     });
     const {
         collectDynamicUsageIssues

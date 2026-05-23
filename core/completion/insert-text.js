@@ -2,15 +2,13 @@ function defaultIsEscapedQuote(source, index) {
     return String(source || '')[index - 1] === '\\';
 }
 
-const EXISTING_CALL_ARGUMENT_LOOKAHEAD_LINES = 8;
-const COMPLETION_CALL_ARGUMENT_MODE_ALL = 'all';
-const COMPLETION_CALL_ARGUMENT_MODE_REQUIRED_BEFORE_DEFAULT = 'required-before-default';
+const {
+    COMPLETION_CALL_ARGUMENT_MODE_ALL,
+    COMPLETION_CALL_ARGUMENT_MODE_REQUIRED_BEFORE_DEFAULT,
+    normalizeCompletionCallArgumentMode
+} = require('./call-argument-mode');
 
-function normalizeCompletionCallArgumentMode(value) {
-    const text = String(value || '').trim().toLowerCase();
-    if (text === COMPLETION_CALL_ARGUMENT_MODE_ALL) return COMPLETION_CALL_ARGUMENT_MODE_ALL;
-    return COMPLETION_CALL_ARGUMENT_MODE_REQUIRED_BEFORE_DEFAULT;
-}
+const EXISTING_CALL_ARGUMENT_LOOKAHEAD_LINES = 8;
 
 function createCompletionInsertTextCore(deps = {}) {
     const {

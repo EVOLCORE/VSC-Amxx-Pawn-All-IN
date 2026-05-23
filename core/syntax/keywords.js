@@ -132,8 +132,8 @@ function getKeywordSetForList(keywords = [], options = {}) {
 }
 
 function readKeywordCandidateAt(source = '', startIndex = 0) {
-    const text = String(source || '');
-    const start = Math.max(0, startIndex | 0);
+    const text = typeof source === 'string' ? source : String(source || '');
+    const start = typeof startIndex === 'number' && startIndex > 0 ? startIndex | 0 : 0;
     if (start >= text.length || !isPawnIdentifierStartCode(text.charCodeAt(start))) return '';
     let end = start + 1;
     while (end < text.length && isPawnIdentifierContinueCode(text.charCodeAt(end))) end++;
@@ -159,24 +159,30 @@ function startsWithAnyPawnKeyword(source = '', startIndex = 0, keywords = [], op
     return getKeywordSetForList(keywords, options).has(lookupName);
 }
 
+function startsWithPawnKeywordSet(source = '', startIndex = 0, keywordSet = PAWN_DECLARATION_OR_CONTROL_KEYWORD_SET, options = {}) {
+    const candidate = readKeywordCandidateAt(source, startIndex);
+    if (!candidate) return false;
+    return keywordSet.has(options.caseInsensitive ? candidate.toLowerCase() : candidate);
+}
+
 function startsWithDeclarationKeyword(source = '', startIndex = 0, options = {}) {
-    return startsWithAnyPawnKeyword(source, startIndex, PAWN_DECLARATION_KEYWORDS, options);
+    return startsWithPawnKeywordSet(source, startIndex, PAWN_DECLARATION_KEYWORD_SET, options);
 }
 
 function startsWithLocalDeclarationKeyword(source = '', startIndex = 0, options = {}) {
-    return startsWithAnyPawnKeyword(source, startIndex, PAWN_LOCAL_DECLARATION_KEYWORDS, options);
+    return startsWithPawnKeywordSet(source, startIndex, PAWN_LOCAL_DECLARATION_KEYWORD_SET, options);
 }
 
 function startsWithControlKeyword(source = '', startIndex = 0, options = {}) {
-    return startsWithAnyPawnKeyword(source, startIndex, PAWN_CONTROL_KEYWORDS, options);
+    return startsWithPawnKeywordSet(source, startIndex, PAWN_CONTROL_KEYWORD_SET, options);
 }
 
 function startsWithBlockControlKeyword(source = '', startIndex = 0, options = {}) {
-    return startsWithAnyPawnKeyword(source, startIndex, PAWN_BLOCK_CONTROL_KEYWORDS, options);
+    return startsWithPawnKeywordSet(source, startIndex, PAWN_BLOCK_CONTROL_KEYWORD_SET, options);
 }
 
 function startsWithDeclarationOrControlKeyword(source = '', startIndex = 0, options = {}) {
-    return startsWithAnyPawnKeyword(source, startIndex, PAWN_DECLARATION_OR_CONTROL_KEYWORDS, options);
+    return startsWithPawnKeywordSet(source, startIndex, PAWN_DECLARATION_OR_CONTROL_KEYWORD_SET, options);
 }
 
 function containsPawnKeyword(source = '', keyword = '', options = {}) {

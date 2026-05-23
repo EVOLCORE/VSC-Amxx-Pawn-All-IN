@@ -2,10 +2,12 @@ const { getDefineStateSignature } = require('../utils/signature');
 const { createMacroExpansionSyntaxCore } = require('./macro-expander');
 const { isCompilerPredefinedConstantName } = require('./compiler-builtins');
 const {
-    PREPROCESSOR_DIRECTIVE_NAMES,
+    PREPROCESSOR_DIRECTIVE_NAMES
+} = require('./preprocessor-directive-names');
+const {
     readPreprocessorDirectiveNameContext,
     readPreprocessorIdentifierToken
-} = require('./preprocessor-directives');
+} = require('./preprocessor-directive-context');
 const { createRationalPolicySyntaxCore } = require('./rational-policy');
 const { parsePawnIncludeDirectiveTarget } = require('./includes');
 const {
@@ -24,6 +26,7 @@ const {
     hasTrailingBackslashContinuation,
     removeTrailingBackslashContinuation
 } = require('./continuation');
+const { collectPreprocessorDirectiveLineNumbers } = require('./preprocessor-lines');
 
 function createPreprocessorSyntaxCore(deps) {
     const {
@@ -795,18 +798,7 @@ function createPreprocessorSyntaxCore(deps) {
         const isActive = () => stack.length ? !!stack[stack.length - 1].active : true;
         const directiveCandidateLines = Array.isArray(options.directiveCandidateLines)
             ? options.directiveCandidateLines
-            : (() => {
-                const candidates = [];
-                for (let lineNumber = 0; lineNumber < rawLines.length; lineNumber++) {
-                    const source = String(strippedLines[lineNumber] || '');
-                    if (source.indexOf('#') < 0) continue;
-                    const cursor = skipPawnHorizontalWhitespace(source, 0);
-                    if (cursor < source.length && source.charCodeAt(cursor) === 35) {
-                        candidates.push(lineNumber);
-                    }
-                }
-                return candidates;
-            })();
+            : collectPreprocessorDirectiveLineNumbers(strippedLines);
         const readDirectiveName = rest => readDirectiveIdentifier(rest, 0)?.name || '';
         const applyRationalPragmaDirective = directive => {
             const payload = String(directive?.payload || '');
@@ -873,6 +865,19 @@ function createPreprocessorSyntaxCore(deps) {
                 appendMaskedLine(rawLines[lineNumber], strippedLines[lineNumber] || rawLines[lineNumber]);
             }
         };
+        const appendDirectiveRange = (lineNumber, nextDirectiveLine, emitFirstRaw = false) => {
+            if (emitFirstRaw) {
+                emitRawLine(rawLines[lineNumber], strippedLines[lineNumber] || rawLines[lineNumber]);
+            } else {
+                appendMaskedLine(rawLines[lineNumber], strippedLines[lineNumber] || rawLines[lineNumber]);
+            }
+            for (let continuationLine = lineNumber + 1; continuationLine < nextDirectiveLine; continuationLine++) {
+                appendMaskedLine(
+                    rawLines[continuationLine],
+                    strippedLines[continuationLine] || rawLines[continuationLine]
+                );
+            }
+        };
 
         const processDirectiveLine = lineNumber => {
             const rawLine = rawLines[lineNumber];
@@ -889,24 +894,6 @@ function createPreprocessorSyntaxCore(deps) {
             const keyword = directive?.keyword || '';
             const rest = directive?.rest || '';
             const nextDirectiveLine = directiveSource?.nextLine ?? (lineNumber + 1);
-            const appendMaskedDirectiveLines = () => {
-                appendMaskedLine(rawLine, strippedLines[lineNumber] || rawLine);
-                for (let continuationLine = lineNumber + 1; continuationLine < nextDirectiveLine; continuationLine++) {
-                    appendMaskedLine(
-                        rawLines[continuationLine],
-                        strippedLines[continuationLine] || rawLines[continuationLine]
-                    );
-                }
-            };
-            const appendRawDirectiveLines = () => {
-                emitRawLine(rawLine, strippedLines[lineNumber] || rawLine);
-                for (let continuationLine = lineNumber + 1; continuationLine < nextDirectiveLine; continuationLine++) {
-                    appendMaskedLine(
-                        rawLines[continuationLine],
-                        strippedLines[continuationLine] || rawLines[continuationLine]
-                    );
-                }
-            };
 
             if (!directive) {
                 appendContentLine(lineNumber);
@@ -919,7 +906,7 @@ function createPreprocessorSyntaxCore(deps) {
                 const cond = isCompilerPredefinedConstantName(directiveName) ||
                     ensureDefineDeclMap().has(directiveName);
                 stack.push({ parentActive, branchTaken: parentActive && cond, active: parentActive && cond });
-                appendMaskedDirectiveLines();
+                appendDirectiveRange(lineNumber, nextDirectiveLine);
                 return nextDirectiveLine;
             }
 
@@ -931,7 +918,7 @@ function createPreprocessorSyntaxCore(deps) {
                     ensureDefineDeclMap().has(directiveName)
                 );
                 stack.push({ parentActive, branchTaken: parentActive && cond, active: parentActive && cond });
-                appendMaskedDirectiveLines();
+                appendDirectiveRange(lineNumber, nextDirectiveLine);
                 return nextDirectiveLine;
             }
 
@@ -939,7 +926,7 @@ function createPreprocessorSyntaxCore(deps) {
                 const parentActive = isActive();
                 const cond = evaluatePreprocessorCondition(rest, defineDecls, ensureDefineDeclMap(), { lineNumber });
                 stack.push({ parentActive, branchTaken: parentActive && cond, active: parentActive && cond });
-                appendMaskedDirectiveLines();
+                appendDirectiveRange(lineNumber, nextDirectiveLine);
                 return nextDirectiveLine;
             }
 
@@ -951,7 +938,7 @@ function createPreprocessorSyntaxCore(deps) {
                     frame.active = cond;
                     if (cond) frame.branchTaken = true;
                 }
-                appendMaskedDirectiveLines();
+                appendDirectiveRange(lineNumber, nextDirectiveLine);
                 return nextDirectiveLine;
             }
 
@@ -961,18 +948,18 @@ function createPreprocessorSyntaxCore(deps) {
                     frame.active = frame.parentActive && !frame.branchTaken;
                     frame.branchTaken = true;
                 }
-                appendMaskedDirectiveLines();
+                appendDirectiveRange(lineNumber, nextDirectiveLine);
                 return nextDirectiveLine;
             }
 
             if (keyword === 'endif') {
                 if (stack.length) stack.pop();
-                appendMaskedDirectiveLines();
+                appendDirectiveRange(lineNumber, nextDirectiveLine);
                 return nextDirectiveLine;
             }
 
             if (keyword === 'endinput') {
-                appendMaskedDirectiveLines();
+                appendDirectiveRange(lineNumber, nextDirectiveLine);
                 if (isActive()) {
                     appendMaskedRange(nextDirectiveLine, rawLines.length);
                     return rawLines.length;
@@ -981,14 +968,14 @@ function createPreprocessorSyntaxCore(deps) {
             }
 
             if (!isActive()) {
-                appendMaskedDirectiveLines();
+                appendDirectiveRange(lineNumber, nextDirectiveLine);
                 return nextDirectiveLine;
             }
 
             if (keyword === 'define') {
                 const lineDefine = parsePreprocessorDefineDirective(directive);
                 if (!lineDefine?.valid) {
-                    appendRawDirectiveLines();
+                    appendDirectiveRange(lineNumber, nextDirectiveLine, true);
                     return nextDirectiveLine;
                 }
                 const { name, args, macroStyle, macroIndexer, value } = lineDefine;
@@ -1046,13 +1033,13 @@ function createPreprocessorSyntaxCore(deps) {
                 defineMap.delete(undefName);
                 invalidateDefineLookupValues(defineMap);
                 defineStateKeyDirty = true;
-                appendRawDirectiveLines();
+                appendDirectiveRange(lineNumber, nextDirectiveLine, true);
                 return nextDirectiveLine;
             }
 
             if (keyword === 'pragma') {
                 applyRationalPragmaDirective(directive);
-                appendRawDirectiveLines();
+                appendDirectiveRange(lineNumber, nextDirectiveLine, true);
                 return nextDirectiveLine;
             }
 
@@ -1060,7 +1047,7 @@ function createPreprocessorSyntaxCore(deps) {
                 const includeTarget = parsePawnIncludeDirectiveTarget(trimmed);
                 const includeName = includeTarget?.name || getIncludeNameFromLine(trimmed);
                 if (!includeName) {
-                    appendRawDirectiveLines();
+                    appendDirectiveRange(lineNumber, nextDirectiveLine, true);
                     return nextDirectiveLine;
                 }
                 const includeRequired = keyword === 'include';
@@ -1109,7 +1096,7 @@ function createPreprocessorSyntaxCore(deps) {
                         if (!nestedState) {
                             const includeContent = readNormalizedFileContent(includePath);
                             if (includeContent == null) {
-                                appendRawDirectiveLines();
+                                appendDirectiveRange(lineNumber, nextDirectiveLine, true);
                                 return nextDirectiveLine;
                             }
                             const includeCtrlCharState = typeof getCtrlCharStateForContent === 'function'
@@ -1194,11 +1181,11 @@ function createPreprocessorSyntaxCore(deps) {
                         required: true
                     });
                 }
-                appendRawDirectiveLines();
+                appendDirectiveRange(lineNumber, nextDirectiveLine, true);
                 return nextDirectiveLine;
             }
 
-            appendRawDirectiveLines();
+            appendDirectiveRange(lineNumber, nextDirectiveLine, true);
             return nextDirectiveLine;
         };
 
@@ -1272,9 +1259,9 @@ function createPreprocessorSyntaxCore(deps) {
         };
     }
 
-    function applyEnumStep(currentValue, stepSpec, decls = []) {
+    function applyEnumStep(currentValue, stepSpec, decls = [], analysisCache = null) {
         if (!stepSpec) return currentValue + 1;
-        const stepValue = evaluatePawnNumericExpr(stepSpec.expr, decls);
+        const stepValue = evaluatePawnNumericExpr(stepSpec.expr, decls, new Set(), analysisCache);
         if (stepValue == null) return null;
         switch (stepSpec.op) {
             case '+': return currentValue + stepValue;

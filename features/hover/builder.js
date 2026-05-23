@@ -87,7 +87,7 @@ function createHoverBuilderFeature(deps) {
         const line = Number.isInteger(position?.line) ? position.line : -1;
         const character = Number.isInteger(position?.character) ? position.character : -1;
         try {
-            logHover?.(`start file=${fileName} pos=${line}:${character} version=${document?.version ?? ''}`);
+            logHover?.(() => `start file=${fileName} pos=${line}:${character} version=${document?.version ?? ''}`);
         } catch {
             // Debug logging must not affect hover.
         }
@@ -155,7 +155,7 @@ function createHoverBuilderFeature(deps) {
         const hoverSession = createHoverSession(document, position);
         if (!hoverSession) return null;
         try {
-            logHover?.(`context-ready file=${fileName} pos=${line}:${character} ms=${Date.now() - startedAt}`);
+            logHover?.(() => `context-ready file=${fileName} pos=${line}:${character} ms=${Date.now() - startedAt}`);
         } catch {
             // Debug logging must not affect hover.
         }
@@ -316,12 +316,26 @@ function createHoverBuilderFeature(deps) {
             if (typeof findCallContext !== 'function') return null;
             const callCtx = findCallContext(document, position, callContextOptions);
             if (!callCtx?.funcName) return null;
+            const signatureMatch = typeof getPreferredFunctionHoverMatch === 'function'
+                ? getPreferredFunctionHoverMatch(
+                    callCtx.funcName,
+                    functions,
+                    incDecls,
+                    {},
+                    lookup
+                )
+                : null;
+            const layout = typeof buildCallArgLayout === 'function' && signatureMatch?.data
+                ? buildCallArgLayout(signatureMatch.data.args || '', [], null, { useDynamicCache: false })
+                : null;
+            if (!layout || layout.variadicIndex < 0) return null;
             const link = findFormatPlaceholderLinkAtOffset(text, callCtx, positionOffset, {
                 splitTopLevelWithRanges,
                 findMatchingParenOffset,
                 ctrlCharResolver: resolver,
                 isEscapedQuote,
-                escapeChar: resolver.ctrlCharAtLine?.(position.line) || ''
+                escapeChar: resolver.ctrlCharAtLine?.(position.line) || '',
+                maxFormatArgIndexExclusive: layout.variadicIndex
             });
             if (!link) return null;
 
@@ -1091,7 +1105,7 @@ function createHoverBuilderFeature(deps) {
         );
         } finally {
             try {
-                logHover?.(`done file=${fileName} pos=${line}:${character} ms=${Date.now() - startedAt}`);
+                logHover?.(() => `done file=${fileName} pos=${line}:${character} ms=${Date.now() - startedAt}`);
             } catch {
                 // Debug logging must not affect hover.
             }

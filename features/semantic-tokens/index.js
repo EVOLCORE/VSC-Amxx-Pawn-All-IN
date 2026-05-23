@@ -2,7 +2,7 @@ const {
     collectNumericDefineNamesFromContext,
     findNumericDefineNameRangesInLine
 } = require('../../core/syntax/numeric-defines');
-const { isPreprocessorDirectiveNamedLine } = require('../../core/syntax/preprocessor-directives');
+const { isPreprocessorDirectiveNamedLine } = require('../../core/syntax/preprocessor-directive-context');
 
 const SEMANTIC_TOKEN_TYPES = ['number'];
 const NUMBER_TOKEN_TYPE_INDEX = 0;

@@ -2,7 +2,9 @@ const {
     PAWN_IDENTIFIER_NAME_RE,
     PAWN_IDENTIFIER_SOURCE,
     containsPawnIdentifierStartChar,
-    getPawnIdentifierName
+    getPawnIdentifierName,
+    isPawnIdentifierContinueCode,
+    isPawnIdentifierStartCode
 } = require('../../core/syntax/identifiers');
 const {
     startsWithControlKeyword,
@@ -45,6 +47,17 @@ function createSymbolDiagnostics(deps) {
         parseStateStatement,
         t
     } = deps;
+    const canUseFastPawnIdentifierCodes = !!(
+        isIdentifierStartChar('A') &&
+        isIdentifierStartChar('_') &&
+        isIdentifierStartChar('@') &&
+        !isIdentifierStartChar('0') &&
+        isIdentifierContinueChar('A') &&
+        isIdentifierContinueChar('_') &&
+        isIdentifierContinueChar('@') &&
+        isIdentifierContinueChar('0') &&
+        !isIdentifierContinueChar('-')
+    );
     function collectUnknownSymbolLiveDiagnosticsForLine(document, lineNumber, ctx, analysisCacheOrFactory, lineText, strippedLineText, lineStartOffset, docLength, declarationSourceState = null, lookupState = null) {
         const diagnostics = [];
         const includeDocument = isIncludeDocument(document);
@@ -171,19 +184,26 @@ function createSymbolDiagnostics(deps) {
                     return diagnostics;
                 }
             }
+            return diagnostics;
         }
 
         const findPreviousWordBefore = index => {
             let cursor = findPreviousNonWhitespaceIndex(identifierScanText, index - 1);
             if (cursor < 0) return '';
             let end = cursor + 1;
-            while (cursor >= 0 && isIdentifierContinueChar(identifierScanText[cursor])) {
+            while (cursor >= 0 && isIdentifierContinueAt(cursor)) {
                 cursor--;
             }
             const start = cursor + 1;
             if (start >= end) return '';
             return identifierScanText.slice(start, end);
         };
+        const isIdentifierStartAt = canUseFastPawnIdentifierCodes
+            ? index => isPawnIdentifierStartCode(identifierScanText.charCodeAt(index))
+            : index => isIdentifierStartChar(identifierScanText[index] || '');
+        const isIdentifierContinueAt = canUseFastPawnIdentifierCodes
+            ? index => isPawnIdentifierContinueCode(identifierScanText.charCodeAt(index))
+            : index => isIdentifierContinueChar(identifierScanText[index] || '');
 
         let inStr = false;
         let strCh = '';
@@ -224,13 +244,13 @@ function createSymbolDiagnostics(deps) {
                 strCh = char;
                 continue;
             }
-            if (!isIdentifierStartChar(char)) continue;
-            if (index > 0 && isIdentifierContinueChar(identifierScanText[index - 1])) continue;
+            if (!isIdentifierStartAt(index)) continue;
+            if (index > 0 && isIdentifierContinueAt(index - 1)) continue;
             if (isHexLiteralIdentifierTail(identifierScanText, index)) continue;
 
             const start = index;
             let end = index + 1;
-            while (end < identifierScanText.length && isIdentifierContinueChar(identifierScanText[end])) end++;
+            while (end < identifierScanText.length && isIdentifierContinueAt(end)) end++;
             const name = identifierScanText.slice(start, end);
             index = end - 1;
 

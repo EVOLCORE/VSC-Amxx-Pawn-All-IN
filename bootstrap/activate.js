@@ -1,18 +1,17 @@
 const vscode = require('vscode');
-const fs = require('fs');
 const path = require('path');
-const { registerCompilerIntegration } = require('../services/compiler');
+const { registerLazyCompilerIntegration } = require('../services/compiler-lazy');
 const { createDebugOutputChannel } = require('../services/debug-output');
-const { createRuntimeLocalization } = require('../services/localization');
+const { createLazyRuntimeTranslator } = require('../services/localization-lazy');
 const { createSettingsService } = require('../services/settings');
 const { buildLazyActivationRuntime } = require('./build-lazy-runtime');
 const { createActivationState } = require('./state');
 
 function activate(context) {
-    const { t } = createRuntimeLocalization(vscode);
+    const t = createLazyRuntimeTranslator(vscode);
     const state = createActivationState();
 
-    registerCompilerIntegration(context);
+    registerLazyCompilerIntegration(context);
 
     const settingsService = createSettingsService(vscode);
     settingsService.refresh();
@@ -32,7 +31,6 @@ function activate(context) {
         formatStringFeature
     } = buildLazyActivationRuntime({
         vscode,
-        fs,
         path,
         context,
         t,

@@ -82,6 +82,7 @@ function main() {
     fs.mkdirSync(tempPriorityVendorIncludeRoot, { recursive: true });
     fs.writeFileSync(path.join(tempGlobalIncludeRoot, 'priority_dup.inc'), '#define PRIORITY_DUP_VALUE 20\n');
     fs.writeFileSync(path.join(tempPriorityVendorIncludeRoot, 'priority_dup.inc'), '#define PRIORITY_DUP_VALUE 30\n');
+    fs.writeFileSync(path.join(tempPriorityVendorIncludeRoot, 'priority_parent.inc'), '#include <priority_dup>\n#define PRIORITY_PARENT 1\n');
     const vscode = createMockVscode(workspaceRoot, {
         projectLocalIncludePaths: [tempIncludeRoot]
     });
@@ -342,6 +343,106 @@ public main()
         !macroLoopContinueDiagnostics.some(diagnostic => /continue.*out of context/i.test(diagnostic.message)),
         `loop-like function macro body should allow continue, got: ${macroLoopContinueDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
     );
+    const macroDeclaredLocalsDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-macro-declared-locals.sma'),
+        `
+native get_players_ex(players[], &count, flags, const team[])
+native show_hudmessage(player, const message[])
+
+#define MAX_PLAYERS 32
+#define GetPlayers_None 0
+#define LoopPlayers(%1,%2,%3,%4,%5) \\
+    new %2[MAX_PLAYERS], %3; \\
+    get_players_ex(%2, %3, %4, %5); \\
+    for (new %1 = 0; %1 < %3; %1++)
+#define EachValue(%1:%2=>%3) \\
+    if (%1) \\
+        for (new %3, %2 = 0; %2 < 1; %2++) \\
+            if (%3)
+#define EachString(%1:%4=>%2[%3]) \\
+    if (%1) \\
+        for (new %2[%3], %4 = 0; %4 < 1; %4++) \\
+            if (%2[0])
+
+public test_loop()
+{
+    LoopPlayers(i, iPlayers, iCount, GetPlayers_None, "")
+    {
+        show_hudmessage(iPlayers[i], "test");
+    }
+}
+
+public test_nested_macro_loop()
+{
+    new fileJson = 1, moduleNames = 1;
+    EachValue(fileJson: i => itemJson)
+    {
+        show_hudmessage(itemJson, "test");
+        show_hudmessage(i, "test");
+    }
+    EachString(moduleNames: j => moduleName[32])
+    {
+        show_hudmessage(moduleName[0], "test");
+        show_hudmessage(j, "test");
+    }
+}
+`.trimStart()
+    );
+    const macroDeclaredLocalsDiagnostics = liveValidation.collectLiveValidationDiagnostics(macroDeclaredLocalsDocument);
+    assert(
+        !macroDeclaredLocalsDiagnostics.some(diagnostic => /unknown symbol.*(?:iPlayers|iCount|i\b|itemJson|j\b|moduleName)/i.test(diagnostic.message)),
+        `multiline macro-declared locals should be visible in the macro body, got: ${macroDeclaredLocalsDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    const formatPlaceholderMissingArgsDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-format-placeholder-missing-args.sma'),
+        `
+native PCJson_LogForFile(any:source, const level[], const fmt[], any:...)
+native client_print_color(id, sender, const message[], any:...)
+native show_hudmessage(id, const message[], any:...)
+native fmt(const format[], any:...)
+native formatex(buffer[], maxlen, const fmt[], any:...)
+native charsmax(any:array[])
+#define LANG_PLAYER 0
+
+public main()
+{
+    new typeName[32];
+    new sReturn[128];
+    PCJson_LogForFile(0, "WARNING", "Limit type %s%s not found.", typeName);
+    PCJson_LogForFile(0, "WARNING", "Translation %L", LANG_PLAYER);
+    client_print_color(1, 2, typeName[0] ? "Muted %n." : "Unmuted %n.", 2);
+    show_hudmessage(1, fmt("Flag owner %s", "Rangers"));
+    formatex(sReturn, charsmax(sReturn), "[|||||(100%s)|||||]", "%%");
+    formatex(sReturn, charsmax(sReturn), "[|||||(100%s)|||||]", "%s");
+}
+`.trimStart()
+    );
+    const formatPlaceholderMissingArgsText = formatPlaceholderMissingArgsDocument.getText();
+    const secondPercentSOffset = formatPlaceholderMissingArgsText.indexOf('%s%s') + 2;
+    const percentLOffset = formatPlaceholderMissingArgsText.indexOf('%L');
+    const formatPlaceholderMissingArgsDiagnostics = liveValidation.collectLiveValidationDiagnostics(formatPlaceholderMissingArgsDocument);
+    const missingFormatArgDiagnostics = formatPlaceholderMissingArgsDiagnostics.filter(diagnostic =>
+        /format placeholder .* requires/i.test(diagnostic.message)
+    );
+    assert(
+        missingFormatArgDiagnostics.length === 2,
+        `missing format args should report one diagnostic per undersupplied placeholder, got: ${formatPlaceholderMissingArgsDiagnostics.map(diagnostic => `${formatPlaceholderMissingArgsDocument.getText(diagnostic.range)}:${diagnostic.message}`).join(' | ')}`
+    );
+    assert(
+        missingFormatArgDiagnostics.some(diagnostic =>
+            formatPlaceholderMissingArgsDocument.offsetAt(diagnostic.range.start) === secondPercentSOffset &&
+            formatPlaceholderMissingArgsDocument.getText(diagnostic.range) === '%s'
+        ),
+        'missing second %s argument should be diagnosed on the second %s placeholder'
+    );
+    assert(
+        missingFormatArgDiagnostics.some(diagnostic =>
+            formatPlaceholderMissingArgsDocument.offsetAt(diagnostic.range.start) === percentLOffset &&
+            formatPlaceholderMissingArgsDocument.getText(diagnostic.range) === '%L' &&
+            /requires 2 argument/i.test(diagnostic.message)
+        ),
+        'missing second %L argument should be diagnosed on the %L placeholder'
+    );
     const macroExpansionVariantsDocument = new MockDocument(
         path.join(workspaceRoot, 'feature-wiring-macro-expansion-variants.sma'),
         `
@@ -581,10 +682,11 @@ public main()
         path.join(tempPriorityProjectRoot, 'priority-include-order.sma'),
         `
 #include <priority_dup>
+#include <priority_parent>
 
 public main()
 {
-    return PRIORITY_DUP_VALUE;
+    return PRIORITY_DUP_VALUE + PRIORITY_PARENT;
 }
 `.trimStart()
     );
@@ -599,10 +701,15 @@ public main()
         `configured global include roots should stay before workspace-discovered duplicate roots, got ${prioritySearchPaths.join(' | ')}`
     );
     const priorityContextResult = priorityCoreRuntime.sharedRuntime.getPawnDocumentContext(priorityDocument);
-    const priorityDefine = priorityContextResult.incDecls.find(decl => decl.name === 'PRIORITY_DUP_VALUE');
+    const priorityDefines = priorityContextResult.incDecls.filter(decl => decl.name === 'PRIORITY_DUP_VALUE');
+    const priorityDefine = priorityDefines[0];
     assert(
-        priorityDefine?.value === '20',
-        `include resolution should keep the configured higher-priority duplicate, got ${priorityDefine?.value}`
+        priorityDefines.length === 1 && priorityDefine?.value === '20',
+        `include resolution should expose one higher-priority duplicate, got ${priorityDefines.map(decl => decl.value).join(', ')}`
+    );
+    assert(
+        priorityContextResult.incDecls.some(decl => decl.name === 'PRIORITY_PARENT'),
+        'include resolution should still expose declarations from the parent include that referenced the duplicate'
     );
 
     const document = new MockDocument(

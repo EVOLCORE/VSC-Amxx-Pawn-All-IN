@@ -1,4 +1,4 @@
-const { createPreprocessorLabelSyntaxCore } = require('../../core/syntax');
+const { createPreprocessorLabelSyntaxCore } = require('../../core/syntax/preprocessor-label');
 const { LIVE_UNRESOLVED_INCLUDE_DIAGNOSTIC_CODE } = require('./diagnostic-codes');
 const { resolveLineStartOffset } = require('../../core/syntax/lines');
 

@@ -25,14 +25,65 @@ function getIncludeDeclDedupeKey(decl) {
         `${decl.valueDisplay || ''}`;
 }
 
+function getIncludeDeclDedupeFile(decl) {
+    return decl?.filePath || decl?.file || '';
+}
+
+function normalizeIncludeDeclDedupeValue(value) {
+    return value == null ? '' : String(value);
+}
+
+function areIncludeDeclsEquivalent(left, right) {
+    if (left === right) return true;
+    if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
+    return getIncludeDeclDedupeFile(left) === getIncludeDeclDedupeFile(right) &&
+        normalizeIncludeDeclDedupeValue(left.lineNumber) === normalizeIncludeDeclDedupeValue(right.lineNumber) &&
+        normalizeIncludeDeclDedupeValue(left.type) === normalizeIncludeDeclDedupeValue(right.type) &&
+        normalizeIncludeDeclDedupeValue(left.enumName) === normalizeIncludeDeclDedupeValue(right.enumName) &&
+        normalizeIncludeDeclDedupeValue(left.enumDisplayName) === normalizeIncludeDeclDedupeValue(right.enumDisplayName) &&
+        normalizeIncludeDeclDedupeValue(left.name) === normalizeIncludeDeclDedupeValue(right.name) &&
+        normalizeIncludeDeclDedupeValue(left.args) === normalizeIncludeDeclDedupeValue(right.args) &&
+        normalizeIncludeDeclDedupeValue(left.macroStyle) === normalizeIncludeDeclDedupeValue(right.macroStyle) &&
+        normalizeIncludeDeclDedupeValue(left.macroIndexer) === normalizeIncludeDeclDedupeValue(right.macroIndexer) &&
+        normalizeIncludeDeclDedupeValue(left.typeTag) === normalizeIncludeDeclDedupeValue(right.typeTag) &&
+        normalizeIncludeDeclDedupeValue(left.dims) === normalizeIncludeDeclDedupeValue(right.dims) &&
+        normalizeIncludeDeclDedupeValue(left.value) === normalizeIncludeDeclDedupeValue(right.value) &&
+        normalizeIncludeDeclDedupeValue(left.valueDisplay) === normalizeIncludeDeclDedupeValue(right.valueDisplay);
+}
+
+function createIncludeDeclDedupeTracker() {
+    const namedBuckets = new Map();
+    const namelessKeys = new Set();
+    return {
+        hasOrAdd(decl) {
+            if (!decl || typeof decl !== 'object') return false;
+            const name = decl.name || '';
+            if (!name) {
+                const key = getIncludeDeclDedupeKey(decl);
+                if (key && namelessKeys.has(key)) return true;
+                if (key) namelessKeys.add(key);
+                return false;
+            }
+            const bucket = namedBuckets.get(name);
+            if (bucket) {
+                for (const existing of bucket) {
+                    if (areIncludeDeclsEquivalent(existing, decl)) return true;
+                }
+                bucket.push(decl);
+            } else {
+                namedBuckets.set(name, [decl]);
+            }
+            return false;
+        }
+    };
+}
+
 function dedupeIncludeDecls(decls = []) {
     if (!Array.isArray(decls) || decls.length <= 1) return Array.isArray(decls) ? decls : [];
-    const seen = new Set();
+    const dedupe = createIncludeDeclDedupeTracker();
     const result = [];
     for (const decl of decls) {
-        const key = getIncludeDeclDedupeKey(decl);
-        if (key && seen.has(key)) continue;
-        if (key) seen.add(key);
+        if (dedupe.hasOrAdd(decl)) continue;
         result.push(decl);
     }
     return result;
@@ -44,12 +95,14 @@ function serializeIncludeDeclIndexes(decls = []) {
     const variableBuckets = new Map();
     for (let index = 0; index < decls.length; index++) {
         const decl = decls[index];
-        if (!decl?.name) continue;
-        const bucket = nameBuckets.get(decl.name);
+        if (!decl) continue;
+        const name = decl.name;
+        if (!name) continue;
+        const bucket = nameBuckets.get(name);
         if (bucket) bucket.push(index);
-        else nameBuckets.set(decl.name, [index]);
-        if (decl.type === 'variable' && !variableBuckets.has(decl.name)) {
-            variableBuckets.set(decl.name, index);
+        else nameBuckets.set(name, [index]);
+        if (decl.type === 'variable' && !variableBuckets.has(name)) {
+            variableBuckets.set(name, index);
         }
     }
     if (!nameBuckets.size && !variableBuckets.size) return null;
@@ -110,21 +163,25 @@ function createIncludeDeclAccumulator(options = {}) {
     const decls = [];
     const nameBuckets = new Map();
     const variableBuckets = new Map();
-    const seenDeclKeys = shouldDedupe ? new Set() : null;
+    const seenDecls = shouldDedupe ? createIncludeDeclDedupeTracker() : null;
+    const seenDeclRefs = shouldDedupe ? new WeakSet() : null;
     const pushDecl = decl => {
         if (!decl) return;
-        if (seenDeclKeys) {
-            const declKey = getIncludeDeclDedupeKey(decl);
-            if (declKey && seenDeclKeys.has(declKey)) return;
-            if (declKey) seenDeclKeys.add(declKey);
+        if (seenDeclRefs && typeof decl === 'object') {
+            if (seenDeclRefs.has(decl)) return;
+            seenDeclRefs.add(decl);
+        }
+        if (seenDecls) {
+            if (seenDecls.hasOrAdd(decl)) return;
         }
         decls.push(decl);
-        if (!decl.name) return;
-        const bucket = nameBuckets.get(decl.name);
+        const name = decl.name;
+        if (!name) return;
+        const bucket = nameBuckets.get(name);
         if (bucket) bucket.push(decl);
-        else nameBuckets.set(decl.name, [decl]);
-        if (decl.type === 'variable' && !variableBuckets.get(decl.name)) {
-            variableBuckets.set(decl.name, decl);
+        else nameBuckets.set(name, [decl]);
+        if (decl.type === 'variable' && !variableBuckets.get(name)) {
+            variableBuckets.set(name, decl);
         }
     };
     const finish = () => attachPrecomputedDeclBuckets(decls, nameBuckets, variableBuckets);

@@ -37,6 +37,7 @@
   "validation.missingArgument": "отсутствует аргумент",
   "validation.argumentHasNoDefaultValue": "аргумент не имеет значения по умолчанию",
   "validation.argumentCountMismatch": "несовпадение числа аргументов",
+  "validation.formatPlaceholderMissingArgument": "для плейсхолдера формата {placeholder} нужно аргументов: {expected}, передано: {actual}",
   "validation.extraArgument": "лишний аргумент",
   "validation.extraParameter": "лишний параметр",
   "validation.missingParameterDeclaration": "отсутствует объявление параметра",

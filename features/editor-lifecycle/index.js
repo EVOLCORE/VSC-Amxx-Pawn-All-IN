@@ -1,4 +1,4 @@
-const { createUtilityCore } = require('../../core/utils');
+const { createUtilityCore } = require('../../core/utils/runtime');
 const { getEffectiveIncludeFileExtensions } = require('../../core/include-extensions');
 const {
     contentChangesCrossLineBoundary,
@@ -8,6 +8,7 @@ const {
 const { isPawnIncludeDirectiveCandidateLine } = require('../../core/syntax/includes');
 const { sortUniqueLineNumbers } = require('../../core/syntax/line-number-lists');
 const { unrefTimer } = require('../../core/utils/timers');
+const { createPrefixedDebugLogger } = require('../../core/utils/debug-logger');
 
 const {
     getDocumentFingerprint: defaultGetDocumentFingerprint,
@@ -29,7 +30,6 @@ function createEditorLifecycleFeature(deps) {
         normalizeFsPath,
         isPawnDocument,
         getPawnDocumentContext,
-        warmWorkspaceIncludeSources,
         markWorkspaceIncludeSourcesDirty,
         getConfiguredGlobalIncludeSources,
         getProjectRootForFile,
@@ -87,20 +87,8 @@ function createEditorLifecycleFeature(deps) {
         return result;
     };
     const getFileExtension = filePath => path.extname(String(filePath || '')).toLowerCase();
-    const logWatcher = message => {
-        try {
-            liveValidationOutputChannel?.appendLine?.(`[watcher] ${message}`);
-        } catch {
-            // Watcher logging must never affect lifecycle handling.
-        }
-    };
-    const logLifecycle = message => {
-        try {
-            liveValidationOutputChannel?.appendLine?.(`[lifecycle] ${message}`);
-        } catch {
-            // Lifecycle logging must never affect editor handling.
-        }
-    };
+    const logWatcher = createPrefixedDebugLogger(liveValidationOutputChannel, 'watcher');
+    const logLifecycle = createPrefixedDebugLogger(liveValidationOutputChannel, 'lifecycle');
     const getDocumentScheme = document => String(document?.uri?.scheme || '').toLowerCase();
     const isFileBackedLifecycleDocument = document => {
         if (!document) return false;
@@ -442,7 +430,7 @@ function createEditorLifecycleFeature(deps) {
             plan: mergeTextValidationPlans(existing?.plan || null, plan)
         });
         rememberSelectionLine(document, contentChanges);
-        logLifecycle(`text-change defer-until-line-change file=${document.fileName || ''} reason=${plan.reason || ''}`);
+        logLifecycle(() => `text-change defer-until-line-change file=${document.fileName || ''} reason=${plan.reason || ''}`);
     };
     const takePendingLineChangeValidation = documentOrPath => {
         const key = typeof documentOrPath === 'string'
@@ -466,7 +454,7 @@ function createEditorLifecycleFeature(deps) {
         if (!entry?.plan) return false;
         const document = typeof documentOrPath === 'string' ? entry.document : documentOrPath;
         if (!isLiveLifecyclePawnDocument(document)) return false;
-        logLifecycle(`text-change flush-deferred reason=${reason} file=${document.fileName || ''}`);
+        logLifecycle(() => `text-change flush-deferred reason=${reason} file=${document.fileName || ''}`);
         scheduleTextValidationPlan(document, entry.plan, 0);
         return true;
     };
@@ -536,7 +524,7 @@ function createEditorLifecycleFeature(deps) {
             const documentPath = normalizeLifecyclePath(doc.fileName || '');
             if (documentPath && scheduledDocumentPaths.has(documentPath)) continue;
             if (documentPath) scheduledDocumentPaths.add(documentPath);
-            logWatcher(
+            logWatcher(() =>
                 `dependency schedule reason=${options.pathsChanged ? 'includePathChanged' : 'includeChanged'} ` +
                 `doc=${doc?.fileName || ''} changed=${changedFilePath} pathsChanged=${options.pathsChanged ? 1 : 0}`
             );
@@ -575,14 +563,14 @@ function createEditorLifecycleFeature(deps) {
         Promise.resolve(ensureConfiguredPawnLanguage(document))
             .then(pawnDoc => {
                 if (!pawnDoc || !isLiveLifecyclePawnDocument(pawnDoc)) {
-                    logLifecycle(
+                    logLifecycle(() =>
                         `language-ensure skip file=${filePath || document?.fileName || ''} ` +
                         `lang=${pawnDoc?.languageId || document?.languageId || ''}`
                     );
                     return;
                 }
                 const pawnPath = pawnDoc.fileName || filePath;
-                logLifecycle(`language-ensure ok file=${pawnPath} lang=${pawnDoc.languageId || ''}`);
+                logLifecycle(() => `language-ensure ok file=${pawnPath} lang=${pawnDoc.languageId || ''}`);
                 markDependencyGraphChanged(pawnPath);
                 ensureIncludeGraphWatchers();
                 handleVisibleOrActivePawnDocument(pawnDoc, 120);
@@ -724,7 +712,7 @@ function createEditorLifecycleFeature(deps) {
         workspaceIncludeWatcherState.contentStartupNoiseGraceUntil =
             nowMs() + WATCHER_CONTENT_STARTUP_NOISE_GRACE_MS;
         seedOpenDocumentWatcherFileStamps();
-        logWatcher(
+        logWatcher(() =>
             `register targets=${watcherTargets.length} glob=${createIncludeGraphGlob()} ` +
             `graceMs=${WATCHER_CONTENT_STARTUP_NOISE_GRACE_MS} signature=${signature}`
         );
@@ -736,14 +724,14 @@ function createEditorLifecycleFeature(deps) {
             let contentDecision = null;
             if (!pathsChanged) {
                 contentDecision = getWatcherContentChangeDecision(filePath);
-                logWatcher(
+                logWatcher(() =>
                     `event kind=content file=${filePath} schedule=${contentDecision.schedule ? 1 : 0} ` +
                     `reason=${contentDecision.reason} grace=${contentDecision.graceActive ? 1 : 0} ` +
                     `prev=${describeWatcherStamp(contentDecision.previousStamp)} ` +
                     `current=${describeWatcherStamp(contentDecision.currentStamp)}`
                 );
             } else {
-                logWatcher(`event kind=path file=${filePath} schedule=1`);
+                logWatcher(() => `event kind=path file=${filePath} schedule=1`);
             }
             if (!pathsChanged && !contentDecision?.schedule) {
                 return;
@@ -797,7 +785,7 @@ function createEditorLifecycleFeature(deps) {
         const liveDocument = isLiveLifecyclePawnDocument(document);
         const potentialPawnFile = isPotentialIncludeGraphFile(filePath);
         if (liveDocument || potentialPawnFile) {
-            logLifecycle(
+            logLifecycle(() =>
                 `text-change file=${filePath} lang=${document.languageId || ''} ` +
                 `mode=${getLiveValidationMode()} live=${liveDocument ? 1 : 0} ` +
                 `potential=${potentialPawnFile ? 1 : 0} changes=${event.contentChanges.length}`
@@ -814,7 +802,7 @@ function createEditorLifecycleFeature(deps) {
                 potentialPawnFile ||
                 shouldProbePawnLanguageAfterTextChange(document, event.contentChanges)
             ) {
-                logLifecycle(`text-change ensure-language file=${filePath} lang=${document.languageId || ''}`);
+                logLifecycle(() => `text-change ensure-language file=${filePath} lang=${document.languageId || ''}`);
                 activatePawnLanguageAfterTextChange(document, filePath);
             }
             return;
@@ -826,14 +814,14 @@ function createEditorLifecycleFeature(deps) {
         const mode = getLiveValidationMode();
         let validationPlan = null;
         if (mode === 'full') {
-            logLifecycle(`text-change schedule full file=${filePath}`);
+            logLifecycle(() => `text-change schedule full file=${filePath}`);
             validationPlan = {
                 full: true,
                 reason: 'textChangedFull'
             };
         } else if (mode === 'edited') {
             const editedPlan = resolveEditedValidationPlan(document, event.contentChanges, editImpact);
-            logLifecycle(
+            logLifecycle(() =>
                 `text-change schedule edited file=${filePath} full=${editedPlan.full ? 1 : 0} ` +
                 `lines=${Array.isArray(editedPlan.lines) ? editedPlan.lines.length : 0} reason=${editedPlan.reason || ''}`
             );
@@ -851,7 +839,7 @@ function createEditorLifecycleFeature(deps) {
             }
         } else {
             dropPendingLineChangeValidation(document);
-            logLifecycle(`text-change skip mode=${mode} file=${filePath}`);
+            logLifecycle(() => `text-change skip mode=${mode} file=${filePath}`);
         }
         const typingDelayMs = getTypingValidationDelayMs();
         scheduleWarmDocumentContext(document, getTypingContextWarmupDelayMs());
@@ -1050,7 +1038,7 @@ function createEditorLifecycleFeature(deps) {
     }
 
     function register() {
-        logLifecycle(
+        logLifecycle(() =>
             `register mode=${getLiveValidationMode()} scanOnOpen=${shouldRunLiveValidationScanOnOpen() ? 1 : 0}`
         );
         const subscriptions = [
@@ -1092,7 +1080,7 @@ function createEditorLifecycleFeature(deps) {
 
     function initialize() {
         const activeDoc = vscode.window.activeTextEditor?.document || null;
-        logLifecycle(
+        logLifecycle(() =>
             `initialize mode=${getLiveValidationMode()} scanOnOpen=${shouldRunLiveValidationScanOnOpen() ? 1 : 0} ` +
             `active=${activeDoc?.fileName || ''} lang=${activeDoc?.languageId || ''} ` +
             `docs=${(vscode.workspace.textDocuments || []).length} visible=${(vscode.window.visibleTextEditors || []).length}`
@@ -1116,7 +1104,6 @@ function createEditorLifecycleFeature(deps) {
             startupWarmupTimer = null;
             try {
                 ensureIncludeGraphWatchers();
-                warmWorkspaceIncludeSources(activeDoc?.fileName || '');
             } catch {
                 // Ignore include-source warmup failures so startup stays resilient.
             }

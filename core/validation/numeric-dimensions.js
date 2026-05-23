@@ -25,8 +25,22 @@ function createNumericDimensionValidationCore(deps) {
     const PARSED_NUMERIC_EXPR_CACHE_LIMIT = 4096;
     const PARSED_NUMERIC_EXPR_CACHE_MAX_CHARS = 512;
     const PAWN_CHARS_PER_CELL = 4;
+    const SIMPLE_NUMERIC_LITERAL_RE = /^[+-]?(?:0[xX][0-9a-fA-F]+|\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)$/;
     const dimensionSyntaxCore = createDimensionSyntaxCore();
     const parseDimsParts = dimensionSyntaxCore.parseDimsParts;
+
+    function evaluateSimpleNumericLiteral(source) {
+        const text = String(source || '').trim();
+        if (!SIMPLE_NUMERIC_LITERAL_RE.test(text)) return null;
+        if (/^[+-]?0[xX]/.test(text)) {
+            const sign = text.charCodeAt(0) === 45 ? -1 : 1;
+            const start = text.charCodeAt(0) === 43 || text.charCodeAt(0) === 45 ? 1 : 0;
+            const value = Number.parseInt(text.slice(start), 16);
+            return Number.isFinite(value) ? sign * value : null;
+        }
+        const value = Number(text);
+        return Number.isFinite(value) ? value : null;
+    }
 
     function evaluateParsedPawnNumericExpr(source) {
         const input = String(source || '');
@@ -138,6 +152,8 @@ function createNumericDimensionValidationCore(deps) {
         };
 
         if (!cacheKey) return cacheNumericExprResult(null);
+        const simpleLiteral = evaluateSimpleNumericLiteral(cacheKey);
+        if (simpleLiteral != null) return cacheNumericExprResult(simpleLiteral);
         if (!containsPawnIdentifierStartChar(cacheKey)) {
             return cacheNumericExprResult(evaluateParsedPawnNumericExpr(cacheKey));
         }

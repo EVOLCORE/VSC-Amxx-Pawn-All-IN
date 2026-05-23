@@ -1,7 +1,9 @@
 const {
-    createDocumentContextCore,
+    createDocumentContextCore
+} = require('../../core/document-context/runtime');
+const {
     createDocumentIncludeSystem
-} = require('../../core/document-context/index');
+} = require('../../core/document-context/pawn-includes');
 const { createCacheMaintenanceService } = require('../../services/cache-maintenance');
 
 function createDocumentSystemRuntime(deps) {

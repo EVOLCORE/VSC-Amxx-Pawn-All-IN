@@ -314,12 +314,55 @@ function isVariableDeclarationInitializerCompletionPrefix(prefixText) {
     return findTopLevelSimpleAssignmentOperator(currentDeclaratorPrefix) >= 0;
 }
 
+function findUnclosedSquareBracketStart(source) {
+    const text = String(source || '');
+    let depth = 0;
+    for (let index = text.length - 1; index >= 0; index--) {
+        const char = text[index];
+        if (char === ']') {
+            depth++;
+        } else if (char === '[') {
+            if (depth === 0) return index;
+            depth--;
+        }
+    }
+    return -1;
+}
+
+function isVariableDeclaratorPrefix(source) {
+    const text = String(source || '').trim();
+    if (!text) return false;
+    const declaratorRe = new RegExp(
+        `^(?:(?:${PAWN_IDENTIFIER_SOURCE})\\s*:\\s*)?` +
+        `${PAWN_IDENTIFIER_SOURCE}(?:\\s*\\[[^\\]]*\\])*\\s*$`
+    );
+    return declaratorRe.test(text);
+}
+
+function isVariableDeclarationArrayDimensionCompletionPrefix(prefixText) {
+    const parsed = readVariableDeclarationCompletionPrefix(prefixText);
+    if (!parsed) return false;
+
+    const bracketStart = findUnclosedSquareBracketStart(parsed.body);
+    if (bracketStart < 0) return false;
+
+    const beforeBracket = parsed.body.slice(0, bracketStart);
+    const lastTopLevelComma = findLastTopLevelChar(beforeBracket, ',');
+    const currentDeclaratorPrefix = beforeBracket.slice(lastTopLevelComma + 1);
+    if (findTopLevelSimpleAssignmentOperator(currentDeclaratorPrefix) >= 0) return false;
+    return isVariableDeclaratorPrefix(currentDeclaratorPrefix);
+}
+
 function isVariableDeclarationCompletionPrefix(prefixText) {
     return !!readVariableDeclarationCompletionPrefix(prefixText) &&
+        !isVariableDeclarationArrayDimensionCompletionPrefix(prefixText) &&
         !isVariableDeclarationInitializerCompletionPrefix(prefixText);
 }
 
 function getCompletionLinePrefixIntent(prefixText) {
+    if (isVariableDeclarationArrayDimensionCompletionPrefix(prefixText)) {
+        return 'array-dimension';
+    }
     if (isVariableDeclarationInitializerCompletionPrefix(prefixText)) {
         return 'call';
     }

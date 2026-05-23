@@ -192,9 +192,10 @@ function createIncludePersistentCache(deps) {
             includeEntries.length > 0;
     }
 
-    function readPersistentActiveIncludeDeclCache(docFilePath, includeEntries, searchPathSignature) {
+    function readPersistentActiveIncludeDeclCache(docFilePath, includeEntries, searchPathSignature, precomputedIncludeEntriesSignatureHash = '') {
         if (!canUsePersistentActiveIncludeDeclCache(includeEntries)) return null;
-        const includeEntriesSignatureHash = getActiveIncludeEntriesSignatureHash(includeEntries);
+        const includeEntriesSignatureHash = precomputedIncludeEntriesSignatureHash ||
+            getActiveIncludeEntriesSignatureHash(includeEntries);
         if (!includeEntriesSignatureHash) return null;
         const cacheFilePath = getPersistentActiveIncludeDeclCacheFilePath(
             includeEntriesSignatureHash,
@@ -222,9 +223,10 @@ function createIncludePersistentCache(deps) {
         }
     }
 
-    function writePersistentActiveIncludeDeclCache(includeEntries, searchPathSignature, decls, dependencyStamps) {
+    function writePersistentActiveIncludeDeclCache(includeEntries, searchPathSignature, decls, dependencyStamps, precomputedIncludeEntriesSignatureHash = '') {
         if (!canUsePersistentActiveIncludeDeclCache(includeEntries)) return;
-        const includeEntriesSignatureHash = getActiveIncludeEntriesSignatureHash(includeEntries);
+        const includeEntriesSignatureHash = precomputedIncludeEntriesSignatureHash ||
+            getActiveIncludeEntriesSignatureHash(includeEntries);
         if (!includeEntriesSignatureHash) return;
         const cacheFilePath = getPersistentActiveIncludeDeclCacheFilePath(
             includeEntriesSignatureHash,

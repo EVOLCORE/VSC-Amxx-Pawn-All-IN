@@ -37,10 +37,24 @@ function createStatementClassifier(deps) {
         isIdentifierStartChar,
         isIdentifierContinueChar
     });
+    const STATEMENT_LEVEL_KEYWORDS = [
+        'break',
+        'continue',
+        'switch',
+        'for',
+        'while',
+        'do',
+        'return'
+    ];
+    const hasWantedIdentifier = (wantedList, wantedSet, name) =>
+        wantedList
+            ? wantedList.indexOf(name) >= 0
+            : wantedSet.has(name);
 
     function collectStatementLevelIdentifiers(source, names = null) {
         const text = String(source || '');
-        const wanted = names ? new Set(names) : null;
+        const wantedList = Array.isArray(names) && names.length <= 12 ? names : null;
+        const wantedSet = names && !wantedList ? new Set(names) : null;
         const identifiers = [];
         let parenDepth = 0;
         let bracketDepth = 0;
@@ -78,7 +92,7 @@ function createStatementClassifier(deps) {
 
             const ident = readIdentifierAt(text, index);
             if (!ident) continue;
-            if (!wanted || wanted.has(ident.text)) {
+            if (!names || hasWantedIdentifier(wantedList, wantedSet, ident.text)) {
                 identifiers.push(ident);
             }
             index = ident.end - 1;
@@ -173,15 +187,7 @@ function createStatementClassifier(deps) {
         const controlStarts = [];
         let returnOccurrence = null;
 
-        for (const ident of collectStatementLevelIdentifiers(text.slice(start), [
-            'break',
-            'continue',
-            'switch',
-            'for',
-            'while',
-            'do',
-            'return'
-        ])) {
+        for (const ident of collectStatementLevelIdentifiers(text.slice(start), STATEMENT_LEVEL_KEYWORDS)) {
             const absoluteStart = start + ident.start;
             const absoluteEnd = start + ident.end;
             switch (ident.text) {
@@ -435,7 +441,7 @@ function createStatementClassifier(deps) {
         return count;
     }
 
-    function resolveSwitchCaseLabelValues(labelText, allDecls = []) {
+    function resolveSwitchCaseLabelValues(labelText, allDecls = [], options = {}) {
         const pieces = splitTopLevel(String(labelText || ''), undefined, true)
             .map(part => String(part || '').trim())
             .filter(Boolean);
@@ -454,7 +460,7 @@ function createStatementClassifier(deps) {
             if (/^true$/i.test(text)) return 1;
             if (/^false$/i.test(text)) return 0;
             if (/^[+\-]?(?:\d+\.\d*|\.\d+)(?:[eE][+\-]?\d+)?$/.test(text)) return Number(text);
-            return evaluatePawnNumericExpr(text, allDecls);
+            return evaluatePawnNumericExpr(text, allDecls, new Set(), options.analysisCache || null);
         };
 
         for (const piece of pieces) {

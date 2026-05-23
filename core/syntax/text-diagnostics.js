@@ -1,5 +1,5 @@
 const { isPawnIdentifierContinueChar } = require('./identifiers');
-const { parsePragmaDirectiveLine } = require('./preprocessor-directives');
+const { parsePragmaDirectiveLine } = require('./pragma-directives');
 const { isPreprocessorDirectiveLine } = require('./preprocessor-lines');
 const { findPawnLineTrimEndIndex } = require('./whitespace');
 
@@ -11,6 +11,17 @@ function createTextSyntaxDiagnosticsCore(deps) {
     } = deps;
     const PAWN_INPUT_LINE_MAX = 4095;
     const PACKED_CHAR_MAX = 0xff;
+
+    function isDecimalDigitCode(code) {
+        return code >= 48 && code <= 57;
+    }
+
+    function hexDigitValue(code) {
+        if (code >= 48 && code <= 57) return code - 48;
+        if (code >= 65 && code <= 70) return code - 55;
+        if (code >= 97 && code <= 102) return code - 87;
+        return -1;
+    }
 
     function parsePawnLiteralChar(source, index, escapeChar = '', rawMode = false) {
         const text = String(source || '');
@@ -47,17 +58,21 @@ function createTextSyntaxDiagnosticsCore(deps) {
         if (escaped === 'x') {
             index++;
             let value = 0;
-            while (index < text.length && /[0-9a-fA-F]/.test(text[index])) {
-                value = (value << 4) + Number.parseInt(text[index], 16);
+            while (index < text.length) {
+                const digitValue = hexDigitValue(text.charCodeAt(index));
+                if (digitValue < 0) break;
+                value = (value << 4) + digitValue;
                 index++;
             }
             if (text[index] === ';') index++;
             return { invalid: false, value, start, end: index };
         }
-        if (/[0-9]/.test(escaped)) {
+        if (isDecimalDigitCode(escaped.charCodeAt(0))) {
             let value = 0;
-            while (index < text.length && /[0-9]/.test(text[index])) {
-                value = value * 10 + Number.parseInt(text[index], 10);
+            while (index < text.length) {
+                const code = text.charCodeAt(index);
+                if (!isDecimalDigitCode(code)) break;
+                value = value * 10 + code - 48;
                 index++;
             }
             if (text[index] === ';') index++;

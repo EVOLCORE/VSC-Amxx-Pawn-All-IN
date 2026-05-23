@@ -1,4 +1,4 @@
-const { createPreprocessorSyntaxCore } = require('../../core/syntax/index');
+const { createPreprocessorSyntaxCore } = require('../../core/syntax/preprocessor');
 
 function createPreprocessorRuntime(deps) {
     const {

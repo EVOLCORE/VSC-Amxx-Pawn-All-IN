@@ -26,9 +26,25 @@ function createLiveDiagnosticLineFilter(options = {}) {
     const shouldSkipDiagnostic = (diagnostic, filterOptions = {}) =>
         shouldSkipLine(getDiagnosticStartLine(diagnostic), filterOptions);
 
+    const shouldSkipInactiveLine = lineNumber => {
+        if (!Number.isInteger(lineNumber) || lineNumber < 0) return false;
+        return isInactivePreprocessorLine(lineNumber);
+    };
+
+    const shouldSkipTaintedLine = lineNumber => {
+        if (!Number.isInteger(lineNumber) || lineNumber < 0) return false;
+        return isDelimiterTaintedLine(lineNumber);
+    };
+
+    const shouldSkipInactiveDiagnostic = diagnostic =>
+        shouldSkipInactiveLine(getDiagnosticStartLine(diagnostic));
+
     return {
         getDiagnosticStartLine,
         shouldSkipDiagnostic,
+        shouldSkipInactiveDiagnostic,
+        shouldSkipInactiveLine,
+        shouldSkipTaintedLine,
         shouldSkipLine
     };
 }

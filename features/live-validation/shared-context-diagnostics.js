@@ -6,6 +6,27 @@ const { getPawnIdentifierName } = require('../../core/syntax/identifiers');
 const { splitPawnLines } = require('../../core/syntax/lines');
 const { hasTrailingBackslashContinuation } = require('../../core/syntax/continuation');
 
+const EMPTY_DECLS_FOR_LINE = [];
+const EMPTY_VARIABLE_DECLS_FOR_LINE = {
+    currentArgs: EMPTY_DECLS_FOR_LINE,
+    currentLocals: EMPTY_DECLS_FOR_LINE,
+    currentGlobals: EMPTY_DECLS_FOR_LINE
+};
+
+function findSameLineVariableDecl(decls, name, lineNumber, filePath) {
+    for (const decl of decls || EMPTY_DECLS_FOR_LINE) {
+        if (
+            decl?.type === 'variable' &&
+            decl.name === name &&
+            decl.lineNumber === lineNumber &&
+            (!decl.filePath || !filePath || decl.filePath === filePath)
+        ) {
+            return decl;
+        }
+    }
+    return null;
+}
+
 function createSharedContextDiagnostics(deps) {
     const {
         settingsService,
@@ -172,19 +193,13 @@ function createSharedContextDiagnostics(deps) {
                 currentLocals,
                 currentGlobals
             } = getVariableDeclsForLine(ctx, lineNumber);
-            const currentLineDeclLists = [currentArgs, currentLocals, currentGlobals];
-            for (const decls of currentLineDeclLists) {
-                for (const decl of decls || []) {
-                    if (
-                        decl?.type === 'variable' &&
-                        decl.name === name &&
-                        decl.lineNumber === lineNumber &&
-                        (!decl.filePath || !ctx.fp || decl.filePath === ctx.fp)
-                    ) {
-                        cacheByName.set(cacheKey, decl);
-                        return decl;
-                    }
-                }
+            const sameLineDecl =
+                findSameLineVariableDecl(currentArgs, name, lineNumber, ctx.fp) ||
+                findSameLineVariableDecl(currentLocals, name, lineNumber, ctx.fp) ||
+                findSameLineVariableDecl(currentGlobals, name, lineNumber, ctx.fp);
+            if (sameLineDecl) {
+                cacheByName.set(cacheKey, sameLineDecl);
+                return sameLineDecl;
             }
         }
         if (sameLineOnly) {
@@ -229,7 +244,12 @@ function createSharedContextDiagnostics(deps) {
         for (const decl of parsedDecls.locals || []) addDecl(localsByLine, decl);
         for (const decl of parsedDecls.globals || []) addDecl(globalsByLine, decl);
 
-        index = { argsByLine, localsByLine, globalsByLine };
+        index = {
+            argsByLine,
+            localsByLine,
+            globalsByLine,
+            declsByLine: new Map()
+        };
         variableDeclsByLineIndexByParsedDecls.set(parsedDecls, index);
         return index;
     }
@@ -239,20 +259,30 @@ function createSharedContextDiagnostics(deps) {
     function getVariableDeclsForLine(ctx, lineNumber) {
         const parsedDecls = ctx?.parsedDecls || null;
         if (!parsedDecls) {
-            return {
-                currentArgs: [],
-                currentLocals: [],
-                currentGlobals: []
-            };
+            return EMPTY_VARIABLE_DECLS_FOR_LINE;
         }
         const index = getVariableDeclsByLineIndex(parsedDecls);
-        return {
-            currentArgs: index.argsByLine.get(lineNumber) || [],
-            currentLocals: index.localsByLine.get(lineNumber) || [],
-            currentGlobals: (parsedDecls.depths?.[lineNumber] ?? 0) === 0
-                ? (index.globalsByLine.get(lineNumber) || [])
-                : []
-        };
+        if (index.declsByLine.has(lineNumber)) {
+            return index.declsByLine.get(lineNumber);
+        }
+
+        const currentArgs = index.argsByLine.get(lineNumber) || EMPTY_DECLS_FOR_LINE;
+        const currentLocals = index.localsByLine.get(lineNumber) || EMPTY_DECLS_FOR_LINE;
+        const currentGlobals = (parsedDecls.depths?.[lineNumber] ?? 0) === 0
+            ? (index.globalsByLine.get(lineNumber) || EMPTY_DECLS_FOR_LINE)
+            : EMPTY_DECLS_FOR_LINE;
+        const lineDecls = (
+            currentArgs.length ||
+            currentLocals.length ||
+            currentGlobals.length
+        )
+            ? { currentArgs, currentLocals, currentGlobals }
+            : null;
+        if (!lineDecls) {
+            return EMPTY_VARIABLE_DECLS_FOR_LINE;
+        }
+        index.declsByLine.set(lineNumber, lineDecls);
+        return lineDecls;
     }
 
     function getLineStringLiteralState(ctx) {

@@ -1,7 +1,9 @@
 const {
-    createDocumentCacheUtils,
+    createDocumentCacheUtils
+} = require('../../core/document-context/cache-utils');
+const {
     createDocumentContextStateCore
-} = require('../../core/document-context/index');
+} = require('../../core/document-context/state');
 
 function createDocumentStateRuntime(deps) {
     const {

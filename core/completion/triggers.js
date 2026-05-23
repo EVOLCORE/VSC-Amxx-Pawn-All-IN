@@ -1,0 +1,15 @@
+const INCLUDE_COMPLETION_TRIGGER_CHARACTERS = ['<', '"', '/', '\\'];
+
+const COMPLETION_TRIGGER_CHARACTERS = [
+    '#',
+    ...INCLUDE_COMPLETION_TRIGGER_CHARACTERS,
+    '[',
+    '_',
+    '@',
+    ...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+];
+
+module.exports = {
+    COMPLETION_TRIGGER_CHARACTERS,
+    INCLUDE_COMPLETION_TRIGGER_CHARACTERS
+};

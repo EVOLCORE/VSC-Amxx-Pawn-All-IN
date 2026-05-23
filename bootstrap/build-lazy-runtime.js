@@ -1,4 +1,4 @@
-const { COMPLETION_TRIGGER_CHARACTERS } = require('../features/completion');
+const { COMPLETION_TRIGGER_CHARACTERS } = require('../core/completion/triggers');
 const { isHoverModifierHackMode } = require('../core/hover-modes');
 const { shouldSchedulePersistentHoverForSelectionEvent } = require('../core/persistent-hover/selection-events');
 const {
@@ -6,6 +6,7 @@ const {
     normalizeIncludeExtensionList
 } = require('../core/include-extensions');
 const { isPawnIncludeDirectiveCandidateLine } = require('../core/syntax/includes');
+const { createPrefixedDebugLogger } = require('../core/utils/debug-logger');
 
 function buildLazyActivationRuntime(deps, options = {}) {
     const {
@@ -78,20 +79,8 @@ function buildLazyActivationRuntime(deps, options = {}) {
         context?.subscriptions?.push?.(disposable);
         return disposable;
     };
-    const logCompletion = message => {
-        try {
-            liveValidationOutputChannel?.appendLine?.(`[completion] ${message}`);
-        } catch {
-            // Lazy completion logging should never affect provider results.
-        }
-    };
-    const logHover = message => {
-        try {
-            liveValidationOutputChannel?.appendLine?.(`[hover] ${message}`);
-        } catch {
-            // Lazy hover logging should never affect provider results.
-        }
-    };
+    const logCompletion = createPrefixedDebugLogger(liveValidationOutputChannel, 'completion');
+    const logHover = createPrefixedDebugLogger(liveValidationOutputChannel, 'hover');
     const proxySemanticTokensLegend =
         typeof vscode?.SemanticTokensLegend === 'function'
             ? new vscode.SemanticTokensLegend(['number'], [])
@@ -109,7 +98,10 @@ function buildLazyActivationRuntime(deps, options = {}) {
 
     function ensureRuntime() {
         if (!runtime) {
-            runtime = getBuildActivationRuntime()(deps);
+            runtime = getBuildActivationRuntime()({
+                ...deps,
+                fs: deps.fs || require('fs')
+            });
         }
         return runtime;
     }
@@ -209,18 +201,18 @@ function buildLazyActivationRuntime(deps, options = {}) {
                     const character = Number.isInteger(position?.character) ? position.character : -1;
                     const hoverMode = settingsService?.getHoverMode?.();
                     if (hoverMode === 'disabled') {
-                        logHover(`proxy-skip disabled file=${fileName} pos=${line}:${character} ms=${Date.now() - startedAt}`);
+                        logHover(() => `proxy-skip disabled file=${fileName} pos=${line}:${character} ms=${Date.now() - startedAt}`);
                         return null;
                     }
                     if (isHoverModifierHackMode(hoverMode)) {
                         ensureRegisteredRuntime();
-                        logHover(`proxy-skip modifier-hack file=${fileName} pos=${line}:${character} ms=${Date.now() - startedAt}`);
+                        logHover(() => `proxy-skip modifier-hack file=${fileName} pos=${line}:${character} ms=${Date.now() - startedAt}`);
                         return null;
                     }
-                    logHover(`proxy-request file=${fileName} pos=${line}:${character} lang=${document?.languageId || ''}`);
+                    logHover(() => `proxy-request file=${fileName} pos=${line}:${character} lang=${document?.languageId || ''}`);
                     const activeRuntime = ensureRegisteredRuntime();
                     const hover = activeRuntime.buildHoverAtPosition(document, position);
-                    logHover(`proxy-result hit=${hover ? 1 : 0} file=${fileName} pos=${line}:${character} ms=${Date.now() - startedAt}`);
+                    logHover(() => `proxy-result hit=${hover ? 1 : 0} file=${fileName} pos=${line}:${character} ms=${Date.now() - startedAt}`);
                     return hover;
                 }
             }));
@@ -236,17 +228,17 @@ function buildLazyActivationRuntime(deps, options = {}) {
                     const line = Number.isInteger(position?.line) ? position.line : -1;
                     const character = Number.isInteger(position?.character) ? position.character : -1;
                     if (settingsService?.isCompletionEnabled?.() === false) {
-                        logCompletion(`proxy-skip disabled file=${fileName} ms=${Date.now() - startedAt}`);
+                        logCompletion(() => `proxy-skip disabled file=${fileName} ms=${Date.now() - startedAt}`);
                         return [];
                     }
-                    logCompletion(`proxy-request file=${fileName} pos=${line}:${character} lang=${document?.languageId || ''}`);
+                    logCompletion(() => `proxy-request file=${fileName} pos=${line}:${character} lang=${document?.languageId || ''}`);
                     const items = ensureRegisteredRuntime().completionFeature.provideCompletionItems?.(
                         document,
                         position,
                         token,
                         completionContext
                     ) || [];
-                    logCompletion(
+                    logCompletion(() =>
                         `proxy-result items=${Array.isArray(items) ? items.length : 'unknown'} ` +
                         `file=${fileName} ms=${Date.now() - startedAt}`
                     );
@@ -254,14 +246,13 @@ function buildLazyActivationRuntime(deps, options = {}) {
                 },
                 resolveCompletionItem(item) {
                     const startedAt = Date.now();
-                    const label = String(item?.label?.label || item?.label || '');
                     if (settingsService?.isCompletionEnabled?.() === false) {
-                        logCompletion(`proxy-resolve-skip disabled label=${label} ms=${Date.now() - startedAt}`);
+                        logCompletion(() => `proxy-resolve-skip disabled label=${String(item?.label?.label || item?.label || '')} ms=${Date.now() - startedAt}`);
                         return item;
                     }
-                    logCompletion(`proxy-resolve-start label=${label}`);
+                    logCompletion(() => `proxy-resolve-start label=${String(item?.label?.label || item?.label || '')}`);
                     const resolved = ensureRegisteredRuntime().completionFeature.resolveCompletionItem?.(item) || item;
-                    logCompletion(`proxy-resolve-done label=${label} ms=${Date.now() - startedAt}`);
+                    logCompletion(() => `proxy-resolve-done label=${String(item?.label?.label || item?.label || '')} ms=${Date.now() - startedAt}`);
                     return resolved;
                 }
             };

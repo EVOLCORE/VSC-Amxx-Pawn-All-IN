@@ -1,9 +1,16 @@
-const { getPreprocessorDirectiveStartIndex } = require('./preprocessor-lines');
-const {
-    isPawnIdentifierContinueChar,
-    readPawnIdentifierAt
-} = require('./identifiers');
+const { isPawnIdentifierContinueChar } = require('./identifiers');
 const { isPawnHorizontalWhitespaceCode } = require('./whitespace');
+const {
+    readPreprocessorDirectiveNameContext,
+    readPreprocessorIdentifierToken
+} = require('./preprocessor-directive-context');
+const { parsePragmaDirectiveLine } = require('./pragma-directives');
+const {
+    PREPROCESSOR_DIRECTIVE_NAMES,
+    PRAGMA_DIRECTIVE_NAMES,
+    isPreprocessorDirectiveName,
+    isPragmaDirectiveName
+} = require('./preprocessor-directive-names');
 
 const PREPROCESSOR_DIRECTIVE_COMPLETIONS = Object.freeze([
     { name: 'assert', detail: 'preprocessor directive', insertText: 'assert ${1:condition}' },
@@ -168,95 +175,8 @@ const PRAGMA_DIRECTIVE_COMPLETIONS = Object.freeze([
     }
 ]);
 
-const PREPROCESSOR_DIRECTIVE_NAMES = Object.freeze(PREPROCESSOR_DIRECTIVE_COMPLETIONS.map(item => item.name));
-const PREPROCESSOR_DIRECTIVE_NAME_SET = new Set(PREPROCESSOR_DIRECTIVE_NAMES);
-const PRAGMA_DIRECTIVE_NAMES = Object.freeze(PRAGMA_DIRECTIVE_COMPLETIONS.map(item => item.name));
-const PRAGMA_DIRECTIVE_NAME_SET = new Set(PRAGMA_DIRECTIVE_NAMES);
-
 function isPreprocessorDirectiveIdentifierChar(char) {
     return isPawnIdentifierContinueChar(char || '');
-}
-
-function isPreprocessorDirectiveName(value) {
-    return PREPROCESSOR_DIRECTIVE_NAME_SET.has(String(value || '').toLowerCase());
-}
-
-function isPragmaDirectiveName(value) {
-    return PRAGMA_DIRECTIVE_NAME_SET.has(String(value || '').toLowerCase());
-}
-
-function normalizePreprocessorDirectiveName(value = '') {
-    return String(value || '').toLowerCase();
-}
-
-function skipPreprocessorIdentifierWhitespace(source = '', cursor = 0) {
-    const text = String(source || '');
-    let index = Math.max(0, cursor | 0);
-    while (
-        index < text.length &&
-        isPawnHorizontalWhitespaceCode(text.charCodeAt(index))
-    ) {
-        index++;
-    }
-    return index;
-}
-
-function readPreprocessorIdentifierToken(source = '', cursor = 0) {
-    const text = String(source || '');
-    const start = skipPreprocessorIdentifierWhitespace(text, cursor);
-    const token = readPawnIdentifierAt(text, start);
-    if (!token) return null;
-    return {
-        name: token.name,
-        start: token.start,
-        end: token.end
-    };
-}
-
-function readPreprocessorDirectiveNameContext(line = '') {
-    const source = String(line || '');
-    if (source.indexOf('#') < 0) return null;
-    const hashStart = getPreprocessorDirectiveStartIndex(source);
-    if (hashStart < 0) return null;
-
-    const token = readPreprocessorIdentifierToken(source, hashStart + 1);
-    const tokenStart = token?.start ?? skipPreprocessorIdentifierWhitespace(source, hashStart + 1);
-    const tokenEnd = token?.end ?? tokenStart;
-    const directiveNameRaw = token?.name ?? '';
-
-    return {
-        hashStart,
-        tokenStart,
-        tokenEnd,
-        directiveNameRaw,
-        directiveName: normalizePreprocessorDirectiveName(directiveNameRaw)
-    };
-}
-
-function isPreprocessorDirectiveNamedLine(line = '', directiveName = '') {
-    const expected = normalizePreprocessorDirectiveName(directiveName);
-    return !!expected && readPreprocessorDirectiveNameContext(line)?.directiveName === expected;
-}
-
-function parsePragmaDirectiveLine(line = '') {
-    const source = String(line || '');
-    const directive = readPreprocessorDirectiveNameContext(source);
-    if (!directive || directive.directiveName !== 'pragma') return null;
-
-    const token = readPreprocessorIdentifierToken(source, directive.tokenEnd);
-    const nameStart = token?.start ?? skipPreprocessorIdentifierWhitespace(source, directive.tokenEnd);
-    const nameEnd = token?.end ?? nameStart;
-
-    const name = normalizePreprocessorDirectiveName(token?.name ?? '');
-    const valueStart = nameEnd;
-    return {
-        name,
-        nameStart,
-        nameEnd,
-        value: source.slice(valueStart).trim(),
-        valueStart,
-        directive
-    };
 }
 
 function getPreprocessorDirectiveCompletionContext(line = '', character = 0) {
@@ -366,10 +286,8 @@ module.exports = {
     PRAGMA_DIRECTIVE_COMPLETIONS,
     PRAGMA_DIRECTIVE_NAMES,
     getPreprocessorDirectiveCompletionContext,
-    isPreprocessorDirectiveNamedLine,
     isPreprocessorDirectiveName,
     isPragmaDirectiveName,
-    normalizePreprocessorDirectiveName,
     parsePragmaDirectiveLine,
     readPreprocessorIdentifierToken,
     readPreprocessorDirectiveNameContext

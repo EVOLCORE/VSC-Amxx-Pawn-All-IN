@@ -1,11 +1,11 @@
 const path = require('path');
-const { createUtilityCore } = require('../core/utils');
+const { createUtilityCore } = require('../core/utils/runtime');
 const { normalizeHoverMode } = require('../core/hover-modes');
 const {
     DEFAULT_CUSTOM_INCLUDE_FILE_EXTENSIONS,
     getEffectiveIncludeFileExtensions
 } = require('../core/include-extensions');
-const { normalizeCompletionCallArgumentMode } = require('../core/completion');
+const { normalizeCompletionCallArgumentMode } = require('../core/completion/call-argument-mode');
 
 const {
     normalizeLiveValidationIssueMode
@@ -241,7 +241,7 @@ function createSettingsService(vscode) {
 
         const rawProjectLocalIncludePaths = config.get('projectLocalIncludePaths', ['include']);
         settings.projectLocalIncludePaths =
-            Array.isArray(rawProjectLocalIncludePaths) && rawProjectLocalIncludePaths.length
+            Array.isArray(rawProjectLocalIncludePaths)
                 ? rawProjectLocalIncludePaths
                 : ['include'];
     }

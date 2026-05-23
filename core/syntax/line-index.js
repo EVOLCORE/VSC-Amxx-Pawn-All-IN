@@ -18,10 +18,13 @@ const { isPreprocessorDirectiveLine } = require('./preprocessor-lines');
 const { hasTrailingBackslashContinuation } = require('./continuation');
 const { getPawnLineTrimBounds } = require('./whitespace');
 
-function isBodyDeclarationContextChangeLine(source) {
+function isBodyDeclarationContextChangeLine(source, knownPreprocessorLine = null) {
     const trimmed = String(source || '').trimStart();
     if (!trimmed) return false;
-    if (isPreprocessorDirectiveLine(trimmed)) {
+    const isPreprocessorLine = knownPreprocessorLine === null
+        ? trimmed.charCodeAt(0) === 35
+        : !!knownPreprocessorLine;
+    if (isPreprocessorLine) {
         return startsWithPawnKeyword(trimmed, 1, 'define') ||
             startsWithPawnKeyword(trimmed, 1, 'undef');
     }
@@ -98,6 +101,7 @@ function createLineIndexCore() {
         const strayTokenCandidateLineFlags = new Uint8Array(lineCount);
         const preprocessorAndLabelCandidateLineFlags = new Uint8Array(lineCount);
         const structuralDiagnosticCandidateLineFlags = new Uint8Array(lineCount);
+        const preprocessorDirectiveLineFlags = new Uint8Array(lineCount);
         const backslashContinuationLines = new Uint8Array(lineCount);
         const braceOnlyLineFlags = new Uint8Array(lineCount);
         const topLevelContextChangeLines = [];
@@ -160,13 +164,14 @@ function createLineIndexCore() {
 
             const trimmed = (lineCommentIndex >= 0 ? source.slice(start, lineCommentIndex) : source.slice(start)).trim();
             if (trimmed) {
-                const isPreprocessorLine = isPreprocessorDirectiveLine(trimmed);
+                const isPreprocessorLine = trimmed.charCodeAt(0) === 35;
                 let isTopLevelCandidate = false;
                 let isBodyCandidate = false;
                 let isBodyDeclarationCandidate = false;
                 let startsWithControlKeyword = false;
 
                 if (isPreprocessorLine) {
+                    preprocessorDirectiveLineFlags[lineNo] = 1;
                     isTopLevelCandidate = (
                         startsWithPawnKeyword(trimmed, 1, 'define') ||
                         startsWithPawnKeyword(trimmed, 1, 'undef')
@@ -181,9 +186,8 @@ function createLineIndexCore() {
                     isTopLevelCandidate = isExplicitDeclarationStartLine(trimmed);
                     startsWithControlKeyword = startsWithPawnControlKeyword(trimmed);
                     isBodyCandidate = isTopLevelCandidate || startsWithControlKeyword;
-                    isBodyDeclarationCandidate = (
-                        isBodyDeclarationContextChangeLine(trimmed)
-                    );
+                    isBodyDeclarationCandidate = startsWithLocalDeclarationKeyword(trimmed) ||
+                        (startsWithControlKeyword && PAWN_LOCAL_DECLARATION_KEYWORD_RE.test(trimmed));
                 }
 
                 if ((flags & LINE_FLAG_HAS_DIRECTIVE_SIG) && !isDirectiveCandidate) {
@@ -203,7 +207,6 @@ function createLineIndexCore() {
                 if (isBodyDeclarationCandidate || (flags & LINE_FLAG_HAS_BLOCK_COMMENT_SIG)) {
                     bodyDeclarationCandidateLines.push(lineNo);
                 }
-
                 const hasAsciiIdentifierContent = containsPawnIdentifierStartChar(source);
                 const hasNonAsciiContent = NON_ASCII_CONTENT_RE.test(source);
                 const hasInvalidAsciiCodeCharacterCandidate = /[$`]/.test(source);
@@ -297,7 +300,7 @@ function createLineIndexCore() {
         return {
             lineCount,
             lineFlags,
-            depthSpecialCharMask: LINE_FLAG_HAS_BRACE_SIG | LINE_FLAG_HAS_PAREN_SIG | LINE_FLAG_HAS_COMMENT_SIG,
+            depthSpecialCharMask: LINE_FLAG_HAS_BRACE_SIG | LINE_FLAG_HAS_COMMENT_SIG,
             commentCandidateLines,
             commentRelevantLines,
             directiveCandidateLines,
@@ -339,10 +342,12 @@ function createLineIndexCore() {
             isBraceOnlyLine(lineNo) {
                 return !!braceOnlyLineFlags[lineNo];
             },
+            isPreprocessorDirectiveLine(lineNo) {
+                return !!preprocessorDirectiveLineFlags[lineNo];
+            },
             hasDepthSpecialCharLine(lineNo) {
                 return !!(lineFlags[lineNo] & (
                     LINE_FLAG_HAS_BRACE_SIG |
-                    LINE_FLAG_HAS_PAREN_SIG |
                     LINE_FLAG_HAS_COMMENT_SIG
                 ));
             }

@@ -1,4 +1,4 @@
-const { readPreprocessorDirectiveNameContext } = require('./preprocessor-directives');
+const { readPreprocessorDirectiveNameContext } = require('./preprocessor-directive-context');
 const { skipPawnHorizontalWhitespace } = require('./whitespace');
 
 const PAWN_INCLUDE_LINE_RE = /^\s*#\s*(include|tryinclude)\b\s+(?:<([^>"]+)>\s*|"([^"]+)"\s*|([A-Za-z0-9_./\\-]+))/i;

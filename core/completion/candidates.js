@@ -56,24 +56,28 @@ function dedupeCompletionCandidates(candidates, options = {}) {
     if (!Array.isArray(candidates) || candidates.length <= 1) return candidates;
 
     const bestByKey = new Map();
-    candidates.forEach((candidate, index) => {
+    for (let index = 0; index < candidates.length; index++) {
+        const candidate = candidates[index];
         const key = getCompletionCandidateDedupeKey(candidate, options);
-        if (!key) return;
+        if (!key) continue;
         const previous = bestByKey.get(key);
         if (!previous || compareCompletionCandidatePriority(candidate, index, previous.candidate, previous.index) < 0) {
             bestByKey.set(key, { candidate, index });
         }
-    });
+    }
 
-    const emitted = new Set();
+    const selectedCandidates = new Set();
+    for (const selected of bestByKey.values()) {
+        selectedCandidates.add(selected.candidate);
+    }
+    const emittedSelectedCandidates = new Set();
     const result = [];
-    for (let index = 0; index < candidates.length; index++) {
-        const candidate = candidates[index];
-        const key = getCompletionCandidateDedupeKey(candidate, options);
-        if (key) {
-            const selected = bestByKey.get(key);
-            if (selected?.candidate !== candidate || emitted.has(key)) continue;
-            emitted.add(key);
+    for (const candidate of candidates) {
+        if (selectedCandidates.has(candidate)) {
+            if (emittedSelectedCandidates.has(candidate)) continue;
+            emittedSelectedCandidates.add(candidate);
+        } else if (getCompletionCandidateDedupeKey(candidate, options)) {
+            continue;
         }
         result.push(candidate);
     }

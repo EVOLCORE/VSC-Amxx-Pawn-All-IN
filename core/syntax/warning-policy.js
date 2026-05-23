@@ -2,7 +2,7 @@ const { findBalancedGroupEnd } = require('./balanced');
 const {
     findTopLevelSimpleAssignmentOperator: findTopLevelSimpleAssignmentOperatorCore
 } = require('./top-level');
-const { PRAGMA_DIRECTIVE_NAMES } = require('./preprocessor-directives');
+const { PRAGMA_DIRECTIVE_NAMES } = require('./preprocessor-directive-names');
 
 function createWarningPolicySyntaxCore() {
     const COMPILER_SYMBOL_MAX_LENGTH = 63;

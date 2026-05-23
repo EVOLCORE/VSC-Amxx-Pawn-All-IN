@@ -2,6 +2,10 @@ const { createTagOverridePolicySyntaxCore } = require('../../core/syntax/tag-ove
 const { hasUncontinuedPhysicalLineBreakBetweenOffsets } = require('../../core/syntax/macro-call-policy');
 const { getTypeAnalysisSourceDecls } = require('../../core/validation/type-analysis-cache');
 const { isPotentialEnumDeclarationLine } = require('../../core/declarations/line-utils');
+const { collectFormatArgumentLinksForArgumentPieces } = require('../../core/format-strings');
+const {
+    LIVE_FORMAT_PLACEHOLDER_DIAGNOSTIC_CODE
+} = require('./diagnostic-codes');
 
 function createCallDiagnostics(deps) {
     const {
@@ -107,7 +111,7 @@ function createCallDiagnostics(deps) {
             if (!expectedTag && !expectedDims) return null;
             const expectedParam = `${expectedTag ? `${expectedTag}:` : ''}__return${expectedDims}`;
             const syntheticTaggedValue = `${tagOverride.tag}:0`;
-            const analysisDecls = ctx.allDecls;
+            const analysisDecls = getTypeAnalysisSourceDecls(ctx, analysisCache);
             const compat = explainTypeCompat(
                 expectedParam,
                 tagOverride.tag,
@@ -207,6 +211,28 @@ function createCallDiagnostics(deps) {
             layout = buildCallArgLayout(signatureData.args || '', callSiteArgs, null, {
                 useDynamicCache: false
             });
+        }
+        if (layout.variadicIndex >= 0) {
+            for (const link of collectFormatArgumentLinksForArgumentPieces(ctx.text, expandedPieces, {
+                isEscapedQuote,
+                escapeChar: callEscapeChar,
+                callName: callCtx.funcName,
+                maxFormatArgIndexExclusive: layout.variadicIndex
+            })) {
+                const expectedCount = Math.max(0, link?.placeholder?.consumes | 0);
+                const actualCount = Array.isArray(link?.args) ? link.args.length : 0;
+                if (!expectedCount || actualCount >= expectedCount) continue;
+                const diagnostic = createLiveValidationDiagnostic(
+                    createOffsetRange(document, link.placeholder.startOffset, link.placeholder.endOffset, docLength),
+                    t('validation.formatPlaceholderMissingArgument', {
+                        placeholder: link.placeholder.raw || '',
+                        expected: expectedCount,
+                        actual: actualCount
+                    })
+                );
+                diagnostic.code = LIVE_FORMAT_PLACEHOLDER_DIAGNOSTIC_CODE;
+                diagnostics.push(diagnostic);
+            }
         }
         const issuePlan = collectCallArgumentIssues(signatureData.args || '', callSiteArgs, analysisDecls, analysisCache, {
             includeWarnings: warningsEnabled,

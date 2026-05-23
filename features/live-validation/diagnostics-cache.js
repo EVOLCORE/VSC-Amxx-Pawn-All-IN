@@ -3,7 +3,8 @@ const {
     getIncludeEntriesSignatureHash,
     getSortedTuplesSignatureHash
 } = require('../../core/utils/signature');
-const { createUtilityCore } = require('../../core/utils');
+const { createUtilityCore } = require('../../core/utils/runtime');
+const { isDebugOutputChannelEnabled } = require('../../core/utils/debug-logger');
 const { makeLiveValidationDiagnosticKey } = require('./diagnostic-key');
 const {
     getDiagnosticLineSpan,
@@ -493,6 +494,9 @@ function createLiveDiagnosticsCache(deps) {
     }
 
     function logPublishedDiagnostics(document, diagnostics, options = {}) {
+        if (!isDebugOutputChannelEnabled(liveValidationOutputChannel)) {
+            return;
+        }
         if (typeof liveValidationOutputChannel?.appendLine !== 'function') return;
         const lineSummaries = summarizeDiagnosticLines(diagnostics);
         const source = String(options.source || 'publish');

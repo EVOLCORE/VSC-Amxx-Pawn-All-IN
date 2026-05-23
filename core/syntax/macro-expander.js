@@ -3,6 +3,7 @@ const {
     isPawnIdentifierName,
 } = require('./identifiers');
 const { findBalancedGroupEnd } = require('./balanced');
+const { isPawnWhitespaceCode } = require('./whitespace');
 
 function createMacroExpansionSyntaxCore(deps = {}) {
     const {
@@ -20,10 +21,10 @@ function createMacroExpansionSyntaxCore(deps = {}) {
     const isIdentifierStart = char => isIdentifierStartChar(char || '');
     const isIdentifierContinue = char => isIdentifierContinueChar(char || '');
     const isQuoteEscaped = (source, index, escapeChar) => isEscapedQuote(source, index, escapeChar);
-    const isWhitespace = char => /\s/.test(char || '');
+    const isWhitespace = char => !!char && isPawnWhitespaceCode(char.charCodeAt(0));
     const readIdentifierAt = createPawnIdentifierReader({
-        isIdentifierStartChar: isIdentifierStart,
-        isIdentifierContinueChar: isIdentifierContinue
+        isIdentifierStartChar,
+        isIdentifierContinueChar
     });
 
     function findMatchingParenIndex(source, openIndex, escapeChar = '') {
@@ -174,6 +175,16 @@ function createMacroExpansionSyntaxCore(deps = {}) {
         lookup = new Map();
         for (const decl of defineDecls) {
             if (!decl?.name || decl.type !== 'define') continue;
+            const previous = lookup.get(decl.name);
+            if (
+                previous?.type === 'define' &&
+                previous.macroStyle === decl.macroStyle &&
+                previous.macroStyle &&
+                String(previous.value || '').trim() &&
+                !String(decl.value || '').trim()
+            ) {
+                continue;
+            }
             lookup.set(decl.name, decl);
         }
         macroDeclLookupCache.set(defineDecls, lookup);

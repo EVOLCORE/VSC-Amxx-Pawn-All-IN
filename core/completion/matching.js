@@ -55,8 +55,9 @@ function getFuzzySubsequenceStats(text, prefix) {
 }
 
 function getCompletionMatch(text, prefix, options = {}) {
-    const normalizedText = normalizeCompletionMatchText(text);
-    const normalizedPrefix = normalizeCompletionMatchText(prefix);
+    const normalizedInput = options.normalized === true;
+    const normalizedText = normalizedInput ? String(text || '') : normalizeCompletionMatchText(text);
+    const normalizedPrefix = normalizedInput ? String(prefix || '') : normalizeCompletionMatchText(prefix);
     if (!normalizedPrefix) {
         return makeCompletionMatch('all', 4, 0, 0, 0, normalizedText.length);
     }

@@ -45,6 +45,7 @@ function buildCompletionNavigationFeatures(deps, support) {
         getDocumentTextAndResolver,
         findCallContext,
         findMatchingParenOffset,
+        buildCallArgLayout,
         createLazyCallContextOptions
     } = sharedRuntime;
 
@@ -114,6 +115,8 @@ function buildCompletionNavigationFeatures(deps, support) {
         findMatchingParenOffset,
         splitTopLevelWithRanges,
         isEscapedQuote,
+        getPreferredFunctionHoverMatch,
+        buildCallArgLayout,
         createLazyCallContextOptions
     });
 

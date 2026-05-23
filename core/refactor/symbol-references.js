@@ -178,31 +178,32 @@ function createSymbolReferenceCore(deps) {
         return { char: '', index: -1 };
     }
 
-    function isRenameableOccurrence(ctx, lineNumber, source, start, end, name, escapeChar) {
+    function isRenameableSourceOccurrence(ctx, lineNumber, source, start, end, name, escapeChar) {
         if (!isTokenLiveInSource(ctx, lineNumber, start, end, name)) return false;
         if (isLinePositionInsideCommentOrString(source, start, escapeChar)) return false;
+        return true;
+    }
+
+    function isRenameableVariableOccurrence(ctx, lineNumber, source, start, end, name, escapeChar) {
+        if (!isRenameableSourceOccurrence(ctx, lineNumber, source, start, end, name, escapeChar)) return false;
         const next = readNextNonWhitespace(source, end);
         if (next.char === '(') return false;
         if (next.char === ':') return false;
         return true;
     }
 
-    function collectReferenceRanges(document, ctx, targetEntry, entries, maps) {
-        if (!targetEntry?.decl?.name) return [];
-        const name = targetEntry.decl.name;
-        const ranges = [];
-        const seen = new Set();
-        const rawLines = ctx.rawLines || [];
-        const firstLine = Math.max(0, targetEntry.scopeStartLine);
-        const lastLine = Math.min(rawLines.length - 1, targetEntry.scopeEndLine);
-        const addRange = (lineNumber, start, end) => {
-            const key = `${lineNumber}:${start}:${end}`;
-            if (seen.has(key)) return;
-            seen.add(key);
-            ranges.push(createRange(document, ctx, lineNumber, start, end));
-        };
+    function isRenameableFunctionOccurrence(ctx, lineNumber, source, start, end, name, escapeChar) {
+        if (!isRenameableSourceOccurrence(ctx, lineNumber, source, start, end, name, escapeChar)) return false;
+        const next = readNextNonWhitespace(source, end);
+        return next.char === '(';
+    }
 
-        for (let lineNumber = firstLine; lineNumber <= lastLine; lineNumber++) {
+    function collectNameOccurrences(ctx, name, firstLine, lastLine, acceptOccurrence) {
+        const occurrences = [];
+        const rawLines = ctx.rawLines || [];
+        const startLine = Math.max(0, firstLine);
+        const endLine = Math.min(rawLines.length - 1, lastLine);
+        for (let lineNumber = startLine; lineNumber <= endLine; lineNumber++) {
             const source = String(rawLines[lineNumber] || '');
             const escapeChar = ctx.lineCtrlChars?.[lineNumber] || '';
             for (let index = 0; index < source.length;) {
@@ -218,13 +219,47 @@ function createSymbolReferenceCore(deps) {
                 ) {
                     continue;
                 }
-                if (!isRenameableOccurrence(ctx, lineNumber, source, found, end, name, escapeChar)) {
+                const occurrence = { lineNumber, source, start: found, end, escapeChar };
+                if (typeof acceptOccurrence === 'function' && !acceptOccurrence(occurrence)) {
                     continue;
                 }
-                const resolved = resolveEntryAt(entries, maps, name, lineNumber);
-                if (resolved?.decl !== targetEntry.decl) continue;
-                addRange(lineNumber, found, end);
+                occurrences.push(occurrence);
             }
+        }
+        return occurrences;
+    }
+
+    function collectScopedVariableReferenceRanges(document, ctx, targetEntry, entries, maps) {
+        if (!targetEntry?.decl?.name) return [];
+        const name = targetEntry.decl.name;
+        const ranges = [];
+        const seen = new Set();
+        const rawLines = ctx.rawLines || [];
+        const firstLine = Math.max(0, targetEntry.scopeStartLine);
+        const lastLine = Math.min(rawLines.length - 1, targetEntry.scopeEndLine);
+        const addRange = (lineNumber, start, end) => {
+            const key = `${lineNumber}:${start}:${end}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            ranges.push(createRange(document, ctx, lineNumber, start, end));
+        };
+
+        for (const occurrence of collectNameOccurrences(ctx, name, firstLine, lastLine, item => {
+            if (!isRenameableVariableOccurrence(
+                ctx,
+                item.lineNumber,
+                item.source,
+                item.start,
+                item.end,
+                name,
+                item.escapeChar
+            )) {
+                return false;
+            }
+            const resolved = resolveEntryAt(entries, maps, name, item.lineNumber);
+            return resolved?.decl === targetEntry.decl;
+        })) {
+            addRange(occurrence.lineNumber, occurrence.start, occurrence.end);
         }
 
         const declarationRange = getDeclarationNameRange(document, ctx, targetEntry.decl);
@@ -241,6 +276,149 @@ function createSymbolReferenceCore(deps) {
         );
     }
 
+    function getFunctionDeclarationNameRange(document, ctx, decl) {
+        if (!decl?.name || !Number.isInteger(decl.lineNumber)) return null;
+        const startLine = Math.max(0, decl.lineNumber);
+        const endLine = Math.max(startLine, decl.headerEndLine ?? decl.startLine ?? decl.lineNumber);
+        const rawLines = ctx.rawLines || [];
+        for (let lineNumber = startLine; lineNumber <= endLine && lineNumber < rawLines.length; lineNumber++) {
+            const source = String(rawLines[lineNumber] || '');
+            const escapeChar = ctx.lineCtrlChars?.[lineNumber] || '';
+            for (let index = 0; index < source.length;) {
+                const found = source.indexOf(decl.name, index);
+                if (found < 0) break;
+                const end = found + decl.name.length;
+                const before = found > 0 ? source[found - 1] : '';
+                const after = end < source.length ? source[end] : '';
+                index = end;
+                if (
+                    (before && isPawnIdentifierContinueChar(before)) ||
+                    (after && isPawnIdentifierContinueChar(after))
+                ) {
+                    continue;
+                }
+                if (!isRenameableSourceOccurrence(ctx, lineNumber, source, found, end, decl.name, escapeChar)) {
+                    continue;
+                }
+                return createRange(document, ctx, lineNumber, found, end);
+            }
+        }
+        return null;
+    }
+
+    function isRenameableDocumentFunctionDecl(decl, documentPath = '') {
+        if (!decl?.name || !isCurrentDocumentDecl(decl, documentPath)) return false;
+        const type = String(decl.type || '');
+        if (type === 'native' || type === 'forward' || type === 'define') return false;
+        const modifiers = new Set(decl.modifiers || []);
+        return !modifiers.has('native') && !modifiers.has('forward');
+    }
+
+    function findDocumentFunctionDecl(ctx, name, documentPath = '') {
+        return (ctx?.parsedDecls?.functions || []).find(decl =>
+            decl?.name === name &&
+            isRenameableDocumentFunctionDecl(decl, documentPath)
+        ) || null;
+    }
+
+    function findDocumentFunctionDeclAtPosition(document, ctx, name, position, documentPath = '') {
+        for (const decl of ctx?.parsedDecls?.functions || []) {
+            if (decl?.name !== name || !isRenameableDocumentFunctionDecl(decl, documentPath)) continue;
+            const range = getFunctionDeclarationNameRange(document, ctx, decl);
+            if (!range) continue;
+            const start = document.offsetAt(range.start);
+            const end = document.offsetAt(range.end);
+            const offset = document.offsetAt(position);
+            if (offset >= start && offset <= end) return decl;
+        }
+        return null;
+    }
+
+    function isRenameableDocumentGlobalDecl(decl, documentPath = '') {
+        return !!(
+            decl?.name &&
+            decl.type === 'variable' &&
+            isCurrentDocumentDecl(decl, documentPath)
+        );
+    }
+
+    function findDocumentGlobalDecl(ctx, name, documentPath = '') {
+        return (ctx?.parsedDecls?.globals || []).find(decl =>
+            decl?.name === name &&
+            isRenameableDocumentGlobalDecl(decl, documentPath)
+        ) || null;
+    }
+
+    function createRangeCollector(document, ctx) {
+        const ranges = [];
+        const seen = new Set();
+        const addRange = (lineNumber, start, end) => {
+            const key = `${lineNumber}:${start}:${end}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            ranges.push(createRange(document, ctx, lineNumber, start, end));
+        };
+        const addDocumentRange = range => {
+            if (!range) return;
+            const startOffset = document.offsetAt(range.start);
+            const endOffset = document.offsetAt(range.end);
+            const start = startOffset - getLineStartOffset(document, ctx, range.start.line);
+            const end = endOffset - getLineStartOffset(document, ctx, range.end.line);
+            addRange(range.start.line, start, end);
+        };
+        const sortedRanges = () => ranges.sort((left, right) =>
+            document.offsetAt(left.start) - document.offsetAt(right.start)
+        );
+        return { addRange, addDocumentRange, sortedRanges };
+    }
+
+    function collectGlobalReferenceRanges(document, ctx, targetDecl, localEntries, maps) {
+        if (!targetDecl?.name) return [];
+        const name = targetDecl.name;
+        const rawLines = ctx.rawLines || [];
+        const collector = createRangeCollector(document, ctx);
+        for (const occurrence of collectNameOccurrences(ctx, name, 0, rawLines.length - 1, item => {
+            if (!isRenameableVariableOccurrence(
+                ctx,
+                item.lineNumber,
+                item.source,
+                item.start,
+                item.end,
+                name,
+                item.escapeChar
+            )) {
+                return false;
+            }
+            return !resolveEntryAt(localEntries, maps, name, item.lineNumber);
+        })) {
+            collector.addRange(occurrence.lineNumber, occurrence.start, occurrence.end);
+        }
+        collector.addDocumentRange(getDeclarationNameRange(document, ctx, targetDecl));
+        return collector.sortedRanges();
+    }
+
+    function collectFunctionReferenceRanges(document, ctx, targetDecl) {
+        if (!targetDecl?.name) return [];
+        const name = targetDecl.name;
+        const rawLines = ctx.rawLines || [];
+        const collector = createRangeCollector(document, ctx);
+        for (const occurrence of collectNameOccurrences(ctx, name, 0, rawLines.length - 1, item =>
+            isRenameableFunctionOccurrence(
+                ctx,
+                item.lineNumber,
+                item.source,
+                item.start,
+                item.end,
+                name,
+                item.escapeChar
+            )
+        )) {
+            collector.addRange(occurrence.lineNumber, occurrence.start, occurrence.end);
+        }
+        collector.addDocumentRange(getFunctionDeclarationNameRange(document, ctx, targetDecl));
+        return collector.sortedRanges();
+    }
+
     function getRenameTarget(document, position) {
         const ctx = getPawnDocumentContext(document, undefined, { preparseLocals: true });
         if (!ctx) return null;
@@ -252,22 +430,63 @@ function createSymbolReferenceCore(deps) {
         const tokenStart = token.range?.start?.character ?? position.character;
         const tokenEnd = token.range?.end?.character ?? tokenStart + name.length;
         const escapeChar = ctx.lineCtrlChars?.[position.line] || '';
-        if (!isRenameableOccurrence(ctx, position.line, lineText, tokenStart, tokenEnd, name, escapeChar)) {
-            return null;
-        }
 
         const { entries, maps } = buildLocalEntries(ctx, document.fileName || '');
-        const entry = resolveEntryAt(entries, maps, name, position.line);
-        if (!entry) return null;
-        const ranges = collectReferenceRanges(document, ctx, entry, entries, maps);
-        if (!ranges.length) return null;
-        return {
+        if (isRenameableVariableOccurrence(ctx, position.line, lineText, tokenStart, tokenEnd, name, escapeChar)) {
+            const entry = resolveEntryAt(entries, maps, name, position.line);
+            if (entry) {
+                const ranges = collectScopedVariableReferenceRanges(document, ctx, entry, entries, maps);
+                if (!ranges.length) return null;
+                return {
+                    ctx,
+                    name,
+                    kind: 'local',
+                    entry,
+                    range: token.range,
+                    references: ranges
+                };
+            }
+
+            const globalDecl = findDocumentGlobalDecl(ctx, name, document.fileName || '');
+            if (globalDecl) {
+                const ranges = collectGlobalReferenceRanges(document, ctx, globalDecl, entries, maps);
+                if (!ranges.length) return null;
+                return {
+                    ctx,
+                    name,
+                    kind: 'global',
+                    decl: globalDecl,
+                    range: token.range,
+                    references: ranges
+                };
+            }
+        }
+
+        const declarationFunctionDecl = findDocumentFunctionDeclAtPosition(
+            document,
             ctx,
             name,
-            entry,
-            range: token.range,
-            references: ranges
-        };
+            position,
+            document.fileName || ''
+        );
+        const functionDecl = declarationFunctionDecl ||
+            (isRenameableFunctionOccurrence(ctx, position.line, lineText, tokenStart, tokenEnd, name, escapeChar)
+                ? findDocumentFunctionDecl(ctx, name, document.fileName || '')
+                : null);
+        if (functionDecl) {
+            const ranges = collectFunctionReferenceRanges(document, ctx, functionDecl);
+            if (!ranges.length) return null;
+            return {
+                ctx,
+                name,
+                kind: 'function',
+                decl: functionDecl,
+                range: token.range,
+                references: ranges
+            };
+        }
+
+        return null;
     }
 
     return {

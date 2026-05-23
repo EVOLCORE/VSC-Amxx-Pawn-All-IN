@@ -14,6 +14,7 @@ const {
 } = require('../include-priority');
 
 const { unrefTimer } = require('../utils/timers');
+const { createPrefixedDebugLogger } = require('../utils/debug-logger');
 
 function createDocumentContextCore(deps) {
     const {
@@ -56,13 +57,7 @@ function createDocumentContextCore(deps) {
     let nextDocumentIdentity = 1;
     const includeDocumentWarmupStateByFile = new Map();
     const INCLUDE_DOCUMENT_WARMUP_STATE_LIMIT = 64;
-    const logContext = message => {
-        try {
-            debugOutputChannel?.appendLine?.(`[context] ${message}`);
-        } catch {
-            // Debug logging must never affect context building.
-        }
-    };
+    const logContext = createPrefixedDebugLogger(debugOutputChannel, 'context');
 
     function getDocumentIdentity(document) {
         if (!document || (typeof document !== 'object' && typeof document !== 'function')) return '';
@@ -221,7 +216,7 @@ function createDocumentContextCore(deps) {
             const fn = path.basename(fp);
             const text = document.getText();
             const searchPaths = getSearchPaths(fp);
-            logContext(
+            logContext(() =>
                 `shared-start file=${fp} version=${document.version} includeDecls=${includeDeclsEnabled ? 1 : 0} ` +
                 `chars=${text.length}`
             );
@@ -284,7 +279,7 @@ function createDocumentContextCore(deps) {
             }, fp, ctrlCharState.finalCtrlChar);
             sharedDocumentContextCache.set(sharedCacheKey, sharedContext);
             safeTrackVersionedDocumentCacheVersion(fp, document.version);
-            logContext(
+            logContext(() =>
                 `shared-done file=${fp} version=${document.version} includeDecls=${includeDeclsEnabled ? 1 : 0} ` +
                 `lines=${textSnapshot.rawLines.length} includes=${sharedContext.includeEntries.length} ` +
                 `incDecls=${sharedContext.incDecls.length} ms=${Date.now() - sharedStartedAt}`
@@ -558,7 +553,7 @@ function createDocumentContextCore(deps) {
 
         const previousSequentialContextState = sharedContext.sequentialContextState;
         const cursorStartedAt = Date.now();
-        logContext(
+        logContext(() =>
             `cursor-start file=${fp} version=${document.version} line=${cursorLine === undefined ? 'all' : cursorLine} ` +
             `includeDecls=${includeDeclsEnabled ? 1 : 0} preparseLocals=${preparseLocals ? 1 : 0}`
         );
@@ -588,7 +583,7 @@ function createDocumentContextCore(deps) {
             touchDocumentContextCacheFile(fp);
             pruneDocumentContextCache(fp);
         }
-        logContext(
+        logContext(() =>
             `cursor-done file=${fp} version=${document.version} line=${cursorLine === undefined ? 'all' : cursorLine} ` +
             `globals=${context.parsedDecls.globals.length} locals=${context.parsedDecls.locals.length} ` +
             `funcs=${context.parsedDecls.functions.length} args=${context.parsedDecls.funcArgs.length} ` +
@@ -670,12 +665,12 @@ function createDocumentContextCore(deps) {
             .join('|');
         const warmupKey = `v${document.version ?? 'unknown'}:limit:${maxFiles}:paths:${searchPathSignature}`;
         if (hasRecentIncludeDocumentWarmup(document.fileName, warmupKey)) {
-            logContext(`warm-includes-skip file=${document.fileName || ''} cause=already-warmed limit=${maxFiles}`);
+            logContext(() => `warm-includes-skip file=${document.fileName || ''} cause=already-warmed limit=${maxFiles}`);
             return;
         }
         const documentFilePath = normalizeFsPath(document.fileName);
         const startedAt = Date.now();
-        logContext(`warm-includes-start file=${document.fileName || ''} limit=${maxFiles}`);
+        logContext(() => `warm-includes-start file=${document.fileName || ''} limit=${maxFiles}`);
 
         let ctx = null;
         try {
@@ -717,7 +712,7 @@ function createDocumentContextCore(deps) {
                 () => {}
             );
         }
-        logContext(
+        logContext(() =>
             `warm-includes-done file=${document.fileName || ''} candidates=${candidates.length} ` +
             `direct=${directCandidates.length} nested=${nestedCandidates.length} opened=${opened} skipped=${skipped} ` +
             `ms=${Date.now() - startedAt}`

@@ -67,6 +67,14 @@ function createVirtualExpandedLineContextCore(deps = {}) {
         const map = new Map();
         for (const decl of defineDecls) {
             if (decl?.name && isFunctionLikeDefineDecl(decl)) {
+                const previous = map.get(decl.name);
+                if (
+                    previous &&
+                    String(previous.value || '').trim() &&
+                    !String(decl.value || '').trim()
+                ) {
+                    continue;
+                }
                 map.set(decl.name, decl);
             }
         }

@@ -1,7 +1,9 @@
 const { createSharedTextDiagnostics } = require('./shared-text-diagnostics');
 const { createSharedContextDiagnostics } = require('./shared-context-diagnostics');
 const { createSharedCallDiagnostics } = require('./shared-call-diagnostics');
-const { createSharedExpressionDiagnostics } = require('../../core/validation');
+const {
+    createSharedExpressionDiagnostics
+} = require('../../core/validation/shared-expression-diagnostics');
 
 function createLiveValidationSharedDiagnostics(deps) {
     const {

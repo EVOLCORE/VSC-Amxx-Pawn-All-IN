@@ -62,8 +62,8 @@ function createSemanticSyntaxCore(deps = {}) {
     const isQuoteEscaped = (source, index, escapeChar) => isEscapedQuote(source, index, escapeChar);
 
     const readIdentifierAt = createPawnIdentifierReader({
-        isIdentifierStartChar: isIdentifierStart,
-        isIdentifierContinueChar: isIdentifierContinue
+        isIdentifierStartChar,
+        isIdentifierContinueChar
     });
 
     function readNumberAt(source, index) {
@@ -782,6 +782,15 @@ function createSemanticSyntaxCore(deps = {}) {
             }
         }
         if (!parseText || (parseText.indexOf('[') < 0 && parseText.indexOf('{') < 0 && !trailingEmptyAccesses.length)) return null;
+        const balancedParsed = parseBalancedIndexedAccessExpression(parseText, options);
+        if (balancedParsed) {
+            return trailingEmptyAccesses.length
+                ? {
+                    baseName: balancedParsed.baseName,
+                    accesses: [...balancedParsed.accesses, ...trailingEmptyAccesses]
+                }
+                : balancedParsed;
+        }
         const parsed = parsePawnExpression(parseText, { ...options, buildAst: true, allowAssignment: false });
         if (!parsed.ok) {
             if (trailingEmptyAccesses.length) return null;

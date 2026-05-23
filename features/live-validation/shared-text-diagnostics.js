@@ -1,6 +1,6 @@
 const { makeLiveValidationDiagnosticKey } = require('./diagnostic-key');
 const { LIVE_INVALID_CODE_CHARACTER_DIAGNOSTIC_CODE } = require('./diagnostic-codes');
-const { createTextSyntaxDiagnosticsCore } = require('../../core/syntax');
+const { createTextSyntaxDiagnosticsCore } = require('../../core/syntax/text-diagnostics');
 const {
     resolveLineStartOffset,
     splitPawnLines

@@ -10,11 +10,15 @@ const isPawnHorizontalWhitespaceCode = code =>
     code === 32 ||
     code === 9;
 
-const isPawnWhitespaceChar = (char = '') =>
-    !!char && (isPawnWhitespaceCode(String(char).charCodeAt(0)) || /\s/.test(String(char)[0] || ''));
+const isPawnWhitespaceChar = (char = '') => {
+    if (!char) return false;
+    const text = typeof char === 'string' ? char : String(char);
+    const code = text.charCodeAt(0);
+    return isPawnWhitespaceCode(code) || (code > 127 && /\s/.test(text[0] || ''));
+};
 
 const isPawnHorizontalWhitespaceChar = (char = '') =>
-    !!char && isPawnHorizontalWhitespaceCode(String(char).charCodeAt(0));
+    !!char && isPawnHorizontalWhitespaceCode((typeof char === 'string' ? char : String(char)).charCodeAt(0));
 
 function skipPawnWhitespace(source, index = 0) {
     const text = String(source || '');
