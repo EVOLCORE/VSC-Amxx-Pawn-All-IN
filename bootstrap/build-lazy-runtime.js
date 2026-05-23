@@ -75,6 +75,14 @@ function buildLazyActivationRuntime(deps, options = {}) {
 
     const trackProxyDisposable = disposable => {
         if (!disposable || typeof disposable.dispose !== 'function') return disposable;
+        if (realRegistered) {
+            try {
+                disposable.dispose();
+            } catch {
+                // Ignore late proxy disposal failures; the real provider already owns this feature.
+            }
+            return disposable;
+        }
         proxyDisposables.push(disposable);
         context?.subscriptions?.push?.(disposable);
         return disposable;

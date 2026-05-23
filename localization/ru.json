@@ -10,6 +10,8 @@
   "theme.recommendation.disableHint": "Отключить подсказку",
   "theme.recommendation.quickPickPlaceholder": "Выберите тему AmxxPawnAllIn для лучшей подсветки AMXX Pawn и tooltip-блоков",
   "theme.recommendation.openSettingsQuery": "amxxPawnAllIn.showThemeRecommendation",
+  "extension.conflict.warning": "AMXX Pawn All-In обнаружил другое установленное AMXX Pawn расширение: {extensions}. Из-за этого могут дублироваться completion и definition провайдеры. Отключите лишние AMXX Pawn расширения и перезагрузите VS Code.",
+  "extension.conflict.openExtensions": "Открыть расширения",
   "hover.goToDefinition": "Перейти к определению",
   "hover.description": "Описание",
   "hover.alias": "\u0410\u043b\u0438\u0430\u0441",

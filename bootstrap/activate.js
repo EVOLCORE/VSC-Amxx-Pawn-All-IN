@@ -5,9 +5,13 @@ const { createDebugOutputChannel } = require('../services/debug-output');
 const { createLazyRuntimeTranslator } = require('../services/localization-lazy');
 const { createSettingsService } = require('../services/settings');
 const { buildLazyActivationRuntime } = require('./build-lazy-runtime');
+const { registerActivationGuard } = require('./activation-guard');
+const { warnAboutConflictingAmxxPawnExtensions } = require('./extension-conflicts');
 const { createActivationState } = require('./state');
 
 function activate(context) {
+    registerActivationGuard(context);
+
     const t = createLazyRuntimeTranslator(vscode);
     const state = createActivationState();
 
@@ -19,6 +23,12 @@ function activate(context) {
     const liveValidationOutputChannel = vscode.window.createOutputChannel('AMXX Pawn All-In Live Validation');
     const liveValidationDebugOutputChannel = createDebugOutputChannel(liveValidationOutputChannel, settingsService);
     context.subscriptions.push(liveValidationCollection, liveValidationOutputChannel);
+    warnAboutConflictingAmxxPawnExtensions({
+        vscode,
+        context,
+        t,
+        outputChannel: liveValidationOutputChannel
+    });
 
     const {
         editorLifecycleFeature,

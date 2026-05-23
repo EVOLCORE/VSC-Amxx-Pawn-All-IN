@@ -9,6 +9,8 @@
   "theme.recommendation.disableHint": "Disable Hint",
   "theme.recommendation.quickPickPlaceholder": "Select an AmxxPawnAllIn theme for the best AMXX Pawn code and tooltip highlighting",
   "theme.recommendation.openSettingsQuery": "amxxPawnAllIn.showThemeRecommendation",
+  "extension.conflict.warning": "AMXX Pawn All-In detected another installed AMXX Pawn extension: {extensions}. Duplicate completion and definition providers may appear. Disable duplicate AMXX Pawn extensions and reload VS Code.",
+  "extension.conflict.openExtensions": "Open Extensions",
   "hover.goToDefinition": "Go to definition",
   "hover.description": "Description",
   "hover.alias": "Alias",
