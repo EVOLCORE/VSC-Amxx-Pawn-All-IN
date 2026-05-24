@@ -8,6 +8,10 @@ const { readPawnAssignmentOperatorAt } = require('../syntax/operators');
 const { parsePragmaDirectiveLine } = require('../syntax/pragma-directives');
 const { splitPawnLines } = require('../syntax/lines');
 const {
+    hasAnyDeclModifier,
+    hasDeclModifier
+} = require('../declarations/modifiers');
+const {
     advanceTopLevelScannerState,
     createTopLevelScannerState,
     isTopLevelScannerState
@@ -22,6 +26,9 @@ const {
     findPreviousNonWhitespaceIndex,
     isPawnWhitespaceChar
 } = require('../syntax/whitespace');
+
+const SYNTHETIC_LOCAL_DECLARATION_KEYWORD_RE = /\b(?:new|static|const)\b/;
+const EMPTY_SYNTHETIC_LOCAL_DECLARATIONS = { ranges: new Set() };
 
 const {
     isPawnIdentifierStartChar: defaultIsIdentifierStartChar,
@@ -147,11 +154,8 @@ function createSymbolUsageDiagnostics(deps = {}) {
 
     function collectDeclarationNameRanges(entries, rawLines) {
         const byLine = new Map();
-        const sortedEntries = [...entries].sort((left, right) =>
-            (left.decl.lineNumber ?? 0) - (right.decl.lineNumber ?? 0)
-        );
         const entriesByLine = new Map();
-        for (const entry of sortedEntries) {
+        for (const entry of entries) {
             const lineNumber = entry.decl.lineNumber ?? -1;
             if (lineNumber < 0 || lineNumber >= rawLines.length || !entry.name) continue;
             let lineEntries = entriesByLine.get(lineNumber);
@@ -239,8 +243,7 @@ function createSymbolUsageDiagnostics(deps = {}) {
         if (functionType === 'native' || functionType === 'forward' || functionType === 'define') {
             return false;
         }
-        const modifiers = new Set(functionDecl.modifiers || []);
-        return !modifiers.has('native') && !modifiers.has('forward');
+        return !hasAnyDeclModifier(functionDecl, ['native', 'forward']);
     }
 
     function findForwardParentDecl(functionDecl, rootCtx) {
@@ -492,12 +495,12 @@ function createSymbolUsageDiagnostics(deps = {}) {
             bucket.push(entry);
         };
 
-        const functionByHeaderLine = new Map();
+        const functionByHeaderLine = [];
         for (const func of parsedDecls.functions || []) {
             const startLine = func.startLine ?? func.lineNumber ?? -1;
             const endLine = func.headerEndLine ?? startLine;
             for (let line = startLine; line <= endLine; line++) {
-                if (line >= 0) functionByHeaderLine.set(line, func);
+                if (line >= 0) functionByHeaderLine[line] = func;
             }
         }
 
@@ -505,13 +508,12 @@ function createSymbolUsageDiagnostics(deps = {}) {
             for (const decl of decls || []) {
                 if (decl?.type !== 'variable') continue;
                 if (!isCurrentDocumentDecl(decl, documentPath)) continue;
-                const modifiers = new Set(decl.modifiers || []);
-                const isPublicVariable = modifiers.has('public');
+                const isPublicVariable = hasDeclModifier(decl, 'public');
                 addEntry(createEntry(decl, 'variable', {
                     read: isPublicVariable,
                     written: isPublicVariable,
                     public: isPublicVariable,
-                    stock: modifiers.has('stock'),
+                    stock: hasDeclModifier(decl, 'stock'),
                     global: true,
                     scopeStartLine: decl.lineNumber ?? 0,
                     scopeEndLine: Number.MAX_SAFE_INTEGER
@@ -523,31 +525,28 @@ function createSymbolUsageDiagnostics(deps = {}) {
             for (const decl of decls || []) {
                 if (decl?.type !== 'variable') continue;
                 if (!isCurrentDocumentDecl(decl, documentPath)) continue;
-                const modifiers = new Set(decl.modifiers || []);
                 const functionDecl = decl.isArg
-                    ? functionByHeaderLine.get(decl.lineNumber ?? -1) || null
+                    ? functionByHeaderLine[decl.lineNumber ?? -1] || null
                     : (functionBodyRangeByLine[decl.lineNumber ?? -1]?.func || null);
                 if (!functionDecl) {
                     continue;
                 }
                 const functionType = String(functionDecl?.type || '');
-                const functionModifiers = new Set(functionDecl?.modifiers || []);
                 if (decl.isArg && (
                     functionType === 'native' ||
                     functionType === 'forward' ||
-                    functionModifiers.has('native') ||
-                    functionModifiers.has('forward')
+                    hasAnyDeclModifier(functionDecl, ['native', 'forward'])
                 )) {
                     continue;
                 }
                 const functionRange = functionDecl ? functionBodyRangeByFunction.get(functionDecl) : null;
                 const isStockFunction = !!(
                     functionType === 'stock' ||
-                    functionModifiers.has('stock')
+                    hasDeclModifier(functionDecl, 'stock')
                 );
                 const isPublicArg = !!(decl.isArg && functionDecl && (
                     functionDecl.type === 'public' ||
-                    (functionDecl.modifiers || []).includes('public') ||
+                    hasDeclModifier(functionDecl, 'public') ||
                     functionDecl.name === 'main' ||
                     functionDecl.name === 'entry'
                 ));
@@ -555,13 +554,13 @@ function createSymbolUsageDiagnostics(deps = {}) {
                     decl.isArg &&
                     isCompilerLikeForwardCallbackFunction(functionDecl)
                 );
-                const isReferenceArg = !!(decl.isArg && (modifiers.has('&') || String(decl.dims || '').trim()));
-                const isPublicVariable = modifiers.has('public');
+                const isReferenceArg = !!(decl.isArg && (hasDeclModifier(decl, '&') || String(decl.dims || '').trim()));
+                const isPublicVariable = hasDeclModifier(decl, 'public');
                 addEntry(createEntry(decl, 'variable', {
                     read: isPublicArg || isCompilerLikeCallbackArg || isReferenceArg || isPublicVariable,
                     written: !!String(decl.value || '').trim() || isPublicVariable,
                     public: isPublicVariable,
-                    stock: modifiers.has('stock') || isStockFunction,
+                    stock: hasDeclModifier(decl, 'stock') || isStockFunction,
                     functionDecl,
                     scopeStartLine: decl.isArg
                         ? (functionRange?.bodyStartLine ?? ((functionDecl?.headerEndLine ?? decl.lineNumber ?? 0) + 1))
@@ -671,6 +670,7 @@ function createSymbolUsageDiagnostics(deps = {}) {
                 usageScopeLineDiff[endLine + 1]--;
             }
         }
+        const identifierCandidateLineFlags = rootCtx?.lineIndex?.unknownSymbolCandidateLineFlags || null;
 
         const isVariableEntryVisibleAtLine = (entry, lineNumber) => {
             if (lineNumber < entry.scopeStartLine || lineNumber > entry.scopeEndLine) return false;
@@ -682,8 +682,8 @@ function createSymbolUsageDiagnostics(deps = {}) {
         };
 
         const variableEntryResolveCacheByLine = new Map();
-        const resolveVariableEntryUncached = (name, lineNumber) => {
-            const candidates = variableEntriesByName.get(name);
+        const resolveVariableEntryUncached = (name, lineNumber, candidates = null) => {
+            candidates = candidates || variableEntriesByName.get(name);
             if (!candidates?.length) return null;
             if (candidates.length === 1) {
                 const entry = candidates[0];
@@ -707,13 +707,19 @@ function createSymbolUsageDiagnostics(deps = {}) {
             return best;
         };
         const resolveVariableEntry = (name, lineNumber) => {
+            const candidates = variableEntriesByName.get(name);
+            if (!candidates?.length) return null;
+            if (candidates.length === 1) {
+                const entry = candidates[0];
+                return isVariableEntryVisibleAtLine(entry, lineNumber) ? entry : null;
+            }
             let lineCache = variableEntryResolveCacheByLine.get(lineNumber);
             if (!lineCache) {
                 lineCache = new Map();
                 variableEntryResolveCacheByLine.set(lineNumber, lineCache);
             }
             if (lineCache.has(name)) return lineCache.get(name);
-            const entry = resolveVariableEntryUncached(name, lineNumber);
+            const entry = resolveVariableEntryUncached(name, lineNumber, candidates);
             lineCache.set(name, entry);
             return entry;
         };
@@ -821,7 +827,9 @@ function createSymbolUsageDiagnostics(deps = {}) {
                     : '';
             }
             if (!expansionSource) return false;
-            const syntheticDeclarations = collectSyntheticLocalDeclarationInfo(expansionSource);
+            const syntheticDeclarations = SYNTHETIC_LOCAL_DECLARATION_KEYWORD_RE.test(expansionSource)
+                ? collectSyntheticLocalDeclarationInfo(expansionSource)
+                : EMPTY_SYNTHETIC_LOCAL_DECLARATIONS;
             scanVariableUsageSource(expansionSource, lineNumber, {
                 synthetic: true,
                 syntheticDeclarationRanges: syntheticDeclarations.ranges
@@ -848,7 +856,9 @@ function createSymbolUsageDiagnostics(deps = {}) {
                 expandedObjectLikeUsageLines.set(cacheKey, false);
                 return false;
             }
-            const syntheticDeclarations = collectSyntheticLocalDeclarationInfo(expansionSource);
+            const syntheticDeclarations = SYNTHETIC_LOCAL_DECLARATION_KEYWORD_RE.test(expansionSource)
+                ? collectSyntheticLocalDeclarationInfo(expansionSource)
+                : EMPTY_SYNTHETIC_LOCAL_DECLARATIONS;
             scanVariableUsageSource(expansionSource, lineNumber, {
                 synthetic: true,
                 syntheticDeclarationRanges: syntheticDeclarations.ranges
@@ -862,9 +872,10 @@ function createSymbolUsageDiagnostics(deps = {}) {
         for (let lineNumber = 0; lineNumber < scanLines.length; lineNumber++) {
             if (usageScopeLineDiff) activeUsageScopeLineCount += usageScopeLineDiff[lineNumber];
             if (activeUsageScopeLineCount <= 0) continue;
+            if (identifierCandidateLineFlags && !identifierCandidateLineFlags[lineNumber]) continue;
             const line = String(scanLines[lineNumber] || '');
             const rawLine = String(rawLines[lineNumber] || '');
-            const syntheticLocalDeclarations = line !== rawLine
+            const syntheticLocalDeclarations = line !== rawLine && SYNTHETIC_LOCAL_DECLARATION_KEYWORD_RE.test(line)
                 ? collectSyntheticLocalDeclarationInfo(line)
                 : null;
             let inString = false;
@@ -988,7 +999,9 @@ function createSymbolUsageDiagnostics(deps = {}) {
                 if (includeLineNumber < 0) continue;
                 scannedIncludePaths.add(normalizedIncludePath);
                 for (const includeLine of readIncludeUsageLines(includePath)) {
-                    const syntheticDeclarations = collectSyntheticLocalDeclarationInfo(includeLine);
+                    const syntheticDeclarations = SYNTHETIC_LOCAL_DECLARATION_KEYWORD_RE.test(includeLine)
+                        ? collectSyntheticLocalDeclarationInfo(includeLine)
+                        : EMPTY_SYNTHETIC_LOCAL_DECLARATIONS;
                     scanVariableUsageSource(includeLine, includeLineNumber, {
                         synthetic: true,
                         globalOnly: true,

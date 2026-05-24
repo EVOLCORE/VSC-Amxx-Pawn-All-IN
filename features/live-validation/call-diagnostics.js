@@ -2,7 +2,10 @@ const { createTagOverridePolicySyntaxCore } = require('../../core/syntax/tag-ove
 const { hasUncontinuedPhysicalLineBreakBetweenOffsets } = require('../../core/syntax/macro-call-policy');
 const { getTypeAnalysisSourceDecls } = require('../../core/validation/type-analysis-cache');
 const { isPotentialEnumDeclarationLine } = require('../../core/declarations/line-utils');
-const { collectFormatArgumentLinksForArgumentPieces } = require('../../core/format-strings');
+const {
+    collectFormatArgumentLinksForArgumentPieces,
+    hasFormatPlaceholderSyntaxCandidate
+} = require('../../core/format-strings');
 const {
     LIVE_FORMAT_PLACEHOLDER_DIAGNOSTIC_CODE
 } = require('./diagnostic-codes');
@@ -212,7 +215,9 @@ function createCallDiagnostics(deps) {
                 useDynamicCache: false
             });
         }
-        if (layout.variadicIndex >= 0) {
+        const mayHaveFormatPlaceholders = layout.variadicIndex >= 0 &&
+            hasFormatPlaceholderSyntaxCandidate(rawArgText);
+        if (mayHaveFormatPlaceholders) {
             for (const link of collectFormatArgumentLinksForArgumentPieces(ctx.text, expandedPieces, {
                 isEscapedQuote,
                 escapeChar: callEscapeChar,

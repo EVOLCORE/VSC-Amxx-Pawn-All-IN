@@ -34,6 +34,7 @@ function createSettingsService(vscode) {
         completionEnabled: `${CONFIG_NAMESPACE}.completionEnabled`,
         completionForwardDeclarationStyle: `${CONFIG_NAMESPACE}.completionForwardDeclarationStyle`,
         completionCallArgumentMode: `${CONFIG_NAMESPACE}.completionCallArgumentMode`,
+        completionAutoHideDelayMs: `${CONFIG_NAMESPACE}.completionAutoHideDelayMs`,
         hoverMode: `${CONFIG_NAMESPACE}.hoverMode`,
         hoverContentMode: `${CONFIG_NAMESPACE}.hoverContentMode`,
         showThemeRecommendation: `${CONFIG_NAMESPACE}.showThemeRecommendation`,
@@ -63,6 +64,7 @@ function createSettingsService(vscode) {
         CONFIG_KEYS.completionEnabled,
         CONFIG_KEYS.completionForwardDeclarationStyle,
         CONFIG_KEYS.completionCallArgumentMode,
+        CONFIG_KEYS.completionAutoHideDelayMs,
         CONFIG_KEYS.hoverMode,
         CONFIG_KEYS.hoverContentMode,
         CONFIG_KEYS.showThemeRecommendation,
@@ -132,6 +134,7 @@ function createSettingsService(vscode) {
         completionEnabled: true,
         completionForwardDeclarationStyle: 'same-line',
         completionCallArgumentMode: 'required-before-default',
+        completionAutoHideDelayMs: 0,
         hoverMode: 'normal',
         hoverContentMode: 'full',
         showThemeRecommendation: true,
@@ -221,6 +224,10 @@ function createSettingsService(vscode) {
         settings.completionCallArgumentMode = normalizeCompletionCallArgumentMode(
             config.get('completionCallArgumentMode', 'required-before-default')
         );
+        const rawCompletionAutoHideDelayMs = Number(config.get('completionAutoHideDelayMs', 0));
+        settings.completionAutoHideDelayMs = Number.isFinite(rawCompletionAutoHideDelayMs)
+            ? Math.max(0, Math.min(10000, Math.floor(rawCompletionAutoHideDelayMs)))
+            : 0;
 
         settings.hoverMode = normalizeHoverMode(config.get('hoverMode', 'normal'));
         const rawHoverContentMode = String(config.get('hoverContentMode', 'full') || 'full').trim().toLowerCase();
@@ -293,6 +300,7 @@ function createSettingsService(vscode) {
         isCompletionEnabled: () => settings.completionEnabled,
         getCompletionForwardDeclarationStyle: () => settings.completionForwardDeclarationStyle,
         getCompletionCallArgumentMode: () => settings.completionCallArgumentMode,
+        getCompletionAutoHideDelayMs: () => settings.completionAutoHideDelayMs,
         getHoverMode: () => settings.hoverMode,
         getHoverContentMode: () => settings.hoverContentMode,
         shouldShowThemeRecommendation: () => settings.showThemeRecommendation,

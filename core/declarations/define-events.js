@@ -37,12 +37,23 @@ function createDefineDeclarationEventCore(deps) {
         return collectDeclarationText(rawLines, startLine, lineCtrlChars, defineLines);
     }
 
-    function collectActiveDefineDecls(rawLines, filePath, fileName, lineCtrlChars = [], cursorLine = undefined, strippedLines = null, directiveCandidateLines = null) {
-        const activeDefines = new Map();
+    function walkDefineDirectiveEvents(
+        rawLines,
+        filePath,
+        fileName,
+        lineCtrlChars = [],
+        strippedLines = null,
+        directiveCandidateLines = null,
+        options = {},
+        onEvent = null
+    ) {
         const scanLines = strippedLines || rawLines;
         const candidateLines = Array.isArray(directiveCandidateLines)
             ? directiveCandidateLines
             : null;
+        const cursorLine = Number.isInteger(options.cursorLine)
+            ? options.cursorLine
+            : undefined;
         let cursor = 0;
         let candidateIndex = 0;
         let pendingDeprecatedMessage = null;
@@ -82,88 +93,62 @@ function createDefineDeclarationEventCore(deps) {
                     pendingDeprecatedMessage = null;
                 }
                 const defineDecl = parsedDecls.find(d => d.type === 'define');
-                if (defineDecl) activeDefines.set(defineDecl.name, defineDecl);
+                if (defineDecl && typeof onEvent === 'function') {
+                    onEvent('define', startLine, defineDecl.name, defineDecl);
+                }
                 continue;
             }
 
             if (directive?.keyword === 'undef') {
                 const parsedUndef = parsePreprocessorSingleIdentifierPayload(directive);
-                if (parsedUndef?.name) activeDefines.delete(parsedUndef.name);
+                if (parsedUndef?.name && typeof onEvent === 'function') {
+                    onEvent('undef', i, parsedUndef.name, null);
+                }
             }
             cursor = i + 1;
         }
+    }
+
+    function collectActiveDefineDecls(rawLines, filePath, fileName, lineCtrlChars = [], cursorLine = undefined, strippedLines = null, directiveCandidateLines = null) {
+        const activeDefines = new Map();
+        walkDefineDirectiveEvents(
+            rawLines,
+            filePath,
+            fileName,
+            lineCtrlChars,
+            strippedLines,
+            directiveCandidateLines,
+            { cursorLine },
+            (type, _lineNumber, name, defineDecl) => {
+                if (type === 'define') {
+                    activeDefines.set(name, defineDecl);
+                } else if (type === 'undef') {
+                    activeDefines.delete(name);
+                }
+            }
+        );
 
         return [...activeDefines.values()];
     }
 
     function collectDefineDirectiveEvents(rawLines, filePath, fileName, lineCtrlChars = [], strippedLines = null, directiveCandidateLines = null) {
         const events = [];
-        const scanLines = strippedLines || rawLines;
-        const candidateLines = Array.isArray(directiveCandidateLines)
-            ? directiveCandidateLines
-            : null;
-        let cursor = 0;
-        let candidateIndex = 0;
-        let pendingDeprecatedMessage = null;
-        while (cursor < scanLines.length) {
-            const i = candidateLines
-                ? candidateLines[candidateIndex++]
-                : cursor;
-            if (!Number.isInteger(i)) break;
-            if (candidateLines && i < cursor) continue;
-            const trimmedLine = String(scanLines[i] || '').trim();
-            if (!trimmedLine) {
-                cursor = i + 1;
-                continue;
-            }
-            const deprecatedMessage = parseDeprecatedPragmaMessage(trimmedLine);
-            if (deprecatedMessage != null) {
-                pendingDeprecatedMessage = deprecatedMessage;
-                cursor = i + 1;
-                continue;
-            }
-
-            const directive = parsePreprocessorDirectiveLine(trimmedLine);
-            if (directive?.keyword === 'define') {
-                const startLine = i;
-                const { text: joinedText, nextLine } = collectDefineDeclarationText(rawLines, i, lineCtrlChars, scanLines);
-                cursor = nextLine;
-                const parsedDecls = parseDeclLine(
-                    { text: joinedText, startLine },
-                    rawLines,
-                    filePath,
-                    fileName,
-                    'global'
-                );
-                if (pendingDeprecatedMessage != null && applyDeprecatedPragmaToNextDecl(parsedDecls, pendingDeprecatedMessage)) {
-                    pendingDeprecatedMessage = null;
+        walkDefineDirectiveEvents(
+            rawLines,
+            filePath,
+            fileName,
+            lineCtrlChars,
+            strippedLines,
+            directiveCandidateLines,
+            {},
+            (type, lineNumber, name, defineDecl) => {
+                if (type === 'define') {
+                    events.push({ lineNumber, type, name, defineDecl });
+                } else if (type === 'undef') {
+                    events.push({ lineNumber, type, name });
                 }
-                const defineDecl = parsedDecls.find(d => d.type === 'define');
-                if (defineDecl) {
-                    events.push({
-                        lineNumber: startLine,
-                        type: 'define',
-                        name: defineDecl.name,
-                        defineDecl
-                    });
-                }
-                continue;
             }
-
-            if (directive?.keyword === 'undef') {
-                const parsedUndef = parsePreprocessorSingleIdentifierPayload(directive);
-                if (!parsedUndef?.name) {
-                    cursor = i + 1;
-                    continue;
-                }
-                events.push({
-                    lineNumber: i,
-                    type: 'undef',
-                    name: parsedUndef.name
-                });
-            }
-            cursor = i + 1;
-        }
+        );
 
         return events;
     }

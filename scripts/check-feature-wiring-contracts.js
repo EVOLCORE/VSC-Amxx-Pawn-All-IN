@@ -132,6 +132,16 @@ function main() {
             wiringFile: 'bootstrap/feature-wiring/completion-navigation.js'
         },
         {
+            factoryFile: 'features/symbol-highlights/index.js',
+            factoryName: 'createSymbolHighlightFeature',
+            wiringFile: 'bootstrap/feature-wiring/completion-navigation.js'
+        },
+        {
+            factoryFile: 'features/document-highlights/index.js',
+            factoryName: 'createDocumentHighlightFeature',
+            wiringFile: 'bootstrap/build-feature-runtime.js'
+        },
+        {
             factoryFile: 'services/document-language.js',
             factoryName: 'createDocumentLanguageService',
             wiringFile: 'bootstrap/feature-wiring/support.js'

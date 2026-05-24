@@ -16,6 +16,7 @@ const {
     getObjectAliasTargetName,
     isObjectAliasDefineDecl
 } = require('../declarations/aliases');
+const { hasDeclModifier } = require('../declarations/modifiers');
 const { findBalancedGroupEnd: findBalancedGroupEndCore } = require('../syntax/balanced');
 const { createSemanticSyntaxCore } = require('../syntax/semantic-classifier');
 const { createMacroExpansionSyntaxCore } = require('../syntax/macro-expander');
@@ -316,7 +317,7 @@ function createValidationCore(deps) {
     }
 
     function isConstVariableDecl(decl) {
-        return Array.isArray(decl?.modifiers) && decl.modifiers.includes('const');
+        return hasDeclModifier(decl, 'const');
     }
 
     function findVariableDeclByNameFromSources(decls = [], name = '', analysisCache = null) {
@@ -604,6 +605,7 @@ function createValidationCore(deps) {
         const escapeChar = options?.escapeChar ?? getActiveCtrlChar();
         const source = stripTagCastsForValidation(expr, escapeChar);
         if (!source) return null;
+        if (!containsPawnIdentifierStartChar(source)) return null;
         if (hasUnclosedFunctionCallGroup(source, escapeChar)) return null;
 
         const inferred = inferArgType(source, decls, analysisCache);
@@ -1666,6 +1668,11 @@ function createValidationCore(deps) {
         const cacheKey = String(expr || '').trim();
         if (analysisCache?.unresolvedRefsByExpr.has(cacheKey)) {
             return analysisCache.unresolvedRefsByExpr.get(cacheKey);
+        }
+        if (!containsPawnIdentifierStartChar(cacheKey)) {
+            const result = [];
+            if (analysisCache) analysisCache.unresolvedRefsByExpr.set(cacheKey, result);
+            return result;
         }
 
         const source = String(expr || '');

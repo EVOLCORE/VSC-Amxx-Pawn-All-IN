@@ -165,15 +165,7 @@ function createIncludeDeclAccumulator(options = {}) {
     const variableBuckets = new Map();
     const seenDecls = shouldDedupe ? createIncludeDeclDedupeTracker() : null;
     const seenDeclRefs = shouldDedupe ? new WeakSet() : null;
-    const pushDecl = decl => {
-        if (!decl) return;
-        if (seenDeclRefs && typeof decl === 'object') {
-            if (seenDeclRefs.has(decl)) return;
-            seenDeclRefs.add(decl);
-        }
-        if (seenDecls) {
-            if (seenDecls.hasOrAdd(decl)) return;
-        }
+    const appendDecl = decl => {
         decls.push(decl);
         const name = decl.name;
         if (!name) return;
@@ -184,8 +176,30 @@ function createIncludeDeclAccumulator(options = {}) {
             variableBuckets.set(name, decl);
         }
     };
+    const pushDecl = decl => {
+        if (!decl) return;
+        if (seenDeclRefs && typeof decl === 'object') {
+            if (seenDeclRefs.has(decl)) return;
+            seenDeclRefs.add(decl);
+        }
+        if (seenDecls) {
+            if (seenDecls.hasOrAdd(decl)) return;
+        }
+        appendDecl(decl);
+    };
+    const pushDecls = sourceDecls => {
+        if (!Array.isArray(sourceDecls) || !sourceDecls.length) return;
+        if (shouldDedupe) {
+            for (const decl of sourceDecls) pushDecl(decl);
+            return;
+        }
+        for (const decl of sourceDecls) {
+            if (!decl) continue;
+            appendDecl(decl);
+        }
+    };
     const finish = () => attachPrecomputedDeclBuckets(decls, nameBuckets, variableBuckets);
-    return { decls, finish, pushDecl };
+    return { decls, finish, pushDecl, pushDecls };
 }
 
 module.exports = {

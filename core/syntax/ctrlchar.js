@@ -89,7 +89,8 @@ function createCtrlCharSyntaxCore(deps) {
         normalizedPath = '',
         rawLines = null,
         strippedLines = null,
-        hasDirectiveMarker = null
+        hasDirectiveMarker = null,
+        precomputedDirectiveCandidateLines = null
     ) => {
         const sourceText = String(content || '');
         const resolvedRawLines = Array.isArray(rawLines) ? rawLines : splitPawnLines(sourceText);
@@ -102,12 +103,15 @@ function createCtrlCharSyntaxCore(deps) {
         const containsDirectiveMarker = hasDirectiveMarker == null
             ? sourceText.indexOf('#') >= 0
             : !!hasDirectiveMarker;
+        const directiveLines = Array.isArray(precomputedDirectiveCandidateLines)
+            ? precomputedDirectiveCandidateLines
+            : null;
         return {
             rawLines: resolvedRawLines,
             strippedLines: resolvedStrippedLines,
             lineCtrlChars: [],
             directiveCandidateLines: containsDirectiveMarker
-                ? collectDirectiveLineNumbers(resolvedStrippedLines)
+                ? (directiveLines || collectDirectiveLineNumbers(resolvedStrippedLines))
                 : EMPTY_DIRECTIVE_CANDIDATE_LINES,
             finalCtrlChar: DEFAULT_CTRL_CHAR
         };
@@ -118,13 +122,21 @@ function createCtrlCharSyntaxCore(deps) {
         content,
         rawLines = null,
         strippedLines = null,
-        hasDirectiveMarker = null
+        hasDirectiveMarker = null,
+        precomputedDirectiveCandidateLines = null
     ) => {
         if (!normalizedPath || getCachedCtrlCharState(normalizedPath, content)) return;
         setCachedCtrlCharState(
             normalizedPath,
             content,
-            buildDefaultCtrlCharState(content, normalizedPath, rawLines, strippedLines, hasDirectiveMarker)
+            buildDefaultCtrlCharState(
+                content,
+                normalizedPath,
+                rawLines,
+                strippedLines,
+                hasDirectiveMarker,
+                precomputedDirectiveCandidateLines
+            )
         );
     };
 
@@ -156,14 +168,22 @@ function createCtrlCharSyntaxCore(deps) {
         fromFilePath = '',
         strippedLines = null,
         searchPaths = [],
-        visited = new Set()
+        visited = new Set(),
+        precomputedDirectiveCandidateLines = null
     ) => {
         const text = String(content || '');
         if (text.indexOf('ctrlchar') >= 0) return true;
         const hasDirectiveMarker = text.indexOf('#') >= 0;
         if (!hasDirectiveMarker || text.indexOf('include') < 0) {
             const currentPath = fromFilePath ? normalizeFsPath(fromFilePath) : '';
-            cacheDefaultCtrlCharState(currentPath, text, null, strippedLines, hasDirectiveMarker);
+            cacheDefaultCtrlCharState(
+                currentPath,
+                text,
+                null,
+                strippedLines,
+                hasDirectiveMarker,
+                precomputedDirectiveCandidateLines
+            );
             return false;
         }
 
@@ -178,7 +198,9 @@ function createCtrlCharSyntaxCore(deps) {
         const lines = Array.isArray(strippedLines)
             ? strippedLines
             : splitPawnLines(text);
-        const directiveLines = collectDirectiveLineNumbers(lines);
+        const directiveLines = Array.isArray(precomputedDirectiveCandidateLines)
+            ? precomputedDirectiveCandidateLines
+            : collectDirectiveLineNumbers(lines);
         let maySetCtrlChar = false;
         for (const lineIndex of directiveLines) {
             const line = String(lines[lineIndex] || '').trim();
@@ -210,7 +232,14 @@ function createCtrlCharSyntaxCore(deps) {
         if (currentPath) visited.delete(currentPath);
         setCachedCtrlCharGraphPresence(currentPath, text, maySetCtrlChar);
         if (!maySetCtrlChar) {
-            cacheDefaultCtrlCharState(currentPath, text, lines, strippedLines, hasDirectiveMarker);
+            cacheDefaultCtrlCharState(
+                currentPath,
+                text,
+                lines,
+                strippedLines,
+                hasDirectiveMarker,
+                precomputedDirectiveCandidateLines
+            );
         }
         return maySetCtrlChar;
     };
@@ -225,7 +254,8 @@ function createCtrlCharSyntaxCore(deps) {
         fromFilePath = '',
         visited = new Set(),
         precomputedRawLines = null,
-        inheritedSearchPaths = []
+        inheritedSearchPaths = [],
+        precomputedLineIndex = null
     ) => {
         let ctrlChar = DEFAULT_CTRL_CHAR;
         const currentPath = fromFilePath ? normalizeFsPath(fromFilePath) : '';
@@ -260,12 +290,16 @@ function createCtrlCharSyntaxCore(deps) {
             ? (() => {
                 const cachedAnalysis = getCachedCommentAnalysis(currentPath, content);
                 if (cachedAnalysis) return cachedAnalysis.strippedLines;
-                const analysis = buildCommentAnalysis(rawLines);
+                const analysis = buildCommentAnalysis(rawLines, [], precomputedLineIndex);
                 setCachedCommentAnalysis(currentPath, content, analysis);
                 return analysis.strippedLines;
             })()
             : rawLines;
         const hasDirectiveMarker = content.indexOf('#') >= 0;
+        const precomputedDirectiveCandidateLines = hasDirectiveMarker &&
+            Array.isArray(precomputedLineIndex?.directiveCandidateLines)
+            ? precomputedLineIndex.directiveCandidateLines
+            : null;
         const hasPotentialIncludeDirective = hasDirectiveMarker && content.indexOf('include') >= 0;
         const searchPaths = typeof getNestedSearchPaths === 'function'
             ? getNestedSearchPaths(fromFilePath, inheritedSearchPaths)
@@ -279,7 +313,8 @@ function createCtrlCharSyntaxCore(deps) {
                     fromFilePath,
                     strippedLines,
                     searchPaths,
-                    new Set(visited)
+                    new Set(visited),
+                    precomputedDirectiveCandidateLines
                 )
             )
         ) {
@@ -288,7 +323,8 @@ function createCtrlCharSyntaxCore(deps) {
                 currentPath,
                 rawLines,
                 strippedLines,
-                hasDirectiveMarker
+                hasDirectiveMarker,
+                precomputedDirectiveCandidateLines
             );
             setCachedCtrlCharState(currentPath, content, state);
             return state;
@@ -296,7 +332,7 @@ function createCtrlCharSyntaxCore(deps) {
         const lineCtrlChars = [];
         let nextUnfilledLine = 0;
         const directiveCandidateLines = hasDirectiveMarker
-            ? collectDirectiveLineNumbers(strippedLines)
+            ? (precomputedDirectiveCandidateLines || collectDirectiveLineNumbers(strippedLines))
             : EMPTY_DIRECTIVE_CANDIDATE_LINES;
         for (const lineIndex of directiveCandidateLines) {
             fillLineCtrlCharRange(lineCtrlChars, nextUnfilledLine, lineIndex + 1, ctrlChar);

@@ -3,6 +3,7 @@ const {
     isPawnIdentifierName
 } = require('../syntax/identifiers');
 const { resolveLineStartOffset } = require('../syntax/lines');
+const { hasAnyDeclModifier } = require('../declarations/modifiers');
 
 function createSymbolReferenceCore(deps) {
     const {
@@ -16,6 +17,9 @@ function createSymbolReferenceCore(deps) {
         isSameFilePath
     } = deps;
 
+    const MAX_RENAME_TARGET_CACHE_ENTRIES_PER_DOCUMENT = 256;
+    const localEntryCacheByContext = new WeakMap();
+    const renameTargetCacheByDocument = new WeakMap();
     const getDeclPath = decl => String(decl?.filePath || decl?.file || '');
 
     function isCurrentDocumentDecl(decl, documentPath = '') {
@@ -109,6 +113,49 @@ function createSymbolReferenceCore(deps) {
         for (const decl of ctx?.parsedDecls?.funcArgs || []) pushDecl(decl);
         for (const decl of ctx?.parsedDecls?.locals || []) pushDecl(decl);
         return { entries, maps };
+    }
+
+    function getCachedLocalEntries(ctx, documentPath = '') {
+        if (!ctx || typeof ctx !== 'object') {
+            return buildLocalEntries(ctx, documentPath);
+        }
+        const normalizedPath = String(documentPath || '').toLowerCase();
+        let entriesByPath = localEntryCacheByContext.get(ctx);
+        if (!entriesByPath) {
+            entriesByPath = new Map();
+            localEntryCacheByContext.set(ctx, entriesByPath);
+        }
+        if (entriesByPath.has(normalizedPath)) {
+            return entriesByPath.get(normalizedPath);
+        }
+        const built = buildLocalEntries(ctx, documentPath);
+        entriesByPath.set(normalizedPath, built);
+        return built;
+    }
+
+    function getCachedRenameTarget(document, cacheKey, factory) {
+        if (!document || typeof document !== 'object') {
+            return factory();
+        }
+        const version = document.version ?? 0;
+        let cache = renameTargetCacheByDocument.get(document);
+        if (!cache || cache.version !== version) {
+            cache = { version, byPosition: new Map() };
+            renameTargetCacheByDocument.set(document, cache);
+        }
+        const key = String(cacheKey || '');
+        if (cache.byPosition.has(key)) {
+            const cached = cache.byPosition.get(key);
+            cache.byPosition.delete(key);
+            cache.byPosition.set(key, cached);
+            return cached;
+        }
+        const value = factory();
+        cache.byPosition.set(key, value);
+        while (cache.byPosition.size > MAX_RENAME_TARGET_CACHE_ENTRIES_PER_DOCUMENT) {
+            cache.byPosition.delete(cache.byPosition.keys().next().value);
+        }
+        return value;
     }
 
     function resolveEntryAt(entries, maps, name, lineNumber) {
@@ -310,8 +357,7 @@ function createSymbolReferenceCore(deps) {
         if (!decl?.name || !isCurrentDocumentDecl(decl, documentPath)) return false;
         const type = String(decl.type || '');
         if (type === 'native' || type === 'forward' || type === 'define') return false;
-        const modifiers = new Set(decl.modifiers || []);
-        return !modifiers.has('native') && !modifiers.has('forward');
+        return !hasAnyDeclModifier(decl, ['native', 'forward']);
     }
 
     function findDocumentFunctionDecl(ctx, name, documentPath = '') {
@@ -419,7 +465,42 @@ function createSymbolReferenceCore(deps) {
         return collector.sortedRanges();
     }
 
-    function getRenameTarget(document, position) {
+    function collectUnresolvedScopedVariableReferenceRanges(document, ctx, name, position, localEntries, maps) {
+        if (!name) return [];
+        const currentFunction = maps.fullRanges.byLine?.[position.line]?.func || null;
+        if (!currentFunction) return [];
+
+        const functionRange = maps.fullRanges.byFunction.get(currentFunction) || null;
+        const rawLines = ctx.rawLines || [];
+        const firstLine = Math.max(0, currentFunction.startLine ?? currentFunction.lineNumber ?? position.line);
+        const lastLine = Math.min(
+            rawLines.length - 1,
+            functionRange?.endLine ?? currentFunction.endLine ?? position.line
+        );
+        const collector = createRangeCollector(document, ctx);
+
+        for (const occurrence of collectNameOccurrences(ctx, name, firstLine, lastLine, item => {
+            if (!isRenameableVariableOccurrence(
+                ctx,
+                item.lineNumber,
+                item.source,
+                item.start,
+                item.end,
+                name,
+                item.escapeChar
+            )) {
+                return false;
+            }
+            if (resolveEntryAt(localEntries, maps, name, item.lineNumber)) return false;
+            return true;
+        })) {
+            collector.addRange(occurrence.lineNumber, occurrence.start, occurrence.end);
+        }
+
+        return collector.sortedRanges();
+    }
+
+    function getRenameProbe(document, position) {
         const ctx = getPawnDocumentContext(document, undefined, { preparseLocals: true });
         if (!ctx) return null;
         const token = getLookupTokenAtPosition(document, position, { ctrlCharResolver: ctx.resolver });
@@ -430,8 +511,29 @@ function createSymbolReferenceCore(deps) {
         const tokenStart = token.range?.start?.character ?? position.character;
         const tokenEnd = token.range?.end?.character ?? tokenStart + name.length;
         const escapeChar = ctx.lineCtrlChars?.[position.line] || '';
+        return { ctx, token, name, lineText, tokenStart, tokenEnd, escapeChar };
+    }
 
-        const { entries, maps } = buildLocalEntries(ctx, document.fileName || '');
+    function getProbeCacheKey(position, probe) {
+        const range = probe?.token?.range || null;
+        const startLine = range?.start?.line ?? position?.line ?? -1;
+        const startChar = range?.start?.character ?? probe?.tokenStart ?? position?.character ?? -1;
+        const endLine = range?.end?.line ?? position?.line ?? -1;
+        const endChar = range?.end?.character ?? probe?.tokenEnd ?? position?.character ?? -1;
+        return `token:${startLine}:${startChar}:${endLine}:${endChar}:${probe?.name || ''}`;
+    }
+
+    function computeRenameTargetFromProbe(document, position, probe) {
+        const {
+            ctx,
+            token,
+            name,
+            lineText,
+            tokenStart,
+            tokenEnd,
+            escapeChar
+        } = probe;
+        const { entries, maps } = getCachedLocalEntries(ctx, document.fileName || '');
         if (isRenameableVariableOccurrence(ctx, position.line, lineText, tokenStart, tokenEnd, name, escapeChar)) {
             const entry = resolveEntryAt(entries, maps, name, position.line);
             if (entry) {
@@ -458,6 +560,24 @@ function createSymbolReferenceCore(deps) {
                     decl: globalDecl,
                     range: token.range,
                     references: ranges
+                };
+            }
+
+            const unresolvedRanges = collectUnresolvedScopedVariableReferenceRanges(
+                document,
+                ctx,
+                name,
+                position,
+                entries,
+                maps
+            );
+            if (unresolvedRanges.length) {
+                return {
+                    ctx,
+                    name,
+                    kind: 'unresolved-local',
+                    range: token.range,
+                    references: unresolvedRanges
                 };
             }
         }
@@ -487,6 +607,16 @@ function createSymbolReferenceCore(deps) {
         }
 
         return null;
+    }
+
+    function getRenameTarget(document, position) {
+        const probe = getRenameProbe(document, position);
+        const cacheKey = probe
+            ? getProbeCacheKey(position, probe)
+            : `miss:${position?.line ?? -1}:${position?.character ?? -1}`;
+        return getCachedRenameTarget(document, cacheKey, () =>
+            probe ? computeRenameTargetFromProbe(document, position, probe) : null
+        );
     }
 
     return {

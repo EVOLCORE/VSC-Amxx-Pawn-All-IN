@@ -3,6 +3,8 @@ const { createNavigationFeature } = require('../../features/navigation');
 const { createRenameFeature } = require('../../features/rename');
 const { createSemanticTokensFeature } = require('../../features/semantic-tokens');
 const { createFormatStringFeature } = require('../../features/format-strings');
+const { createSymbolHighlightFeature } = require('../../features/symbol-highlights');
+const { createSymbolReferenceCore } = require('../../core/refactor/symbol-references');
 
 function buildCompletionNavigationFeatures(deps, support) {
     const {
@@ -71,6 +73,7 @@ function buildCompletionNavigationFeatures(deps, support) {
         isCompletionEnabled: () => settingsService?.isCompletionEnabled?.() !== false,
         getForwardCompletionBodyStyle: () => settingsService?.getCompletionForwardDeclarationStyle?.() || 'same-line',
         getCompletionCallArgumentMode: () => settingsService?.getCompletionCallArgumentMode?.() || 'required-before-default',
+        getCompletionAutoHideDelayMs: () => settingsService?.getCompletionAutoHideDelayMs?.() || 0,
         completionOutputChannel: liveValidationOutputChannel
     });
 
@@ -90,7 +93,7 @@ function buildCompletionNavigationFeatures(deps, support) {
         findFirstNavigableDecl
     });
 
-    const renameFeature = createRenameFeature({
+    const symbolReferenceCore = createSymbolReferenceCore({
         vscode,
         getPawnDocumentContext,
         getLookupTokenAtPosition,
@@ -99,6 +102,18 @@ function buildCompletionNavigationFeatures(deps, support) {
         isLinePositionInsideCommentOrString,
         isEscapedQuote,
         isSameFilePath
+    });
+
+    const renameFeature = createRenameFeature({
+        vscode,
+        getPawnDocumentContext,
+        getLookupTokenAtPosition,
+        computeFunctionRangeMaps,
+        findVariableDeclarationSpanInRange,
+        isLinePositionInsideCommentOrString,
+        isEscapedQuote,
+        isSameFilePath,
+        symbolReferenceCore
     });
 
     const semanticTokensFeature = createSemanticTokensFeature({
@@ -120,12 +135,25 @@ function buildCompletionNavigationFeatures(deps, support) {
         createLazyCallContextOptions
     });
 
+    const symbolHighlightFeature = createSymbolHighlightFeature({
+        vscode,
+        getPawnDocumentContext,
+        getLookupTokenAtPosition,
+        computeFunctionRangeMaps,
+        findVariableDeclarationSpanInRange,
+        isLinePositionInsideCommentOrString,
+        isEscapedQuote,
+        isSameFilePath,
+        symbolReferenceCore
+    });
+
     return {
         completionFeature,
         navigationFeature,
         renameFeature,
         semanticTokensFeature,
-        formatStringFeature
+        formatStringFeature,
+        symbolHighlightFeature
     };
 }
 

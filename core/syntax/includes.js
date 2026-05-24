@@ -4,51 +4,61 @@ const { skipPawnHorizontalWhitespace } = require('./whitespace');
 const PAWN_INCLUDE_LINE_RE = /^\s*#\s*(include|tryinclude)\b\s+(?:<([^>"]+)>\s*|"([^"]+)"\s*|([A-Za-z0-9_./\\-]+))/i;
 const PAWN_INCLUDE_BARE_CHAR_RE = /[A-Za-z0-9_./\\-]/;
 
-function parsePawnIncludeDirectiveTarget(lineText = '') {
+function parsePawnIncludeDirectivePayloadTarget(keyword = '', lineText = '', payloadStart = 0) {
+    if (!isIncludeDirectiveKeyword(keyword)) return null;
     const text = String(lineText || '');
-    const keywordContext = readIncludeDirectiveKeywordContext(text);
-    if (!keywordContext) return null;
+    const tokenStart = skipPawnHorizontalWhitespace(text, payloadStart);
+    if (tokenStart >= text.length) return null;
 
-    const payloadStart = skipPawnHorizontalWhitespace(text, keywordContext.keywordEnd);
-    if (payloadStart >= text.length) return null;
-
-    const first = text[payloadStart] || '';
+    const first = text[tokenStart] || '';
     if (first === '<' || first === '"') {
         const closeChar = first === '<' ? '>' : '"';
-        const nameStart = payloadStart + 1;
+        const nameStart = tokenStart + 1;
         const nameEnd = text.indexOf(closeChar, nameStart);
         if (nameEnd < 0) return null;
         const name = text.slice(nameStart, nameEnd);
         if (!name) return null;
         return {
-            keyword: keywordContext.keyword,
+            keyword,
             name,
             nameStart,
             nameEnd,
-            tokenStart: payloadStart,
+            tokenStart,
             tokenEnd: Math.min(text.length, nameEnd + 1),
             isDelimited: true,
             delimiter: first === '<' ? '<>' : '""'
         };
     }
 
-    let nameEnd = payloadStart;
+    let nameEnd = tokenStart;
     while (nameEnd < text.length && PAWN_INCLUDE_BARE_CHAR_RE.test(text[nameEnd])) {
         nameEnd++;
     }
-    const name = text.slice(payloadStart, nameEnd);
+    const name = text.slice(tokenStart, nameEnd);
     if (!name) return null;
 
     return {
-        keyword: keywordContext.keyword,
+        keyword,
         name,
-        nameStart: payloadStart,
+        nameStart: tokenStart,
         nameEnd,
-        tokenStart: payloadStart,
+        tokenStart,
         tokenEnd: nameEnd,
         isDelimited: false,
         delimiter: ''
     };
+}
+
+function parsePawnIncludeDirectiveTarget(lineText = '') {
+    const text = String(lineText || '');
+    const keywordContext = readIncludeDirectiveKeywordContext(text);
+    if (!keywordContext) return null;
+
+    return parsePawnIncludeDirectivePayloadTarget(
+        keywordContext.keyword,
+        text,
+        keywordContext.keywordEnd
+    );
 }
 
 function getPawnIncludeNameFromLine(lineText = '') {
@@ -130,6 +140,7 @@ module.exports = {
     PAWN_INCLUDE_LINE_RE,
     isIncludeDirectiveKeyword,
     isPawnIncludeDirectiveCandidateLine,
+    parsePawnIncludeDirectivePayloadTarget,
     parsePawnIncludeDirectiveTarget,
     getPawnIncludeCompletionContext,
     getPawnIncludeNameFromLine

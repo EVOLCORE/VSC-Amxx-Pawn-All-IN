@@ -34,6 +34,9 @@ Recommended AMX Mod X version: 1.9.0 or newer.
 6. Configurable call snippet argument mode: insert all arguments or only required arguments before the first default value.
 7. Forward completion can generate a new implementation body while preserving the full forward signature for declarations.
 8. Deprecated declarations are marked in completion items when source metadata exposes them.
+9. Fuzzy/partial symbol matching helps find names even when only a compact abbreviation is typed.
+10. Array dimension completion suggests numeric defines, enum constants, and compile-time size helpers where they are valid.
+11. Optional completion auto-hide reduces UI noise after idle typing or when the typed text already resolves the only suggestion.
 
 ### Hover & Navigation
 
@@ -44,11 +47,13 @@ Recommended AMX Mod X version: 1.9.0 or newer.
 5. Optional Go to Definition links inside hover content.
 6. Go to Definition support for symbols and include declarations.
 7. Format-string placeholder hover/highlighting that maps placeholders such as `%s`, `%i`, `%f`, and multi-argument `%L` to the arguments they consume.
+8. Document highlights for symbol occurrences, including variables and functions, using VS Code's built-in highlight/overview behavior.
 
 ### Refactor
 
-1. Rename Symbol support for local variables and function arguments.
+1. Rename Symbol support for local variables, function arguments, current-file globals, current-file functions, and unresolved scoped names in the edited source.
 2. Scope-aware reference matching to avoid renaming unrelated symbols with the same name in another function/block.
+3. Include declarations are intentionally not renamed.
 
 ### Live Diagnostics
 
@@ -192,6 +197,9 @@ Then use the `AMXX Pawn All-In: Compile Current File` command or the editor titl
 
 - `amxxPawnAllIn.completionCallArgumentMode`
   Controls whether call snippets insert all arguments or only the required arguments before the first default value.
+
+- `amxxPawnAllIn.completionAutoHideDelayMs`
+  Automatically hides the completion widget after this many milliseconds without another completion request. `0` keeps VS Code's normal behavior. Empty results and a single already fully typed suggestion are hidden automatically.
 
 - `amxxPawnAllIn.callbackSignatureMode`
   `strict` keeps full forward-backed callback signature checks. `compiler-like` is more tolerant of partial callback signatures and unused forward callback parameters.

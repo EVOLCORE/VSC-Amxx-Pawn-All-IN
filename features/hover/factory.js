@@ -110,8 +110,9 @@ function createHoverRuntimeFeature(deps) {
     const {
         formatBitmaskValueHex,
         formatBitmaskSetBits,
+        hasBitmaskOperator,
         extractAssignmentBitmaskRhsInfo,
-        getBitmaskExpressionSlice,
+        getBitmaskExpressionCandidates,
         findBitmaskExpressionContext,
         buildBitmaskParts,
         splitTopLevelBitmaskTermsWithOffsets: hoverSplitTopLevelBitmaskTermsWithOffsets,
@@ -203,8 +204,11 @@ function createHoverRuntimeFeature(deps) {
         isMeaningfulCallCursorPosition,
         findIndexedAccessContextAtPosition,
         resolveDefaultAccessSymbolName,
+        getActiveCtrlChar,
+        stripLineComment,
+        hasBitmaskOperator,
         extractAssignmentBitmaskRhsInfo,
-        getBitmaskExpressionSlice,
+        getBitmaskExpressionCandidates,
         splitTopLevelBitmaskTermsWithOffsets: hoverSplitTopLevelBitmaskTermsWithOffsets,
         evaluatePawnNumericExpr,
         FORBIDDEN

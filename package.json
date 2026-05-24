@@ -2,7 +2,7 @@
   "name": "amxx-pawn-all-in",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.9.3",
+  "version": "1.10.0",
   "publisher": "Faktor",
   "icon": "resources/icon.png",
   "repository": {
@@ -331,6 +331,14 @@
             "%config.completionCallArgumentMode.enum.required-before-default%",
             "%config.completionCallArgumentMode.enum.all%"
           ]
+        },
+        "amxxPawnAllIn.completionAutoHideDelayMs": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 10000,
+          "order": 89.97,
+          "markdownDescription": "%config.completionAutoHideDelayMs.markdownDescription%"
         },
         "amxxPawnAllIn.hoverMode": {
           "type": "string",

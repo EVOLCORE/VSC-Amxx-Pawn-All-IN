@@ -2,38 +2,61 @@ const { parsePragmaDirectiveLine } = require('../syntax/pragma-directives');
 
 const mayHaveDocsCacheByLines = new WeakMap();
 
-function mayHaveDocsForLine(rawLines, lineNumber) {
-    if (!Array.isArray(rawLines) || lineNumber < 0 || lineNumber >= rawLines.length) return false;
-    let cachedFlags = mayHaveDocsCacheByLines.get(rawLines);
-    if (!cachedFlags || cachedFlags.length !== rawLines.length) {
-        cachedFlags = new Uint8Array(rawLines.length);
-        mayHaveDocsCacheByLines.set(rawLines, cachedFlags);
-    }
-    const cached = cachedFlags[lineNumber];
-    if (cached) return cached === 2;
+function createMayHaveDocsState(rawLines) {
+    return {
+        flags: new Uint8Array(rawLines.length),
+        computedThrough: -1,
+        previousAttachableDoc: false,
+        blankGap: 0
+    };
+}
 
-    const ownLine = String(rawLines[lineNumber] || '');
-    if (ownLine.includes('//') || ownLine.includes('/*') || ownLine.includes('*/')) {
-        cachedFlags[lineNumber] = 2;
-        return true;
-    }
+function scanMayHaveDocsFlags(rawLines, state, targetLine) {
+    for (let lineNumber = state.computedThrough + 1; lineNumber <= targetLine; lineNumber++) {
+        const line = String(rawLines[lineNumber] || '');
+        const ownLineHasComment = line.includes('//') || line.includes('/*') || line.includes('*/');
+        state.flags[lineNumber] = (ownLineHasComment || state.previousAttachableDoc) ? 2 : 1;
 
-    let blankGap = 0;
-    for (let probeLine = lineNumber - 1; probeLine >= 0; probeLine--) {
-        const trimmed = String(rawLines[probeLine] || '').trim();
+        const trimmed = line.trim();
         if (!trimmed) {
-            blankGap++;
-            if (blankGap > 1) break;
+            if (state.previousAttachableDoc) {
+                state.blankGap++;
+                if (state.blankGap > 1) {
+                    state.previousAttachableDoc = false;
+                }
+            }
+            state.computedThrough = lineNumber;
             continue;
         }
+
         if (trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*')) {
-            cachedFlags[lineNumber] = 2;
-            return true;
+            state.previousAttachableDoc = true;
+            state.blankGap = 0;
+        } else {
+            state.previousAttachableDoc = false;
+            state.blankGap = 0;
         }
-        break;
+        state.computedThrough = lineNumber;
     }
-    cachedFlags[lineNumber] = 1;
-    return false;
+}
+
+function buildMayHaveDocsFlags(rawLines) {
+    const state = createMayHaveDocsState(rawLines);
+    scanMayHaveDocsFlags(rawLines, state, rawLines.length - 1);
+    return state.flags;
+}
+
+function mayHaveDocsForLine(rawLines, lineNumber) {
+    if (!Array.isArray(rawLines) || lineNumber < 0 || lineNumber >= rawLines.length) return false;
+    let cachedState = mayHaveDocsCacheByLines.get(rawLines);
+    if (!cachedState || cachedState.flags?.length !== rawLines.length) {
+        cachedState = createMayHaveDocsState(rawLines);
+        mayHaveDocsCacheByLines.set(rawLines, cachedState);
+    }
+    if (cachedState.computedThrough < lineNumber) {
+        scanMayHaveDocsFlags(rawLines, cachedState, lineNumber);
+    }
+    return cachedState.flags[lineNumber] === 2;
 }
 
 function attachLazyDocs(target, propName, resolveDocs, mayHaveDocs = true) {
@@ -65,6 +88,7 @@ function attachLazyDocs(target, propName, resolveDocs, mayHaveDocs = true) {
 function parseDeprecatedPragmaMessage(lineText) {
     const source = String(lineText || '');
     if (source.indexOf('#') < 0) return null;
+    if (!/deprecated/i.test(source)) return null;
     const pragma = parsePragmaDirectiveLine(source);
     if (pragma?.name !== 'deprecated') return null;
     return String(pragma.value || '').trim();
@@ -80,6 +104,7 @@ function applyDeprecatedPragmaToNextDecl(decls, message) {
 }
 
 module.exports = {
+    buildMayHaveDocsFlags,
     mayHaveDocsForLine,
     attachLazyDocs,
     parseDeprecatedPragmaMessage,

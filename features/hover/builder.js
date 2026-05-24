@@ -432,7 +432,7 @@ function createHoverBuilderFeature(deps) {
                 : null;
         const declarationNameCtx = findHeaderFunctionByNameAtPosition(document, position, functions, resolver);
         const bitmaskCtx = findBitmaskExpressionContext(document, position, allDecls);
-        const bitmaskPartCtx = findHoveredBitmaskPart(document, position, allDecls);
+        const bitmaskPartCtx = findHoveredBitmaskPart(document, position, allDecls, resolver);
         const enumInitializerCtx = findEnumInitializerMemberContext(
             document,
             position,

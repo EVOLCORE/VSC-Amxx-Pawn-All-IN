@@ -125,6 +125,55 @@ function createHoverContentFeature(deps) {
         }
     }
 
+    function getHoverDescriptionText(data) {
+        return String(data?.docs || data?.enumDocs || '').trim();
+    }
+
+    function getHoverDescriptionSourceLabel(data, currentFilePath = '') {
+        const file = String(data?.file || '').trim();
+        if (file) return file;
+        const filePath = String(data?.filePath || '').trim();
+        if (!filePath || isSameFilePath(filePath, currentFilePath)) return '';
+        return filePath.replace(/\\/g, '/').split('/').pop() || '';
+    }
+
+    function escapeInlineCodeText(text = '') {
+        return String(text || '').replace(/`/g, '\\`');
+    }
+
+    function appendTrailingDescriptionSections(md, descriptions = []) {
+        if (!Array.isArray(descriptions) || !descriptions.length) return;
+
+        const groups = [];
+        const groupByText = new Map();
+        for (const description of descriptions) {
+            const text = String(description?.text || '').trim();
+            if (!text) continue;
+            let group = groupByText.get(text);
+            if (!group) {
+                group = { text, sources: [] };
+                groupByText.set(text, group);
+                groups.push(group);
+            }
+            const source = String(description?.source || '').trim();
+            if (source && !group.sources.includes(source)) {
+                group.sources.push(source);
+            }
+        }
+        if (!groups.length) return;
+
+        md.appendMarkdown('\n\n---\n\n');
+        const showSources = groups.length > 1;
+        for (let index = 0; index < groups.length; index++) {
+            if (index > 0) md.appendMarkdown('\n\n');
+            const group = groups[index];
+            const sources = showSources && group.sources.length
+                ? ` ${group.sources.map(source => `\`${escapeInlineCodeText(source)}\``).join(', ')}`
+                : '';
+            md.appendMarkdown(`### ${t('hover.description')}${sources}\n${group.text}`);
+        }
+    }
+
     function appendBitsHoverSection(md, bitmaskCtx, funcArgs, locals, globals, functions, incDecls, currentFilePath = '', lookup = null) {
         if (!bitmaskCtx) return;
 
@@ -391,9 +440,12 @@ function createHoverContentFeature(deps) {
                 }
             }
 
-            const docsText = data.docs || data.enumDocs || '';
+            const docsText = getHoverDescriptionText(data);
             if (!suppressTrailingDescriptions && docsText) {
-                trailingDescriptions.push(`### ${t('hover.description')}\n${docsText}`);
+                trailingDescriptions.push({
+                    text: docsText,
+                    source: getHoverDescriptionSourceLabel(data, currentFilePath)
+                });
             }
 
             if (!isSignatureOnlyMode && data.aliasDefineDecl) {
@@ -434,10 +486,7 @@ function createHoverContentFeature(deps) {
             md.appendMarkdown(argHoverInfo);
         }
 
-        if (trailingDescriptions.length) {
-            md.appendMarkdown('\n\n---\n\n');
-            md.appendMarkdown(trailingDescriptions.join('\n\n'));
-        }
+        appendTrailingDescriptionSections(md, trailingDescriptions);
 
         if (trailingAliases.length) {
             md.appendMarkdown('\n\n---\n\n');

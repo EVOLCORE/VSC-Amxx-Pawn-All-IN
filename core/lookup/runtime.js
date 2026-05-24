@@ -209,6 +209,8 @@ function createDeclLookupCore(deps) {
         let functionNameBuckets = null;
         let includeNameBuckets = null;
         let builtinNameBuckets = null;
+        const anyLocalDeclByNameCache = new Map();
+        const anyDeclByNameCache = new Map();
         const getArgSet = () => (argSet ||= new Set(funcArgs));
         const getLocalSet = () => (localSet ||= new Set(locals));
         const getGlobalSet = () => (globalSet ||= new Set(globals));
@@ -283,23 +285,43 @@ function createDeclLookupCore(deps) {
             return match;
         };
 
+        const findAnyLocalDeclByName = (name, predicate = null) => {
+            if (!name) return null;
+            if (!predicate && anyLocalDeclByNameCache.has(name)) {
+                return anyLocalDeclByNameCache.get(name);
+            }
+            const decl = findDeclInNameBuckets(getFuncArgNameBuckets(), name, predicate) ||
+                findDeclInNameBuckets(getLocalNameBuckets(), name, predicate) ||
+                findDeclInNameBuckets(getGlobalNameBuckets(), name, predicate) ||
+                (predicate ? findDeclInNameBuckets(getFunctionNameBuckets(), name, predicate) : null) ||
+                findDeclInNameBuckets(getIncludeNameBuckets(), name, predicate);
+            if (!predicate) anyLocalDeclByNameCache.set(name, decl || null);
+            return decl || null;
+        };
+
+        const findAnyDeclByName = (name, predicate = null) => {
+            if (!name) return null;
+            if (!predicate && anyDeclByNameCache.has(name)) {
+                return anyDeclByNameCache.get(name);
+            }
+            const decl = findAnyLocalDeclByName(name, predicate) ||
+                findDeclInNameBuckets(getBuiltinNameBuckets(), name, predicate);
+            if (!predicate) anyDeclByNameCache.set(name, decl || null);
+            return decl || null;
+        };
+
         const lookup = {
             findFuncArg: name => findDeclInNameBuckets(getFuncArgNameBuckets(), name),
             findLocal: name => findDeclInNameBuckets(getLocalNameBuckets(), name),
             findGlobal: name => findDeclInNameBuckets(getGlobalNameBuckets(), name),
             findFunction: name => findDeclInNameBuckets(getFunctionNameBuckets(), name),
-            findAnyLocalDeclByName(name, predicate = null) {
-                return findDeclInNameBuckets(getFuncArgNameBuckets(), name, predicate) ||
-                    findDeclInNameBuckets(getLocalNameBuckets(), name, predicate) ||
-                    findDeclInNameBuckets(getGlobalNameBuckets(), name, predicate) ||
-                    (predicate ? findDeclInNameBuckets(getFunctionNameBuckets(), name, predicate) : null) ||
-                    findDeclInNameBuckets(getIncludeNameBuckets(), name, predicate);
-            },
-            findAnyDeclByName(name, predicate = null) {
-                const localDecl = this.findAnyLocalDeclByName(name, predicate);
-                if (localDecl) return localDecl;
-                return findDeclInNameBuckets(getBuiltinNameBuckets(), name, predicate);
-            },
+            findAnyLocalDeclByName,
+            findAnyDeclByName,
+            findDocumentVariable: name =>
+                getFuncArgVariables().get(name) ||
+                getLocalVariables().get(name) ||
+                getGlobalVariables().get(name) ||
+                null,
             findVariable: name =>
                 getFuncArgVariables().get(name) ||
                 getLocalVariables().get(name) ||

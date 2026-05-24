@@ -3,6 +3,7 @@ const { buildLiveValidationFeature } = require('./feature-wiring/live-validation
 const { buildHoverFeatures } = require('./feature-wiring/hover');
 const { buildCompletionNavigationFeatures } = require('./feature-wiring/completion-navigation');
 const { buildEditorLifecycleFeature } = require('./feature-wiring/editor-lifecycle');
+const { createDocumentHighlightFeature } = require('../features/document-highlights');
 
 function buildFeatureActivationRuntime(deps) {
     const support = buildFeatureSupport(deps);
@@ -17,8 +18,14 @@ function buildFeatureActivationRuntime(deps) {
         navigationFeature,
         renameFeature,
         semanticTokensFeature,
-        formatStringFeature
+        formatStringFeature,
+        symbolHighlightFeature
     } = buildCompletionNavigationFeatures(deps, support);
+    const documentHighlightFeature = createDocumentHighlightFeature({
+        vscode: deps.vscode,
+        formatStringFeature,
+        symbolHighlightFeature
+    });
     const editorLifecycleFeature = buildEditorLifecycleFeature(deps, support, liveValidationRuntime);
 
     return {
@@ -30,7 +37,9 @@ function buildFeatureActivationRuntime(deps) {
         navigationFeature,
         renameFeature,
         semanticTokensFeature,
-        formatStringFeature
+        formatStringFeature,
+        symbolHighlightFeature,
+        documentHighlightFeature
     };
 }
 

@@ -9,7 +9,10 @@ const {
     readPreprocessorIdentifierToken
 } = require('./preprocessor-directive-context');
 const { createRationalPolicySyntaxCore } = require('./rational-policy');
-const { parsePawnIncludeDirectiveTarget } = require('./includes');
+const {
+    parsePawnIncludeDirectivePayloadTarget,
+    parsePawnIncludeDirectiveTarget
+} = require('./includes');
 const {
     isPawnIdentifierContinueCode,
     isPawnIdentifierStartCode
@@ -36,7 +39,6 @@ function createPreprocessorSyntaxCore(deps) {
         getSearchPaths,
         getNestedSearchPaths = null,
         resolveInclude,
-        getIncludeNameFromLine,
         maskPreprocessorLine,
         stripLineComment,
         splitTopLevel,
@@ -113,6 +115,7 @@ function createPreprocessorSyntaxCore(deps) {
 
         const keywordRaw = directiveNameContext.directiveNameRaw || '';
         const keyword = directiveNameContext.directiveName || '';
+        const payload = directiveLine.slice(payloadStart, payloadEnd);
         return {
             sourceLine,
             directiveLine,
@@ -123,9 +126,9 @@ function createPreprocessorSyntaxCore(deps) {
             keywordEnd,
             payloadStart,
             payloadEnd,
-            payload: directiveLine.slice(payloadStart, payloadEnd),
+            payload,
             trimmed: directiveLine.slice(hashIndex, payloadEnd),
-            rest: directiveLine.slice(payloadStart, payloadEnd)
+            rest: payload
         };
     }
 
@@ -782,7 +785,9 @@ function createPreprocessorSyntaxCore(deps) {
             if (!defineDeclLookup) {
                 defineDeclLookup = buildDefineDeclLookup(true);
             } else if (!defineDeclLookup.indexMap) {
-                defineDeclLookup.indexMap = buildDefineDeclIndexMap();
+                defineDeclLookup = defineDeclLookup.sharedCache
+                    ? buildDefineDeclLookup(true)
+                    : { ...defineDeclLookup, indexMap: buildDefineDeclIndexMap() };
             }
             return defineDeclLookup.indexMap;
         };
@@ -845,25 +850,47 @@ function createPreprocessorSyntaxCore(deps) {
                 else emitRawLine(maskedLine, strippedLines[lineNumber] || maskedLine);
             }
         };
+        const appendRawRange = (startLine, endLineExclusive) => {
+            const start = Math.max(0, startLine);
+            const end = Math.min(rawLines.length, Math.max(start, endLineExclusive));
+            if (end <= start) return;
+            if (!outLines) {
+                emittedLineCount += end - start;
+                return;
+            }
+            for (let lineNumber = start; lineNumber < end; lineNumber++) {
+                const rawLine = rawLines[lineNumber];
+                outLines.push(rawLine);
+                outStrippedLines.push(strippedLines[lineNumber] || rawLine);
+            }
+            emittedLineCount += end - start;
+        };
         const appendMaskedLine = (rawLine, strippedLine = rawLine) => {
             const maskedLine = maskPreprocessorLine(rawLine);
             if (maskedLine !== rawLine) emitChangedLine(maskedLine, maskedLine);
             else emitRawLine(maskedLine, strippedLine);
         };
+        const appendMaskedRange = (startLine, endLineExclusive) => {
+            const start = Math.max(0, startLine);
+            const end = Math.min(rawLines.length, Math.max(start, endLineExclusive));
+            if (end <= start) return;
+            ensureOutLines();
+            for (let lineNumber = start; lineNumber < end; lineNumber++) {
+                const rawLine = rawLines[lineNumber];
+                const maskedLine = maskPreprocessorLine(rawLine);
+                outLines.push(maskedLine);
+                outStrippedLines.push(maskedLine);
+                if (maskedLine !== rawLine) contentChanged = true;
+            }
+            emittedLineCount += end - start;
+        };
         const appendContentRange = (startLine, endLineExclusive) => {
             const start = Math.max(0, startLine);
-            if (isActive() && !outLines) {
-                emittedLineCount += Math.max(0, endLineExclusive - start);
+            if (isActive()) {
+                appendRawRange(start, endLineExclusive);
                 return;
             }
-            for (let lineNumber = start; lineNumber < endLineExclusive; lineNumber++) {
-                appendContentLine(lineNumber);
-            }
-        };
-        const appendMaskedRange = (startLine, endLineExclusive) => {
-            for (let lineNumber = Math.max(0, startLine); lineNumber < endLineExclusive; lineNumber++) {
-                appendMaskedLine(rawLines[lineNumber], strippedLines[lineNumber] || rawLines[lineNumber]);
-            }
+            appendMaskedRange(start, endLineExclusive);
         };
         const appendDirectiveRange = (lineNumber, nextDirectiveLine, emitFirstRaw = false) => {
             if (emitFirstRaw) {
@@ -1044,8 +1071,12 @@ function createPreprocessorSyntaxCore(deps) {
             }
 
             if (keyword === 'include' || keyword === 'tryinclude') {
-                const includeTarget = parsePawnIncludeDirectiveTarget(trimmed);
-                const includeName = includeTarget?.name || getIncludeNameFromLine(trimmed);
+                const includeTarget = parsePawnIncludeDirectivePayloadTarget(
+                    keyword,
+                    directive.directiveLine,
+                    directive.keywordEnd
+                );
+                const includeName = includeTarget?.name || '';
                 if (!includeName) {
                     appendDirectiveRange(lineNumber, nextDirectiveLine, true);
                     return nextDirectiveLine;
@@ -1190,18 +1221,22 @@ function createPreprocessorSyntaxCore(deps) {
         };
 
         try {
-            if (directiveCandidateLines?.length) {
-                let cursor = 0;
-                for (const candidateLine of directiveCandidateLines) {
-                    if (!Number.isInteger(candidateLine) || candidateLine < cursor || candidateLine >= rawLines.length) {
-                        continue;
+            if (Array.isArray(directiveCandidateLines)) {
+                if (!directiveCandidateLines.length) {
+                    appendContentRange(0, rawLines.length);
+                } else {
+                    let cursor = 0;
+                    for (const candidateLine of directiveCandidateLines) {
+                        if (!Number.isInteger(candidateLine) || candidateLine < cursor || candidateLine >= rawLines.length) {
+                            continue;
+                        }
+                        appendContentRange(cursor, candidateLine);
+                        cursor = processDirectiveLine(candidateLine);
+                        if (cursor >= rawLines.length) break;
                     }
-                    appendContentRange(cursor, candidateLine);
-                    cursor = processDirectiveLine(candidateLine);
-                    if (cursor >= rawLines.length) break;
-                }
-                if (cursor < rawLines.length) {
-                    appendContentRange(cursor, rawLines.length);
+                    if (cursor < rawLines.length) {
+                        appendContentRange(cursor, rawLines.length);
+                    }
                 }
             } else {
                 for (let lineNumber = 0; lineNumber < rawLines.length;) {

@@ -34,12 +34,10 @@ function createSymbolDiagnostics(deps) {
         isEnumMemberDeclarationLine,
         isEscapedQuote,
         isFunctionHeaderLine,
-        isFunctionLikeLookupDecl,
         isHexLiteralIdentifierTail,
         isIdentifierContinueChar,
         isIdentifierStartChar,
         isIncludeDocument,
-        isObjectAliasDefineLookupDecl,
         isStrictIncludeValidationEnabled,
         looksLikePawnExpressionFragment,
         nonAsciiCharRe,
@@ -79,43 +77,7 @@ function createSymbolDiagnostics(deps) {
         if (isFunctionHeaderLine(ctx, lineNumber)) return diagnostics;
         if (isEnumMemberDeclarationLine(ctx, lineNumber)) return diagnostics;
 
-        const getLookupScopedCaches = () => {
-            if (!lookupState || !ctx?.lookup) return null;
-            const scopeKey = ctx.parsedDecls || ctx.lookup;
-            let scoped = lookupState.byLookup?.get(scopeKey);
-            if (!scoped) {
-                scoped = {
-                    anyDeclByNameCache: new Map(),
-                    functionLikeDeclByNameCache: new Map(),
-                    objectAliasDefineByNameCache: new Map()
-                };
-                if (!lookupState.byLookup) lookupState.byLookup = new WeakMap();
-                lookupState.byLookup.set(scopeKey, scoped);
-            }
-            return scoped;
-        };
-        const lookupScopedCaches = getLookupScopedCaches();
-        const anyDeclByNameCache = lookupScopedCaches?.anyDeclByNameCache || new Map();
-        const functionLikeDeclByNameCache = lookupScopedCaches?.functionLikeDeclByNameCache || new Map();
-        const objectAliasDefineByNameCache = lookupScopedCaches?.objectAliasDefineByNameCache || new Map();
-        const findAnyDeclByName = name => {
-            if (anyDeclByNameCache.has(name)) return anyDeclByNameCache.get(name);
-            const decl = ctx.lookup.findAnyDeclByName(name) || null;
-            anyDeclByNameCache.set(name, decl);
-            return decl;
-        };
-        const findFunctionLikeDeclByName = name => {
-            if (functionLikeDeclByNameCache.has(name)) return functionLikeDeclByNameCache.get(name);
-            const decl = ctx.lookup.findAnyDeclByName(name, isFunctionLikeLookupDecl) || null;
-            functionLikeDeclByNameCache.set(name, decl);
-            return decl;
-        };
-        const findObjectAliasDefineByName = name => {
-            if (objectAliasDefineByNameCache.has(name)) return objectAliasDefineByNameCache.get(name);
-            const decl = ctx.lookup.findAnyDeclByName(name, isObjectAliasDefineLookupDecl) || null;
-            objectAliasDefineByNameCache.set(name, decl);
-            return decl;
-        };
+        const findAnyDeclByName = name => ctx.lookup.findAnyDeclByName(name) || null;
         const seen = new Set();
         const escapeChar = ctx.resolver.ctrlCharAtLine(lineNumber);
         const canTrustStrippedScan = strippedScanText.length === rawLineText.length;
@@ -267,16 +229,6 @@ function createSymbolDiagnostics(deps) {
             if (mayContainGotoKeyword && findPreviousWordBefore(start) === 'goto') continue;
 
             if (nextChar === '(') {
-                const isKnownFunction = !!findFunctionLikeDeclByName(name);
-                const aliasDefine = isKnownFunction
-                    ? null
-                    : findObjectAliasDefineByName(name);
-                const aliasTargetName = getPawnIdentifierName(aliasDefine?.value);
-                const isKnownFunctionAlias = !!(
-                    aliasTargetName &&
-                    findFunctionLikeDeclByName(aliasTargetName)
-                );
-                if (isKnownFunction || isKnownFunctionAlias) continue;
                 if (findAnyDeclByName(name)) continue;
                 if (includeDocument) continue;
                 // Function-call unknowns are emitted by collectCallLiveDiagnostics().

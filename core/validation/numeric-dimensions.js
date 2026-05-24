@@ -3,6 +3,7 @@ const {
     containsPawnIdentifierStartChar
 } = require('../syntax/identifiers');
 const { createDimensionSyntaxCore } = require('../syntax/dimensions');
+const { hasDeclModifier } = require('../declarations/modifiers');
 
 const SIZEOF_IDENTIFIER_RE = new RegExp(`\\bsizeof\\s*\\(\\s*(${PAWN_IDENTIFIER_SOURCE})((?:\\s*\\[\\s*\\])*)\\s*\\)`, 'g');
 const PAWN_IDENTIFIER_WORD_RE = new RegExp(`\\b(${PAWN_IDENTIFIER_SOURCE})\\b`, 'g');
@@ -219,8 +220,7 @@ function createNumericDimensionValidationCore(deps) {
                     decl.type === 'variable' &&
                     !decl.isArg &&
                     !decl.dims &&
-                    Array.isArray(decl.modifiers) &&
-                    decl.modifiers.includes('const')
+                    hasDeclModifier(decl, 'const')
                 ) {
                     const constValue = String(decl.value || '').trim();
                     if (!constValue || seen.has(name)) return 'NaN';

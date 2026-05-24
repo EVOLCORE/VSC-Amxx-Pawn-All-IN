@@ -3,6 +3,7 @@ const {
     findTopLevelSimpleAssignmentOperator: findTopLevelSimpleAssignmentOperatorCore
 } = require('./top-level');
 const { PRAGMA_DIRECTIVE_NAMES } = require('./preprocessor-directive-names');
+const { hasDeclModifier } = require('../declarations/modifiers');
 
 function createWarningPolicySyntaxCore() {
     const COMPILER_SYMBOL_MAX_LENGTH = 63;
@@ -89,8 +90,7 @@ function createWarningPolicySyntaxCore() {
     function isScalarConstantDecl(decl) {
         return !!(
             decl?.type === 'variable' &&
-            Array.isArray(decl.modifiers) &&
-            decl.modifiers.includes('const') &&
+            hasDeclModifier(decl, 'const') &&
             !String(decl.dims || '').trim()
         );
     }

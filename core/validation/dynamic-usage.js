@@ -1,4 +1,5 @@
 const { parsePragmaDirectiveLine } = require('../syntax/pragma-directives');
+const { hasDeclModifier } = require('../declarations/modifiers');
 
 function createDynamicUsageDiagnostics(deps = {}) {
     const {
@@ -40,7 +41,7 @@ function createDynamicUsageDiagnostics(deps = {}) {
     function getDeclCellSize(decl, rootCtx, analysisCache = null) {
         if (!decl || decl.type !== 'variable') return null;
         if (decl.isArg) return null;
-        if ((decl.modifiers || []).includes('static')) return null;
+        if (hasDeclModifier(decl, 'static')) return null;
         const dimParts = getEffectiveDeclDimParts(decl);
         if (!dimParts.length) return 1;
 

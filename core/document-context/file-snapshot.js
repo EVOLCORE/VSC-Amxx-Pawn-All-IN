@@ -58,11 +58,18 @@ function createFileSnapshotCore(deps) {
                 configurable: true,
                 get() {
                     if (!ctrlCharState) {
+                        const hasCommentSyntax = sourceText.includes('//') || sourceText.includes('/*');
+                        const hasDirectiveSyntax = sourceText.includes('#');
+                        if ((hasCommentSyntax || hasDirectiveSyntax) && !lineIndex) {
+                            lineIndex = buildLineIndex(rawLines);
+                        }
                         ctrlCharState = getCtrlCharStateForContent(
                             sourceText,
                             filePath,
                             new Set(),
-                            rawLines
+                            rawLines,
+                            [],
+                            lineIndex
                         );
                     }
                     return ctrlCharState;

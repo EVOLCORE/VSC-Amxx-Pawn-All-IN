@@ -18,6 +18,7 @@ const {
     isWhitespaceCharCode
 } = require('./line-utils');
 const { createDefineDeclarationEventCore } = require('./define-events');
+const { hasAnyDeclModifier } = require('./modifiers');
 const { createEnumSyntaxDiagnosticsCore } = require('./enum-syntax');
 const { findBalancedGroupEnd } = require('../syntax/balanced');
 const { startsWithLocalDeclarationKeyword } = require('../syntax/keywords');
@@ -87,6 +88,7 @@ function createDeclarationParsingCore(deps) {
     const {
         collectEnumMemberSyntaxIssues,
         parseEnumMemberPrefix,
+        parseEnumMemberPrefixFrom,
         splitTopLevelWithOffsets
     } = createEnumSyntaxDiagnosticsCore({
         FORBIDDEN,
@@ -522,11 +524,13 @@ function createDeclarationParsingCore(deps) {
             let memberPrefix = parseEnumMemberPrefix(sourcePiece);
             if (!memberPrefix && sourcePiece.indexOf('\n') >= 0) {
                 let lineStart = 0;
+                let lineOffset = 0;
                 while (lineStart < sourcePiece.length) {
                     const newlineIndex = sourcePiece.indexOf('\n', lineStart);
                     if (newlineIndex < 0) break;
                     lineStart = newlineIndex + 1;
-                    memberPrefix = parseEnumMemberPrefix(sourcePiece.slice(lineStart), lineStart);
+                    lineOffset++;
+                    memberPrefix = parseEnumMemberPrefixFrom(sourcePiece, lineStart, 0, lineOffset);
                     if (memberPrefix) break;
                 }
             }
@@ -570,14 +574,10 @@ function createDeclarationParsingCore(deps) {
                 }
             }
 
-            const firstPieceLineBreak = sourcePiece.indexOf('\n');
-            const nameLineOffset = firstPieceLineBreak < 0 || firstPieceLineBreak >= nameOffsetInPiece
-                ? 0
-                : countLineBreaks(sourcePiece, 0, nameOffsetInPiece);
             const lineNumber = startLine +
                 bodyStartLineOffset +
                 rawPart.startLineOffset +
-                nameLineOffset;
+                (memberPrefix.nameLineOffsetInPiece || 0);
             const memberMayHaveDocs = mayHaveDocsForLine(rawLines, lineNumber);
             const getMemberDocs = memberMayHaveDocs
                 ? (() => {
@@ -906,6 +906,16 @@ function createDeclarationParsingCore(deps) {
         return true;
     }
 
+    function areScopedLocalsVisibleThroughLine(locals, cursorLine) {
+        if (!Array.isArray(locals) || !locals.length) return true;
+        for (const local of locals) {
+            const declLine = local?.lineNumber ?? -1;
+            const scopeEndLine = local?.scopeEndLine ?? declLine;
+            if (cursorLine > scopeEndLine) return false;
+        }
+        return true;
+    }
+
     const EMPTY_ACTIVE_DEFINE_DECLS = { globals: [], functions: [] };
 
     function getActiveDefineDerivedDecls(activeDefinesMap, previousSequentialState = null) {
@@ -1005,16 +1015,16 @@ function createDeclarationParsingCore(deps) {
         if (base?.nextFunctionStartLineByFunction) return base.nextFunctionStartLineByFunction;
         const index = new Map();
         const functions = Array.isArray(base?.functions) ? base.functions : [];
-        const sortedFunctions = functions
-            .filter(Boolean)
-            .slice()
-            .sort((left, right) =>
-                (left.startLine ?? left.lineNumber ?? -1) -
-                (right.startLine ?? right.lineNumber ?? -1)
-            );
-        for (let i = 0; i < sortedFunctions.length; i++) {
-            const next = sortedFunctions[i + 1] || null;
-            index.set(sortedFunctions[i], next ? (next.startLine ?? next.lineNumber ?? -1) : -1);
+        let previous = null;
+        for (const func of functions) {
+            if (!func) continue;
+            if (previous) {
+                index.set(previous, func.startLine ?? func.lineNumber ?? -1);
+            }
+            previous = func;
+        }
+        if (previous) {
+            index.set(previous, -1);
         }
         if (base) base.nextFunctionStartLineByFunction = index;
         return index;
@@ -1724,6 +1734,31 @@ function createDeclarationParsingCore(deps) {
         return scopedGlobals;
     }
 
+    function getMergedDeclListByRef(owner, primaryDecls, extraDecls, cacheKey) {
+        if (!Array.isArray(extraDecls) || extraDecls.length === 0) return primaryDecls;
+        if (!Array.isArray(primaryDecls) || primaryDecls.length === 0) return extraDecls;
+        if (!owner || typeof owner !== 'object') return [...primaryDecls, ...extraDecls];
+        let byPrimary = owner[cacheKey];
+        if (!(byPrimary instanceof WeakMap)) {
+            byPrimary = new WeakMap();
+            Object.defineProperty(owner, cacheKey, {
+                configurable: true,
+                value: byPrimary
+            });
+        }
+        let byExtra = byPrimary.get(primaryDecls);
+        if (!(byExtra instanceof WeakMap)) {
+            byExtra = new WeakMap();
+            byPrimary.set(primaryDecls, byExtra);
+        }
+        let merged = byExtra.get(extraDecls);
+        if (!merged) {
+            merged = [...primaryDecls, ...extraDecls];
+            byExtra.set(extraDecls, merged);
+        }
+        return merged;
+    }
+
     function parseFileDecls(text, filePath, fileName, cursorLine, preprocessedState = null, options = {}) {
         const cacheKey = normalizeFsPath(filePath);
         const usePreparsedLocals = options.preparseLocals === true;
@@ -1978,19 +2013,21 @@ function createDeclarationParsingCore(deps) {
                 cursorLine,
                 (cursorLine !== undefined && usePreparsedLocals) ? getCursorFunctionIndex(fileCache.base) : null
             );
+            const previousSequentialState = fileCache.sequentialCursorState;
+            const canExtendSequentialState = !!(
+                cursorLine !== undefined &&
+                previousSequentialState &&
+                previousSequentialState.cursorLine < cursorLine &&
+                previousSequentialState.preparsedLocalsMode === usePreparsedLocals &&
+                previousSequentialState.headerFuncStartLine === (headerFunc?.startLine ?? null) &&
+                previousSequentialState.bodyFuncStartLine === (bodyFunc?.startLine ?? null)
+            );
+            let localsStartedFromPreviousSequentialState = false;
 
             if (cursorLine !== undefined && cursorLine < rawLines.length) {
-                const previousSequentialState = fileCache.sequentialCursorState;
-                const canExtendSequentialState = !!(
-                    previousSequentialState &&
-                    previousSequentialState.cursorLine < cursorLine &&
-                    previousSequentialState.preparsedLocalsMode === usePreparsedLocals &&
-                    previousSequentialState.headerFuncStartLine === (headerFunc?.startLine ?? null) &&
-                    previousSequentialState.bodyFuncStartLine === (bodyFunc?.startLine ?? null)
-                );
-
                 if (canExtendSequentialState) {
                     locals = [...previousSequentialState.localsSoFar];
+                    localsStartedFromPreviousSequentialState = true;
                     funcArgs = previousSequentialState.funcArgs;
                     activeDefineEventIndex = previousSequentialState.activeDefineEventIndex ?? 0;
                     const nextDefineEvent = defineDirectiveEvents[activeDefineEventIndex] || null;
@@ -2095,12 +2132,10 @@ function createDeclarationParsingCore(deps) {
             if (cursorLine === undefined && usePreparsedLocals) {
                 for (const func of functions) {
                     const funcType = String(func?.type || '');
-                    const funcModifiers = new Set(func?.modifiers || []);
                     if (
                         funcType === 'native' ||
                         funcType === 'forward' ||
-                        funcModifiers.has('native') ||
-                        funcModifiers.has('forward')
+                        hasAnyDeclModifier(func, ['native', 'forward'])
                     ) {
                         continue;
                     }
@@ -2117,13 +2152,26 @@ function createDeclarationParsingCore(deps) {
                 }
             }
 
-            const scopedLocals = cursorLine === undefined
-                ? locals
-                : locals.filter(local => {
-                const declLine = local.lineNumber;
-                const scopeEndLine = local.scopeEndLine ?? declLine;
-                return cursorLine >= declLine && cursorLine <= scopeEndLine;
-            });
+            let scopedLocals = locals;
+            if (cursorLine !== undefined) {
+                const previousVisibleLocals = localsStartedFromPreviousSequentialState
+                    ? previousSequentialState?.result?.locals
+                    : null;
+                const previousLocalsSoFarLength = previousSequentialState?.localsSoFar?.length ?? -1;
+                if (
+                    previousVisibleLocals &&
+                    locals.length === previousLocalsSoFarLength &&
+                    areScopedLocalsVisibleThroughLine(previousVisibleLocals, cursorLine)
+                ) {
+                    scopedLocals = previousVisibleLocals;
+                } else {
+                    scopedLocals = locals.filter(local => {
+                        const declLine = local.lineNumber;
+                        const scopeEndLine = local.scopeEndLine ?? declLine;
+                        return cursorLine >= declLine && cursorLine <= scopeEndLine;
+                    });
+                }
+            }
 
             const scopedGlobals = getScopedGlobalsForCursor(fileCache.base, cursorLine);
             const activeDefineDerivedDecls = getActiveDefineDerivedDecls(
@@ -2132,15 +2180,20 @@ function createDeclarationParsingCore(deps) {
             );
             const scopedDefineGlobals = activeDefineDerivedDecls.globals;
             const scopedDefineFunctions = activeDefineDerivedDecls.functions;
-            const resultGlobals = scopedDefineGlobals.length
-                ? [...scopedGlobals, ...scopedDefineGlobals]
-                : scopedGlobals;
-            const resultFunctions = scopedDefineFunctions.length
-                ? [...functions, ...scopedDefineFunctions]
-                : functions;
+            const resultGlobals = getMergedDeclListByRef(
+                fileCache.base,
+                scopedGlobals,
+                scopedDefineGlobals,
+                'mergedScopedGlobalsByRef'
+            );
+            const resultFunctions = getMergedDeclListByRef(
+                fileCache.base,
+                functions,
+                scopedDefineFunctions,
+                'mergedScopedFunctionsByRef'
+            );
 
             if (useCursorCache && cursorLine !== undefined) {
-                const previousSequentialState = fileCache.sequentialCursorState;
                 const previousResult = previousSequentialState?.result || null;
                 const canReusePreviousResult = !!(
                     previousResult &&

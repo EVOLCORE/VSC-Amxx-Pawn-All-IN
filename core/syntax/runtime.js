@@ -147,15 +147,38 @@ function createSyntaxCore(deps) {
                 return parts;
             }
         }
-        if (!withRanges && source.indexOf('/') < 0) {
+        if (source.indexOf('/') < 0) {
             const parts = [];
             let depth = 0;
             let inStr = false;
             let strCh = '';
             let start = 0;
             const pushSlice = end => {
-                const part = source.slice(start, end).trim();
-                if (part || keepEmpty) parts.push(part);
+                const rawPiece = source.slice(start, end);
+                const leadingTrim = rawPiece.search(/\S|$/);
+                const trimmed = rawPiece.trim();
+                if (!trimmed && !keepEmpty) {
+                    start = end + 1;
+                    return;
+                }
+                if (withRanges) {
+                    if (!trimmed) {
+                        parts.push({
+                            text: '',
+                            startOffset: baseOffset + start,
+                            endOffset: baseOffset + start
+                        });
+                        start = end + 1;
+                        return;
+                    }
+                    parts.push({
+                        text: trimmed,
+                        startOffset: baseOffset + start + leadingTrim,
+                        endOffset: baseOffset + start + leadingTrim + trimmed.length
+                    });
+                } else {
+                    parts.push(trimmed);
+                }
                 start = end + 1;
             };
             for (let index = 0; index < source.length; index++) {

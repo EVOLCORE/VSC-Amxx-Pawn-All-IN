@@ -94,37 +94,65 @@ function createEnumSyntaxDiagnosticsCore(deps) {
         return parts;
     }
 
-    function parseEnumMemberPrefix(source, baseOffset = 0) {
+    function countLineBreaksInSpan(source, start, end) {
+        let count = 0;
+        for (let index = start; index < end; index++) {
+            if (source.charCodeAt(index) === 10) count++;
+        }
+        return count;
+    }
+
+    function skipWhitespaceWithLineOffset(source, cursor, lineOffset) {
+        let nextCursor = cursor;
+        let nextLineOffset = lineOffset;
+        while (nextCursor < source.length && isWhitespaceCharCode(source.charCodeAt(nextCursor))) {
+            if (source.charCodeAt(nextCursor) === 10) nextLineOffset++;
+            nextCursor++;
+        }
+        return { cursor: nextCursor, lineOffset: nextLineOffset };
+    }
+
+    function parseEnumMemberPrefixFrom(source, startOffset = 0, baseOffset = 0, baseLineOffset = 0) {
         const piece = String(source || '');
-        let cursor = 0;
-        while (cursor < piece.length && isWhitespaceCharCode(piece.charCodeAt(cursor))) cursor++;
+        let cursor = Math.max(0, startOffset | 0);
+        let lineOffset = Math.max(0, baseLineOffset | 0);
+        ({ cursor, lineOffset } = skipWhitespaceWithLineOffset(piece, cursor, lineOffset));
         if (cursor >= piece.length) return null;
 
         let typeTag = '';
         const tagStart = cursor;
+        const tagStartLineOffset = lineOffset;
         const firstCode = piece.charCodeAt(cursor);
         if (firstCode === 123) {
             const closeBrace = piece.indexOf('}', cursor + 1);
             if (closeBrace > cursor) {
                 let colonProbe = closeBrace + 1;
-                while (colonProbe < piece.length && isWhitespaceCharCode(piece.charCodeAt(colonProbe))) colonProbe++;
+                let colonLineOffset = tagStartLineOffset + countLineBreaksInSpan(piece, tagStart, colonProbe);
+                const colonWhitespace = skipWhitespaceWithLineOffset(piece, colonProbe, colonLineOffset);
+                colonProbe = colonWhitespace.cursor;
+                colonLineOffset = colonWhitespace.lineOffset;
                 if (piece.charCodeAt(colonProbe) === 58) {
                     typeTag = piece.slice(cursor, closeBrace + 1);
                     cursor = colonProbe + 1;
+                    lineOffset = colonLineOffset;
                 }
             }
         } else if (isPawnIdentifierStartCode(firstCode)) {
             let tagEnd = cursor + 1;
             while (tagEnd < piece.length && isPawnIdentifierContinueCode(piece.charCodeAt(tagEnd))) tagEnd++;
             let colonProbe = tagEnd;
-            while (colonProbe < piece.length && isWhitespaceCharCode(piece.charCodeAt(colonProbe))) colonProbe++;
+            let colonLineOffset = tagStartLineOffset + countLineBreaksInSpan(piece, tagStart, colonProbe);
+            const colonWhitespace = skipWhitespaceWithLineOffset(piece, colonProbe, colonLineOffset);
+            colonProbe = colonWhitespace.cursor;
+            colonLineOffset = colonWhitespace.lineOffset;
             if (piece.charCodeAt(colonProbe) === 58) {
                 typeTag = piece.slice(tagStart, tagEnd);
                 cursor = colonProbe + 1;
+                lineOffset = colonLineOffset;
             }
         }
 
-        while (cursor < piece.length && isWhitespaceCharCode(piece.charCodeAt(cursor))) cursor++;
+        ({ cursor, lineOffset } = skipWhitespaceWithLineOffset(piece, cursor, lineOffset));
         if (!isPawnIdentifierStartCode(piece.charCodeAt(cursor))) return null;
         const nameStart = cursor;
         cursor++;
@@ -136,8 +164,13 @@ function createEnumSyntaxDiagnosticsCore(deps) {
             typeTag,
             name,
             nameOffsetInPiece: baseOffset + nameStart,
+            nameLineOffsetInPiece: lineOffset,
             rest: piece.slice(cursor).trimStart()
         };
+    }
+
+    function parseEnumMemberPrefix(source, baseOffset = 0) {
+        return parseEnumMemberPrefixFrom(source, 0, baseOffset, 0);
     }
 
     function isEnumMemberStartIssueBoundaryCode(code) {
@@ -273,6 +306,7 @@ function createEnumSyntaxDiagnosticsCore(deps) {
     return {
         collectEnumMemberSyntaxIssues,
         parseEnumMemberPrefix,
+        parseEnumMemberPrefixFrom,
         splitTopLevelWithOffsets
     };
 }

@@ -1,6 +1,6 @@
 const PRECOMPUTED_DECL_NAME_BUCKETS = '__pawnDeclNameBuckets';
 const PRECOMPUTED_VARIABLE_NAME_BUCKETS = '__pawnVariableNameBuckets';
-const LAZY_PRECOMPUTE_MIN_DECLS = 8;
+const LAZY_PRECOMPUTE_MIN_DECLS = 32;
 const EMPTY_VARIABLE_NAME_BUCKETS = new Map();
 
 function getPrecomputedDeclNameBuckets(decls) {

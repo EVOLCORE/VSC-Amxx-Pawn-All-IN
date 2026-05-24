@@ -408,6 +408,9 @@ function collectFormatPlaceholderSequencesInArgument(source, argPiece, options =
     const text = String(source || '');
     const startOffset = Number.isInteger(argPiece?.startOffset) ? argPiece.startOffset : 0;
     const endOffset = Number.isInteger(argPiece?.endOffset) ? argPiece.endOffset : startOffset;
+    const rawArgText = text.slice(startOffset, endOffset);
+    if (rawArgText.indexOf('%') < 0) return [];
+    if (rawArgText.indexOf('"') < 0 && rawArgText.indexOf("'") < 0) return [];
     const branchRanges = splitTopLevelTernaryValueRanges(text, startOffset, endOffset, options);
     const sequences = [];
     for (const branchRange of branchRanges) {
@@ -440,6 +443,11 @@ function collectFormatPlaceholdersInArgument(source, argPiece, options = {}) {
     return collectFormatPlaceholderSequencesInArgument(source, argPiece, options).flat();
 }
 
+function hasFormatPlaceholderSyntaxCandidate(source) {
+    const text = String(source || '');
+    return text.indexOf('%') >= 0 && (text.indexOf('"') >= 0 || text.indexOf("'") >= 0);
+}
+
 function getCallArgumentPieces(source, callCtx, options = {}) {
     const text = String(source || '');
     const openOffset = Number.isInteger(callCtx?.openOffset) ? callCtx.openOffset : -1;
@@ -469,6 +477,7 @@ function collectFormatArgumentLinksForArgumentPieces(source, args, options = {})
     const links = [];
     for (let argIndex = 0; argIndex < argPieces.length; argIndex++) {
         if (argIndex >= maxFormatArgIndexExclusive) break;
+        if (!hasFormatPlaceholderSyntaxCandidate(argPieces[argIndex]?.text)) continue;
         const placeholderSequences = collectFormatPlaceholderSequencesInArgument(text, argPieces[argIndex], options);
         if (!placeholderSequences.length) continue;
 
@@ -551,5 +560,6 @@ module.exports = {
     findStringLiteralRanges,
     FORMAT_SPECIFIER_VALUE_CONSUME_COUNTS,
     getCallArgumentPieces,
+    hasFormatPlaceholderSyntaxCandidate,
     readFormatPlaceholder
 };

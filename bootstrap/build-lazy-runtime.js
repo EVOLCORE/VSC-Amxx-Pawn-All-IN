@@ -130,7 +130,7 @@ function buildLazyActivationRuntime(deps, options = {}) {
         activeRuntime.navigationFeature.register(context);
         activeRuntime.renameFeature?.register?.(context);
         activeRuntime.semanticTokensFeature?.register?.(context);
-        activeRuntime.formatStringFeature?.register?.(context);
+        activeRuntime.documentHighlightFeature?.register?.(context);
         realRegistered = true;
         return activeRuntime;
     }
@@ -323,7 +323,7 @@ function buildLazyActivationRuntime(deps, options = {}) {
             trackProxyDisposable(vscode.languages.registerDocumentHighlightProvider('amxxpawn', {
                 provideDocumentHighlights(document, position) {
                     return ensureRegisteredRuntime()
-                        .formatStringFeature
+                        .documentHighlightFeature
                         ?.provideDocumentHighlights?.(document, position) || [];
                 }
             }));
@@ -379,6 +379,7 @@ function buildLazyActivationRuntime(deps, options = {}) {
         renameFeature: proxyRenameFeature,
         semanticTokensFeature: proxySemanticTokensFeature,
         formatStringFeature: proxyFormatStringFeature,
+        documentHighlightFeature: proxyFormatStringFeature,
         buildHoverAtPosition(document, position) {
             return ensureRegisteredRuntime().buildHoverAtPosition(document, position);
         },

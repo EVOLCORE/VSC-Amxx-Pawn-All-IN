@@ -66,6 +66,85 @@ function createHoverBitmaskFeature(deps) {
         return /[A-Za-z0-9_@ \t()|&^~<>+\-*/%xXa-fA-F]/.test(ch);
     }
 
+    function hasBitmaskOperator(expr) {
+        const text = String(expr || '');
+        for (let index = 0; index < text.length; index++) {
+            const ch = text[index];
+            const next = text[index + 1] || '';
+            const prev = text[index - 1] || '';
+            if (ch === '^') return true;
+            if ((ch === '<' || ch === '>') && next === ch) return true;
+            if (ch === '|' && prev !== '|' && next !== '|') return true;
+            if (ch === '&' && prev !== '&' && next !== '&') return true;
+        }
+        return false;
+    }
+
+    function createBitmaskExpressionCandidate(start, end, rawSlice) {
+        const raw = String(rawSlice || '');
+        const leadingTrim = raw.length - raw.trimStart().length;
+        return {
+            start,
+            end,
+            rawSlice: raw,
+            leadingTrim,
+            rawExpr: raw.trim()
+        };
+    }
+
+    function collectParenthesizedBitmaskCandidates(rawSlice, cursorInRaw, baseStart) {
+        const text = String(rawSlice || '');
+        const stack = [];
+        const candidates = [];
+        const pushCandidate = (openIndex, closeIndex) => {
+            if (!Number.isInteger(openIndex) || openIndex < 0) return;
+            const boundedClose = Number.isInteger(closeIndex) && closeIndex >= openIndex
+                ? closeIndex
+                : text.length;
+            const contentStart = openIndex + 1;
+            const contentEnd = Math.max(contentStart, boundedClose);
+            if (cursorInRaw < contentStart || cursorInRaw > contentEnd) return;
+            const raw = text.slice(contentStart, contentEnd);
+            if (!raw.trim()) return;
+            candidates.push(createBitmaskExpressionCandidate(
+                baseStart + contentStart,
+                baseStart + contentEnd,
+                raw
+            ));
+        };
+
+        for (let index = 0; index < text.length; index++) {
+            const ch = text[index];
+            if (ch === '(') {
+                stack.push(index);
+                continue;
+            }
+            if (ch !== ')') continue;
+            const openIndex = stack.pop();
+            pushCandidate(openIndex, index);
+        }
+
+        for (let index = stack.length - 1; index >= 0; index--) {
+            pushCandidate(stack[index], text.length);
+        }
+
+        return candidates.sort((left, right) =>
+            (right.end - right.start) - (left.end - left.start)
+        );
+    }
+
+    function dedupeBitmaskExpressionCandidates(candidates) {
+        const result = [];
+        const seen = new Set();
+        for (const candidate of candidates) {
+            const key = `${candidate.start}:${candidate.end}:${candidate.rawExpr}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            result.push(candidate);
+        }
+        return result;
+    }
+
     function getBitmaskExpressionSlice(lineText, cursorColumn) {
         const text = String(lineText || '');
         const column = Math.min(Math.max(0, cursorColumn), text.length);
@@ -84,6 +163,19 @@ function createHoverBitmaskFeature(deps) {
             leadingTrim,
             rawExpr: rawSlice.trim()
         };
+    }
+
+    function getBitmaskExpressionCandidates(lineText, cursorColumn) {
+        const primary = getBitmaskExpressionSlice(lineText, cursorColumn);
+        const cursorInRaw = Math.max(0, cursorColumn - primary.start);
+        return dedupeBitmaskExpressionCandidates([
+            primary,
+            ...collectParenthesizedBitmaskCandidates(
+                primary.rawSlice,
+                cursorInRaw,
+                primary.start
+            )
+        ]);
     }
 
     function trimBitmaskContinuationLine(line, escapeChar = getActiveCtrlChar()) {
@@ -151,19 +243,28 @@ function createHoverBitmaskFeature(deps) {
 
     function findBitmaskExpressionContext(document, position, allDecls) {
         const { resolver } = getDocumentTextAndResolver(document);
-        const lineText = document.lineAt(position.line).text;
-        const { rawExpr } = getBitmaskExpressionSlice(lineText, position.character);
+        const lineText = stripLineComment(
+            document.lineAt(position.line).text,
+            resolver?.ctrlCharAtLine(position.line) || getActiveCtrlChar()
+        );
+        const cursorColumn = Math.min(position.character, lineText.length);
+        const candidates = getBitmaskExpressionCandidates(lineText, cursorColumn);
         const multilineSource = buildBitmaskExpressionSource(document, position.line, resolver);
-        const sourceExpr = multilineSource.startLine !== multilineSource.endLine && multilineSource.expr
-            ? multilineSource.expr
-            : rawExpr;
-        const expr = extractAssignmentBitmaskRhs(sourceExpr);
-        if (!expr || !/(?:\||&|\^|<<|>>)/.test(expr)) return null;
-        const value = evaluatePawnNumericExpr(expr, allDecls);
-        if (value == null) return null;
+        const sourceCandidates = multilineSource.startLine !== multilineSource.endLine && multilineSource.expr
+            ? [createBitmaskExpressionCandidate(0, multilineSource.expr.length, multilineSource.expr), ...candidates]
+            : candidates;
 
-        const words = [...new Set((expr.match(/\b[A-Za-z_@]\w*\b/g) || []).filter(name => !FORBIDDEN.has(name)))];
-        return { expr, value, words };
+        for (const candidate of sourceCandidates) {
+            const expr = extractAssignmentBitmaskRhs(candidate.rawExpr);
+            if (!expr || !hasBitmaskOperator(expr)) continue;
+            const value = evaluatePawnNumericExpr(expr, allDecls);
+            if (value == null) continue;
+
+            const words = [...new Set((expr.match(/\b[A-Za-z_@]\w*\b/g) || []).filter(name => !FORBIDDEN.has(name)))];
+            return { expr, value, words };
+        }
+
+        return null;
     }
 
     function buildBitmaskParts(exprWords, funcArgs, locals, globals, functions, incDecls, lookup = null) {
@@ -269,8 +370,10 @@ function createHoverBitmaskFeature(deps) {
     return {
         formatBitmaskValueHex,
         formatBitmaskSetBits,
+        hasBitmaskOperator,
         extractAssignmentBitmaskRhsInfo,
         getBitmaskExpressionSlice,
+        getBitmaskExpressionCandidates,
         findBitmaskExpressionContext,
         buildBitmaskParts,
         splitTopLevelBitmaskTermsWithOffsets,

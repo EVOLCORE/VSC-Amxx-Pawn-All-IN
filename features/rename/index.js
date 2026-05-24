@@ -9,9 +9,10 @@ function createRenameFeature(deps) {
         findVariableDeclarationSpanInRange,
         isLinePositionInsideCommentOrString,
         isEscapedQuote,
-        isSameFilePath
+        isSameFilePath,
+        symbolReferenceCore: providedSymbolReferenceCore = null
     } = deps;
-    const symbolReferenceCore = createSymbolReferenceCore({
+    const symbolReferenceCore = providedSymbolReferenceCore || createSymbolReferenceCore({
         vscode,
         getPawnDocumentContext,
         getLookupTokenAtPosition,

@@ -394,26 +394,28 @@ function createDeclarationDiagnostics(deps) {
         }
 
         const invalidTailDecls = new WeakSet();
-        for (const issue of collectVariableDeclarationSyntaxIssuesForLine(lineText, currentVariableDecls, {
-            lineNumber,
-            rawLines: ctx.rawLines,
-            strippedLines: ctx.strippedLines,
-            escapeChar
-        }) || []) {
-            if (issue?.decl) invalidTailDecls.add(issue.decl);
-            const startIndex = Number.isInteger(issue?.startIndex) ? issue.startIndex : 0;
-            const length = Math.max(1, Number.isInteger(issue?.length) ? issue.length : 1);
-            diagnostics.push(
-                createLiveValidationDiagnostic(
-                    createOffsetRange(
-                        document,
-                        lineStartOffset + startIndex,
-                        lineStartOffset + startIndex + length,
-                        docLength
-                    ),
-                    t(issue?.messageKey || 'validation.unexpectedToken', issue?.params || {})
-                )
-            );
+        if (currentVariableDecls.length) {
+            for (const issue of collectVariableDeclarationSyntaxIssuesForLine(lineText, currentVariableDecls, {
+                lineNumber,
+                rawLines: ctx.rawLines,
+                strippedLines: ctx.strippedLines,
+                escapeChar
+            }) || []) {
+                if (issue?.decl) invalidTailDecls.add(issue.decl);
+                const startIndex = Number.isInteger(issue?.startIndex) ? issue.startIndex : 0;
+                const length = Math.max(1, Number.isInteger(issue?.length) ? issue.length : 1);
+                diagnostics.push(
+                    createLiveValidationDiagnostic(
+                        createOffsetRange(
+                            document,
+                            lineStartOffset + startIndex,
+                            lineStartOffset + startIndex + length,
+                            docLength
+                        ),
+                        t(issue?.messageKey || 'validation.unexpectedToken', issue?.params || {})
+                    )
+                );
+            }
         }
 
         const assignmentSourceLine = String(strippedLineText || '').replace(/^\s*return\b\s*/, '');

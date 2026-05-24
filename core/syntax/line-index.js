@@ -325,6 +325,7 @@ function createLineIndexCore() {
             preprocessorAndLabelCandidateLineFlags,
             structuralDiagnosticCandidateLineFlags,
             backslashContinuationLines,
+            braceOnlyLineFlags,
             topLevelContextChangeLines,
             bodyContextChangeLines,
             hasFlag(lineNo, flag) {

@@ -61,6 +61,7 @@ function createCompletionFeature(deps) {
         isCompletionEnabled = () => true,
         getForwardCompletionBodyStyle = () => 'same-line',
         getCompletionCallArgumentMode = () => 'required-before-default',
+        getCompletionAutoHideDelayMs = () => 0,
         completionOutputChannel = null
     } = deps;
 
@@ -88,6 +89,7 @@ function createCompletionFeature(deps) {
         parseParamMeta,
         isEscapedQuote
     });
+    let completionAutoHideTimer = null;
 
     function getCompletionTypeLabel(data) {
         if (data.isArg) return t('completion.type.arg');
@@ -218,6 +220,120 @@ function createCompletionFeature(deps) {
 
     function getCompletionDataFilterText(data) {
         return getCompletionIdentity(data).normalizedFilterText;
+    }
+
+    function clearCompletionAutoHideTimer() {
+        if (!completionAutoHideTimer) return;
+        clearTimeout(completionAutoHideTimer);
+        completionAutoHideTimer = null;
+    }
+
+    function executeHideCompletionWidget(reason = 'completion-final') {
+        if (typeof vscode?.commands?.executeCommand !== 'function') return;
+        try {
+            const result = vscode.commands.executeCommand('hideSuggestWidget');
+            if (result && typeof result.catch === 'function') {
+                result.catch(() => {});
+            }
+            logCompletion(() => `hide-widget reason=${reason}`);
+        } catch {
+            // Best-effort UI cleanup only; completion results must not fail because of it.
+        }
+    }
+
+    function hideCompletionWidget(reason = 'completion-final', options = {}) {
+        clearCompletionAutoHideTimer();
+        executeHideCompletionWidget(reason);
+        if (!options.defer) return;
+        completionAutoHideTimer = setTimeout(() => {
+            completionAutoHideTimer = null;
+            executeHideCompletionWidget(`${reason}-deferred`);
+        }, 0);
+    }
+
+    function normalizeCompletionAutoHideDelayMs(value) {
+        const number = Number(value);
+        if (!Number.isFinite(number) || number <= 0) return 0;
+        return Math.min(10000, Math.floor(number));
+    }
+
+    function scheduleCompletionAutoHide() {
+        clearCompletionAutoHideTimer();
+        const delayMs = normalizeCompletionAutoHideDelayMs(getCompletionAutoHideDelayMs());
+        if (delayMs <= 0 || typeof vscode?.commands?.executeCommand !== 'function') return;
+        completionAutoHideTimer = setTimeout(() => {
+            completionAutoHideTimer = null;
+            hideCompletionWidget('idle-timeout');
+        }, delayMs);
+    }
+
+    function makeCompletionList(items, isIncomplete = false) {
+        return typeof vscode.CompletionList === 'function'
+            ? new vscode.CompletionList(items, isIncomplete)
+            : items;
+    }
+
+    function getCompletionItemLabelText(item) {
+        if (!item) return '';
+        if (typeof item.label === 'string') return item.label;
+        return String(item.label?.label || '');
+    }
+
+    function getCompletionItemInsertTextText(item) {
+        const insertText = item?.insertText;
+        if (typeof insertText === 'string') return insertText;
+        if (insertText && typeof insertText.value === 'string') return insertText.value;
+        return '';
+    }
+
+    function getAlreadyTypedCompletionTexts(item) {
+        const values = [
+            getCompletionItemLabelText(item),
+            item?.filterText,
+            getCompletionItemInsertTextText(item)
+        ];
+        const data = item?._pawnData;
+        if (data && typeof data === 'object') {
+            const identity = getCompletionIdentity(data);
+            values.push(
+                identity.name,
+                identity.callInsertName,
+                identity.filterText,
+                ...(identity.filterAliases || [])
+            );
+        }
+        return values
+            .map(value => String(value || '').trim())
+            .filter(Boolean);
+    }
+
+    function isCompletionItemAlreadyTyped(item, prefix = '') {
+        const typed = String(prefix || '').trim();
+        if (!typed) return false;
+        const insertText = getCompletionItemInsertTextText(item).trim();
+        if (insertText) {
+            return insertText === typed;
+        }
+        return getAlreadyTypedCompletionTexts(item).some(value => value === typed);
+    }
+
+    function shouldHideFinalCompletionResult(items, prefix = '') {
+        if (!Array.isArray(items) || items.length <= 0) return 'empty';
+        if (items.length === 1 && isCompletionItemAlreadyTyped(items[0], prefix)) {
+            return 'single-exact';
+        }
+        return '';
+    }
+
+    function finalizeCompletionResult(items, prefix = '', options = {}) {
+        const normalizedItems = Array.isArray(items) ? items : [];
+        const hideReason = shouldHideFinalCompletionResult(normalizedItems, prefix);
+        if (hideReason) {
+            hideCompletionWidget(hideReason, { defer: true });
+            return makeCompletionList([], false);
+        }
+        scheduleCompletionAutoHide();
+        return makeCompletionList(normalizedItems, !!options.isIncomplete);
     }
 
     function makeItem(
@@ -1219,6 +1335,7 @@ function createCompletionFeature(deps) {
                 logCompletion(() => `start file=${fileName} pos=${line}:${character} version=${document?.version ?? ''}`);
                 if (!isCompletionEnabled()) {
                     logCompletion(() => `skip disabled file=${fileName} ms=${Date.now() - startedAt}`);
+                    clearCompletionAutoHideTimer();
                     return [];
                 }
                 const preprocessorCompletion = getPreprocessorDirectiveCompletion(document, position);
@@ -1230,16 +1347,14 @@ function createCompletionFeature(deps) {
                         `includePath=${includePath ? 1 : 0} ` +
                         `file=${fileName} pos=${line}:${character} ms=${Date.now() - startedAt}`
                     );
-                    return typeof vscode.CompletionList === 'function'
-                        ? new vscode.CompletionList(items, false)
-                        : items;
+                    return finalizeCompletionResult(items, prefix);
                 }
                 if (INCLUDE_COMPLETION_TRIGGER_CHARACTERS.includes(triggerCharacter)) {
                     logCompletion(() =>
                         `skip include-trigger-outside-include trigger="${triggerCharacter}" ` +
                         `file=${fileName} pos=${line}:${character} ms=${Date.now() - startedAt}`
                     );
-                    return [];
+                    return finalizeCompletionResult([], '');
                 }
                 const replaceRange = getCompletionReplaceRange(document, position);
                 const prefix = replaceRange ? document.getText(replaceRange) : '';
@@ -1251,7 +1366,7 @@ function createCompletionFeature(deps) {
                         `no-context file=${fileName} pos=${line}:${character} lang=${document?.languageId || ''} ` +
                         `contextMs=${contextMs} ms=${Date.now() - startedAt}`
                     );
-                    return [];
+                    return finalizeCompletionResult([], prefix);
                 }
                 const { fp, parsedDecls, incDecls } = ctx;
                 const { globals, functions, locals, funcArgs } = parsedDecls;
@@ -1263,7 +1378,7 @@ function createCompletionFeature(deps) {
                         `intent=${completionIntent} file=${fileName} pos=${line}:${character} ` +
                         `contextMs=${contextMs} ms=${Date.now() - startedAt}`
                     );
-                    return [];
+                    return finalizeCompletionResult([], prefix);
                 }
                 const insertionContext = completionInsertTextCore.getFunctionCompletionInsertionContext(
                     document,
@@ -1322,13 +1437,11 @@ function createCompletionFeature(deps) {
                     `functions=${functions.length} includes=${incDecls.length} ` +
                     `intent=${completionIntent} contextMs=${contextMs} ms=${Date.now() - startedAt}`
                 );
-                return typeof vscode.CompletionList === 'function'
-                    ? new vscode.CompletionList(items, !!prefix)
-                    : items;
+                return finalizeCompletionResult(items, prefix, { isIncomplete: !!prefix });
             } catch (error) {
                 logCompletion(() => `error ${error?.stack || String(error)}`);
                 console.error('AMXX Pawn completion provider failed:', error);
-                return [];
+                return finalizeCompletionResult([], '');
             }
         },
 
@@ -1388,7 +1501,8 @@ function createCompletionFeature(deps) {
                     'amxxpawn',
                     completionProvider,
                     ...COMPLETION_TRIGGER_CHARACTERS
-                )
+                ),
+                { dispose: clearCompletionAutoHideTimer }
             );
         }
     };

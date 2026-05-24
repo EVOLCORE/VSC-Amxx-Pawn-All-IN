@@ -17,6 +17,7 @@ function isIncludeFilePath(filePath = '', includeFileExtensions = []) {
 function createIncludeDocumentMatcher(getIncludeFileExtensions) {
     let extensionCacheKey = null;
     let extensionCacheValue = null;
+    let extensionCacheSignature = '';
     const documentCache = new WeakMap();
 
     const getExtensions = () => {
@@ -31,20 +32,27 @@ function createIncludeDocumentMatcher(getIncludeFileExtensions) {
         }
         extensionCacheKey = cacheKey;
         extensionCacheValue = normalizeIncludeDocumentExtensionList(rawExtensions);
+        extensionCacheSignature = extensionCacheValue.join('|');
         return extensionCacheValue;
     };
 
+    const getExtensionSignature = () => {
+        getExtensions();
+        return extensionCacheSignature;
+    };
+
     function isIncludeDocument(document) {
-        const fileName = String(document?.fileName || '').toLowerCase();
-        if (!fileName) return false;
-        const extensions = getExtensions();
-        const signature = extensions.join('|');
+        const rawFileName = String(document?.fileName || '');
+        if (!rawFileName) return false;
+        const signature = getExtensionSignature();
         const cached = documentCache.get(document);
-        if (cached?.fileName === fileName && cached.signature === signature) {
+        if (cached?.rawFileName === rawFileName && cached.signature === signature) {
             return cached.value;
         }
+        const fileName = rawFileName.toLowerCase();
+        const extensions = getExtensions();
         const value = extensions.some(ext => fileName.endsWith(ext));
-        documentCache.set(document, { fileName, signature, value });
+        documentCache.set(document, { rawFileName, signature, value });
         return value;
     }
 

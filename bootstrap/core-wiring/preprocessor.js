@@ -1,4 +1,5 @@
 const { createPreprocessorSyntaxCore } = require('../../core/syntax/preprocessor');
+const { maskPreprocessorLine } = require('../../core/syntax/preprocessor-mask');
 
 function createPreprocessorRuntime(deps) {
     const {
@@ -31,7 +32,7 @@ function createPreprocessorRuntime(deps) {
         resolveInclude,
         getIncludeNameFromLine,
         collectDeclarationText,
-        maskPreprocessorLine: line => String(line || '').replace(/[^\t ]/g, ' '),
+        maskPreprocessorLine,
         stripLineComment,
         splitTopLevel,
         preprocessPawnContentRef: () => preprocessPawnContent,

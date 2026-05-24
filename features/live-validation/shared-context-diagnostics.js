@@ -206,7 +206,8 @@ function createSharedContextDiagnostics(deps) {
             cacheByName.set(cacheKey, null);
             return null;
         }
-        const decl = ctx.lookup.findFuncArg(name) ||
+        const decl = ctx.lookup.findDocumentVariable?.(name) ||
+            ctx.lookup.findFuncArg(name) ||
             ctx.lookup.findLocal(name) ||
             ctx.lookup.findGlobal(name) ||
             null;

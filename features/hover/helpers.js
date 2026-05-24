@@ -19,8 +19,11 @@ function createHoverHelpersFeature(deps) {
         isMeaningfulCallCursorPosition,
         findIndexedAccessContextAtPosition,
         resolveDefaultAccessSymbolName,
+        getActiveCtrlChar,
+        stripLineComment,
+        hasBitmaskOperator,
         extractAssignmentBitmaskRhsInfo,
-        getBitmaskExpressionSlice,
+        getBitmaskExpressionCandidates,
         splitTopLevelBitmaskTermsWithOffsets,
         evaluatePawnNumericExpr,
         FORBIDDEN
@@ -33,27 +36,34 @@ function createHoverHelpersFeature(deps) {
         return editor.selection.isEmpty && editor.selection.active.isEqual(position);
     }
 
-    function findHoveredBitmaskPart(document, position, allDecls) {
-        const lineText = document.lineAt(position.line).text;
+    function findHoveredBitmaskPart(document, position, allDecls, ctrlCharResolver = null) {
+        const lineText = stripLineComment(
+            document.lineAt(position.line).text,
+            ctrlCharResolver?.ctrlCharAtLine(position.line) || getActiveCtrlChar()
+        );
         const cursorColumn = Math.min(position.character, lineText.length);
-        const { start, leadingTrim, rawExpr } = getBitmaskExpressionSlice(lineText, cursorColumn);
-        const rhsInfo = extractAssignmentBitmaskRhsInfo(rawExpr);
-        const expr = rhsInfo.expr;
-        if (!expr || !/(?:\||&|\^|<<|>>)/.test(expr)) return null;
+        const candidates = getBitmaskExpressionCandidates(lineText, cursorColumn);
+        for (const candidate of candidates) {
+            const rhsInfo = extractAssignmentBitmaskRhsInfo(candidate.rawExpr);
+            const expr = rhsInfo.expr;
+            if (!expr || !hasBitmaskOperator(expr)) continue;
 
-        const cursorInRawExpr = Math.max(0, cursorColumn - start - leadingTrim);
-        const cursorInExpr = Math.max(0, cursorInRawExpr - rhsInfo.rhsStart);
-        const terms = splitTopLevelBitmaskTermsWithOffsets(expr);
-        const hoveredTerm = terms.find(term => cursorInExpr >= term.start && cursorInExpr <= term.end);
-        if (!hoveredTerm?.text) return null;
+            const cursorInRawExpr = Math.max(0, cursorColumn - candidate.start - candidate.leadingTrim);
+            const cursorInExpr = Math.max(0, cursorInRawExpr - rhsInfo.rhsStart);
+            const terms = splitTopLevelBitmaskTermsWithOffsets(expr);
+            const hoveredTerm = terms.find(term => cursorInExpr >= term.start && cursorInExpr <= term.end);
+            if (!hoveredTerm?.text) continue;
 
-        const value = evaluatePawnNumericExpr(hoveredTerm.text, allDecls);
-        if (value == null) return null;
+            const value = evaluatePawnNumericExpr(hoveredTerm.text, allDecls);
+            if (value == null) continue;
 
-        return {
-            expr: hoveredTerm.text,
-            value
-        };
+            return {
+                expr: hoveredTerm.text,
+                value
+            };
+        }
+
+        return null;
     }
 
     function findHoveredIndexedAccessContext(document, position, ctrlCharResolver = null) {

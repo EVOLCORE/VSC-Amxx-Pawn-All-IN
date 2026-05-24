@@ -18,16 +18,19 @@ function createIndexedAccessDiagnostics(deps) {
         t
     } = deps;
 
+    const neverSkipIncludeContextDependentAccess = () => false;
+    const neverSkipIncludeContextDependentIndexExpr = () => false;
+
     function collectIndexedAccessLiveDiagnosticsForLine(document, lineNumber, ctx, analysisCache, lineStartOffset, docLength, declarationSourceState = null, indexedExpressions = null) {
         const diagnostics = [];
         const includeDocument = isIncludeDocument(document);
         const analysisDecls = getTypeAnalysisSourceDecls(ctx, analysisCache);
         const expressions = Array.isArray(indexedExpressions) ? indexedExpressions : [];
         if (!expressions.length) return diagnostics;
-        const shouldSkipIncludeContextDependentAccess = (() => {
+        const shouldSkipIncludeContextDependentAccess = includeDocument ? (() => {
             const cache = new Map();
             return variableDecl => {
-                if (!includeDocument || !variableDecl?.dims) return false;
+                if (!variableDecl?.dims) return false;
                 const cacheKey = `${variableDecl.name || ''}|${variableDecl.dims || ''}|${variableDecl.lineNumber ?? -1}`;
                 if (cache.has(cacheKey)) return cache.get(cacheKey);
                 const hasUnresolvedDim = parseDimsParts(variableDecl.dims || '').some(part => {
@@ -38,11 +41,10 @@ function createIndexedAccessDiagnostics(deps) {
                 cache.set(cacheKey, hasUnresolvedDim);
                 return hasUnresolvedDim;
             };
-        })();
-        const shouldSkipIncludeContextDependentIndexExpr = (() => {
+        })() : neverSkipIncludeContextDependentAccess;
+        const shouldSkipIncludeContextDependentIndexExpr = includeDocument ? (() => {
             const cache = new Map();
             return actualExpr => {
-                if (!includeDocument) return false;
                 const source = String(actualExpr || '');
                 if (source.indexOf('(') < 0) return false;
                 if (cache.has(source)) return cache.get(source);
@@ -56,7 +58,7 @@ function createIndexedAccessDiagnostics(deps) {
                 cache.set(source, shouldSkip);
                 return shouldSkip;
             };
-        })();
+        })() : neverSkipIncludeContextDependentIndexExpr;
         for (const expr of expressions) {
             const declarationVariableDecl = findDocumentVariableDeclByName(ctx, expr.baseName, lineNumber, { sameLineOnly: true });
             if (declarationVariableDecl && findVariableDeclarationSpanInRange(
