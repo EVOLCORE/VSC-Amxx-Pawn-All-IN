@@ -211,10 +211,18 @@
   "compiler.failure.toast": "AMXX compilation failed. Check the output channel and diagnostics for details.",
   "compiler.showOutput": "Show Output",
   "pawndoc.invalidDocument": "Open an AMXX Pawn include file to generate PawnDoc stubs.",
+  "pawndoc.invalidPawnDocument": "Open an AMXX Pawn document to generate PawnDoc.",
   "pawndoc.fileDocumentRequired": "PawnDoc generation needs a saved include file on disk.",
   "pawndoc.noDeclarations": "No undocumented native or forward declarations were found.",
+  "pawndoc.noTarget": "No code target was found for PawnDoc generation.",
+  "pawndoc.codeAction.generateHere": "Generate PawnDoc here",
+  "pawndoc.backupPrompt.message": "Create a backup before generating PawnDoc?",
+  "pawndoc.backupPrompt.yes": "Create Backup",
+  "pawndoc.backupPrompt.no": "No Backup",
+  "pawndoc.backupPrompt.cancel": "Cancel",
   "pawndoc.backupFailed": "Could not create PawnDoc backup: {message}",
   "pawndoc.editFailed": "Could not apply PawnDoc edits.",
   "pawndoc.generated": "PawnDoc generated for {count} declaration(s). Backup: {backupFile}",
+  "pawndoc.generatedNoBackup": "PawnDoc generated for {count} declaration(s). Backup was skipped.",
   "common.cannotOpenFile": "Cannot open: {filePath}"
 }

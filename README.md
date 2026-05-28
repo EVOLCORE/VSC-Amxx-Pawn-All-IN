@@ -54,7 +54,9 @@ Recommended AMX Mod X version: 1.9.0 or newer.
 1. Rename Symbol support for local variables, function arguments, current-file globals, current-file functions, and unresolved scoped names in the edited source.
 2. Scope-aware reference matching to avoid renaming unrelated symbols with the same name in another function/block.
 3. Include declarations are intentionally not renamed.
-4. PawnDoc stub generation for undocumented `native` and `forward` declarations in include files, with a backup created before edits.
+4. PawnDoc stub generation for undocumented `native` and `forward` declarations in include files.
+5. PawnDoc quick action generation at the current cursor/selection for declarations or a selected code block.
+6. PawnDoc generation asks each run whether to create a backup, skip backup, or cancel.
 
 ### Live Diagnostics
 
@@ -158,7 +160,7 @@ code --install-extension amxx-pawn-all-in-*.vsix
 
 Then use the `AMXX Pawn All-In: Compile Current File` command or the editor title button.
 
-For include API files, use `AMXX Pawn All-In: Generate PawnDoc Stubs` from the editor title button or command palette to add basic PawnDoc blocks above undocumented `native` and `forward` declarations.
+For include API files, use `AMXX Pawn All-In: Generate PawnDoc Stubs` from the editor title button or command palette to add basic PawnDoc blocks above undocumented `native` and `forward` declarations. For a single declaration or selected code block in any AMXX Pawn file, use `AMXX Pawn All-In: Generate PawnDoc Here` from the command palette or VS Code code actions.
 
 ## Important Settings
 

@@ -3,6 +3,7 @@
   "description": "Набор инструментов для AMXX Pawn: semantic hover, completion, live validation, includes и compile helpers.",
   "commands.compileCurrentFile.title": "AMXX Pawn All-In: Компилировать текущий файл",
   "commands.generatePawnDoc.title": "AMXX Pawn All-In: Сгенерировать PawnDoc-заготовки",
+  "commands.generatePawnDocHere.title": "AMXX Pawn All-In: Сгенерировать PawnDoc здесь",
   "configuration.title": "AMXX Pawn All-In",
   "config.fileExtensions.description": "Суффиксы исходных файлов, для которых расширение должно автоматически активировать язык AMXX Pawn. По умолчанию здесь только `.sma`. Include-суффиксы указывайте в Include File Extensions.",
   "config.includeFileExtensions.description": "Дополнительные суффиксы include-файлов, для которых нужно автоматически активировать AMXX Pawn и которые могут резолвиться через Pawn #include, когда include указан без явного расширения. Компиляторные include-суффиксы `.inc`, `.p`, `.i` и `.pawn` всегда включены и не могут быть удалены этой настройкой.",

@@ -1,9 +1,13 @@
 const fs = require('fs');
 const path = require('path');
 const { createIncludeDocumentMatcher } = require('../../core/include-documents');
-const { buildPawnDocInsertionPlan } = require('../../core/pawndoc/generator');
+const {
+    buildPawnDocInsertionPlan,
+    buildPawnDocSingleInsertionPlan
+} = require('../../core/pawndoc/generator');
 
 const PAWNDOC_COMMAND_ID = 'amxxPawnAllIn.generatePawnDoc';
+const PAWNDOC_SELECTION_COMMAND_ID = 'amxxPawnAllIn.generatePawnDocHere';
 const PAWNDOC_ACTIVE_INCLUDE_CONTEXT = 'amxxPawnAllIn.activeIncludeFile';
 
 function createPawnDocFeature(deps) {
@@ -24,6 +28,10 @@ function createPawnDocFeature(deps) {
         return !!document &&
             document.languageId === 'amxxpawn' &&
             includeDocumentMatcher.isIncludeDocument(document);
+    }
+
+    function isPawnDocDocument(document) {
+        return !!document && document.languageId === 'amxxpawn';
     }
 
     function updateActiveIncludeContext(editor = vscode.window.activeTextEditor) {
@@ -53,41 +61,46 @@ function createPawnDocFeature(deps) {
         return candidate;
     }
 
-    async function generatePawnDocForEditor(editor = vscode.window.activeTextEditor) {
-        const document = editor?.document || null;
-        if (!isPawnDocIncludeDocument(document)) {
-            vscode.window.showInformationMessage(t('pawndoc.invalidDocument'));
-            return null;
-        }
-        if (document.uri?.scheme !== 'file') {
-            vscode.window.showErrorMessage(t('pawndoc.fileDocumentRequired'));
-            return null;
-        }
+    async function askShouldCreateBackup() {
+        const yes = t('pawndoc.backupPrompt.yes');
+        const no = t('pawndoc.backupPrompt.no');
+        const cancel = t('pawndoc.backupPrompt.cancel');
+        const choice = await vscode.window.showInformationMessage(
+            t('pawndoc.backupPrompt.message'),
+            { modal: true },
+            yes,
+            no,
+            cancel
+        );
+        if (choice === yes) return true;
+        if (choice === no) return false;
+        return null;
+    }
 
-        const ctx = getPawnDocumentContext(document, undefined, {
-            includeDecls: false,
-            cursorCache: false,
-            ephemeral: true
-        });
-        const declarations = ctx?.parsedDecls?.functions || [];
-        const text = document.getText();
-        const plan = buildPawnDocInsertionPlan(text, declarations, {
-            splitTopLevel,
-            parseFuncArgs,
-            escapeChar: typeof getActiveCtrlChar === 'function' ? getActiveCtrlChar() : undefined
-        });
-
-        if (!plan.insertions.length) {
-            vscode.window.showInformationMessage(t('pawndoc.noDeclarations'));
+    async function applyPawnDocPlan(document, plan, options = {}) {
+        if (!plan?.insertions?.length) {
+            vscode.window.showInformationMessage(t(options.emptyMessageKey || 'pawndoc.noDeclarations'));
             return { changed: false, count: 0, backupPath: '' };
         }
 
-        const backupPath = createBackupFilePath(document.uri.fsPath);
-        try {
-            fs.writeFileSync(backupPath, text, 'utf8');
-        } catch (error) {
-            vscode.window.showErrorMessage(t('pawndoc.backupFailed', { message: error?.message || String(error) }));
+        const shouldCreateBackup = await askShouldCreateBackup();
+        if (shouldCreateBackup === null) {
+            return { changed: false, count: 0, backupPath: '' };
+        }
+
+        let backupPath = '';
+        if (shouldCreateBackup && document.uri?.scheme !== 'file') {
+            vscode.window.showErrorMessage(t('pawndoc.fileDocumentRequired'));
             return null;
+        }
+        if (shouldCreateBackup) {
+            backupPath = createBackupFilePath(document.uri.fsPath);
+            try {
+                fs.writeFileSync(backupPath, document.getText(), 'utf8');
+            } catch (error) {
+                vscode.window.showErrorMessage(t('pawndoc.backupFailed', { message: error?.message || String(error) }));
+                return null;
+            }
         }
 
         const edit = new vscode.WorkspaceEdit();
@@ -101,9 +114,10 @@ function createPawnDocFeature(deps) {
             return null;
         }
 
-        vscode.window.showInformationMessage(t('pawndoc.generated', {
+        const messageKey = backupPath ? 'pawndoc.generated' : 'pawndoc.generatedNoBackup';
+        vscode.window.showInformationMessage(t(messageKey, {
             count: plan.insertions.length,
-            backupFile: path.basename(backupPath)
+            backupFile: backupPath ? path.basename(backupPath) : ''
         }));
         return {
             changed: true,
@@ -112,12 +126,151 @@ function createPawnDocFeature(deps) {
         };
     }
 
-    function register(context) {
-        updateActiveIncludeContext();
+    function buildPawnDocContext(document) {
+        const ctx = getPawnDocumentContext(document, undefined, {
+            includeDecls: false,
+            cursorCache: false,
+            ephemeral: true
+        });
+        return ctx?.parsedDecls?.functions || [];
+    }
 
+    async function generatePawnDocForEditor(editor = vscode.window.activeTextEditor) {
+        const document = editor?.document || null;
+        if (!isPawnDocIncludeDocument(document)) {
+            vscode.window.showInformationMessage(t('pawndoc.invalidDocument'));
+            return null;
+        }
+        if (document.uri?.scheme !== 'file') {
+            vscode.window.showErrorMessage(t('pawndoc.fileDocumentRequired'));
+            return null;
+        }
+
+        const declarations = buildPawnDocContext(document);
+        const text = document.getText();
+        const plan = buildPawnDocInsertionPlan(text, declarations, {
+            splitTopLevel,
+            parseFuncArgs,
+            escapeChar: typeof getActiveCtrlChar === 'function' ? getActiveCtrlChar() : undefined
+        });
+        return applyPawnDocPlan(document, plan, {
+            emptyMessageKey: 'pawndoc.noDeclarations'
+        });
+    }
+
+    function serializeRange(range) {
+        return {
+            start: {
+                line: Number.isInteger(range?.start?.line) ? range.start.line : 0,
+                character: Number.isInteger(range?.start?.character) ? range.start.character : 0
+            },
+            end: {
+                line: Number.isInteger(range?.end?.line) ? range.end.line : Number.isInteger(range?.start?.line) ? range.start.line : 0,
+                character: Number.isInteger(range?.end?.character) ? range.end.character : Number.isInteger(range?.start?.character) ? range.start.character : 0
+            }
+        };
+    }
+
+    function getEditorForPawnDocTarget(target = null) {
+        const targetUri = target?.uri ? String(target.uri) : '';
+        const activeEditor = vscode.window.activeTextEditor || null;
+        if (!targetUri) return activeEditor;
+        const sameUri = editor => String(editor?.document?.uri?.toString?.() || '') === targetUri;
+        if (sameUri(activeEditor)) return activeEditor;
+        return (vscode.window.visibleTextEditors || []).find(sameUri) || null;
+    }
+
+    function getSelectionLines(editor, target = null) {
+        const rawRange = target?.range || editor?.selection || null;
+        const range = serializeRange(rawRange);
+        return {
+            startLine: Math.min(range.start.line, range.end.line),
+            endLine: Math.max(range.start.line, range.end.line)
+        };
+    }
+
+    async function generatePawnDocAtSelection(target = null) {
+        const editor = getEditorForPawnDocTarget(target);
+        const document = editor?.document || null;
+        if (!isPawnDocDocument(document)) {
+            vscode.window.showInformationMessage(t('pawndoc.invalidPawnDocument'));
+            return null;
+        }
+
+        const declarations = buildPawnDocContext(document);
+        const text = document.getText();
+        const plan = buildPawnDocSingleInsertionPlan(text, declarations, getSelectionLines(editor, target), {
+            splitTopLevel,
+            parseFuncArgs,
+            escapeChar: typeof getActiveCtrlChar === 'function' ? getActiveCtrlChar() : undefined
+        });
+        return applyPawnDocPlan(document, plan, {
+            emptyMessageKey: 'pawndoc.noTarget'
+        });
+    }
+
+    function canOfferPawnDocCodeAction(document, range) {
+        if (!isPawnDocDocument(document)) return false;
+        const startLine = Math.max(0, Number(range?.start?.line) || 0);
+        const endLine = Math.max(startLine, Math.min(document.lineCount - 1, Number(range?.end?.line) || startLine));
+        for (let lineNumber = startLine; lineNumber <= endLine; lineNumber++) {
+            if (String(document.lineAt(lineNumber)?.text || '').trim()) return true;
+        }
+        return false;
+    }
+
+    function createPawnDocCodeAction(document, range) {
+        const title = t('pawndoc.codeAction.generateHere');
+        const kind = vscode.CodeActionKind?.RefactorRewrite ||
+            vscode.CodeActionKind?.Refactor ||
+            vscode.CodeActionKind?.QuickFix;
+        const action = typeof vscode.CodeAction === 'function'
+            ? new vscode.CodeAction(title, kind)
+            : { title, kind };
+        action.command = {
+            command: PAWNDOC_SELECTION_COMMAND_ID,
+            title,
+            arguments: [{
+                uri: String(document.uri?.toString?.() || ''),
+                range: serializeRange(range)
+            }]
+        };
+        return action;
+    }
+
+    function provideCodeActions(document, range) {
+        if (!canOfferPawnDocCodeAction(document, range)) return [];
+        return [createPawnDocCodeAction(document, range)];
+    }
+
+    function registerCodeActions(context) {
+        if (typeof vscode.languages?.registerCodeActionsProvider !== 'function') return null;
+        const kind = vscode.CodeActionKind?.RefactorRewrite ||
+            vscode.CodeActionKind?.Refactor ||
+            vscode.CodeActionKind?.QuickFix;
+        const provider = vscode.languages.registerCodeActionsProvider(
+            'amxxpawn',
+            { provideCodeActions },
+            kind ? { providedCodeActionKinds: [kind] } : undefined
+        );
+        context.subscriptions.push(provider);
+        return provider;
+    }
+
+    function registerCommands(context) {
         context.subscriptions.push(
             vscode.commands.registerCommand(PAWNDOC_COMMAND_ID, () => generatePawnDocForEditor())
         );
+        context.subscriptions.push(
+            vscode.commands.registerCommand(PAWNDOC_SELECTION_COMMAND_ID, target => generatePawnDocAtSelection(target))
+        );
+    }
+
+    function register(context) {
+        updateActiveIncludeContext();
+
+        registerCommands(context);
+        registerCodeActions(context);
         context.subscriptions.push(
             vscode.window.onDidChangeActiveTextEditor(editor => updateActiveIncludeContext(editor))
         );
@@ -135,7 +288,10 @@ function createPawnDocFeature(deps) {
     return {
         register,
         generatePawnDocForEditor,
+        generatePawnDocAtSelection,
+        isPawnDocDocument,
         isPawnDocIncludeDocument,
+        provideCodeActions,
         updateActiveIncludeContext
     };
 }
@@ -143,5 +299,6 @@ function createPawnDocFeature(deps) {
 module.exports = {
     PAWNDOC_ACTIVE_INCLUDE_CONTEXT,
     PAWNDOC_COMMAND_ID,
+    PAWNDOC_SELECTION_COMMAND_ID,
     createPawnDocFeature
 };

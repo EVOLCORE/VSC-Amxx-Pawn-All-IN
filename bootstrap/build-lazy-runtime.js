@@ -14,7 +14,8 @@ const {
 const { createPrefixedDebugLogger } = require('../core/utils/debug-logger');
 const {
     PAWNDOC_ACTIVE_INCLUDE_CONTEXT,
-    PAWNDOC_COMMAND_ID
+    PAWNDOC_COMMAND_ID,
+    PAWNDOC_SELECTION_COMMAND_ID
 } = require('../features/pawndoc');
 
 function buildLazyActivationRuntime(deps, options = {}) {
@@ -328,6 +329,26 @@ function buildLazyActivationRuntime(deps, options = {}) {
                 const activeRuntime = ensureRegisteredRuntime();
                 return activeRuntime.pawnDocFeature?.generatePawnDocForEditor?.(vscode.window.activeTextEditor) || null;
             }));
+            trackProxyDisposable(vscode.commands.registerCommand(PAWNDOC_SELECTION_COMMAND_ID, async target => {
+                const activeRuntime = ensureRegisteredRuntime();
+                return activeRuntime.pawnDocFeature?.generatePawnDocAtSelection?.(target) || null;
+            }));
+            if (typeof vscode.languages.registerCodeActionsProvider === 'function') {
+                const kind = vscode.CodeActionKind?.RefactorRewrite ||
+                    vscode.CodeActionKind?.Refactor ||
+                    vscode.CodeActionKind?.QuickFix;
+                trackProxyDisposable(vscode.languages.registerCodeActionsProvider(
+                    'amxxpawn',
+                    {
+                        provideCodeActions(document, range, codeActionContext, token) {
+                            return ensureRegisteredRuntime()
+                                .pawnDocFeature
+                                ?.provideCodeActions?.(document, range, codeActionContext, token) || [];
+                        }
+                    },
+                    kind ? { providedCodeActionKinds: [kind] } : undefined
+                ));
+            }
             trackProxyDisposable(vscode.window.onDidChangeActiveTextEditor(editor => {
                 updatePawnDocActiveIncludeContext(editor);
             }));

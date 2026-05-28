@@ -21,9 +21,23 @@ function getLineStartOffsets(text = '') {
     return offsets;
 }
 
-function isPawnDocTargetDeclaration(decl) {
+const PAWNDOC_DEFAULT_TARGET_TYPES = new Set(['native', 'forward']);
+const PAWNDOC_ANY_FUNCTION_TARGET_TYPES = new Set(['native', 'forward', 'public', 'stock', 'static', 'function']);
+
+function normalizeTargetTypes(targetTypes) {
+    if (!targetTypes) return PAWNDOC_DEFAULT_TARGET_TYPES;
+    if (targetTypes === 'any-function') return PAWNDOC_ANY_FUNCTION_TARGET_TYPES;
+    if (targetTypes instanceof Set) return targetTypes;
+    if (Array.isArray(targetTypes)) {
+        return new Set(targetTypes.map(type => String(type || '').toLowerCase()).filter(Boolean));
+    }
+    return PAWNDOC_DEFAULT_TARGET_TYPES;
+}
+
+function isPawnDocTargetDeclaration(decl, options = {}) {
     const type = String(decl?.type || '').toLowerCase();
-    return (type === 'native' || type === 'forward') &&
+    const targetTypes = normalizeTargetTypes(options.targetTypes);
+    return targetTypes.has(type) &&
         !!decl?.name &&
         Number.isInteger(decl.lineNumber) &&
         decl.lineNumber >= 0;
@@ -59,18 +73,51 @@ function findPawnDocInsertionLine(lines, declarationLine) {
 
 function hasExistingLeadingDocumentation(lines, insertionLine) {
     let cursor = Math.max(-1, Math.min(Number(insertionLine) || 0, lines.length) - 1);
-    let skippedBlankLine = false;
     while (cursor >= 0) {
         const text = String(lines[cursor] || '');
         if (!text.trim()) {
-            if (skippedBlankLine) return false;
-            skippedBlankLine = true;
-            cursor--;
-            continue;
+            return false;
         }
         return isCommentLikeLine(text);
     }
     return false;
+}
+
+function findFirstNonEmptyLine(lines, startLine, endLine = startLine) {
+    const fromLine = Math.max(0, Number(startLine) || 0);
+    const toLine = Math.max(fromLine, Math.min(lines.length - 1, Number(endLine) || fromLine));
+    for (let lineNumber = fromLine; lineNumber <= toLine; lineNumber++) {
+        if (String(lines[lineNumber] || '').trim()) return lineNumber;
+    }
+    return -1;
+}
+
+function getPawnDocDeclarationLineRange(decl) {
+    const startLine = Number.isInteger(decl?.startLine) ? decl.startLine : decl?.lineNumber;
+    const endLine = Number.isInteger(decl?.headerEndLine) ? decl.headerEndLine : startLine;
+    return {
+        startLine: Number.isInteger(startLine) ? startLine : -1,
+        endLine: Number.isInteger(endLine) ? endLine : Number.isInteger(startLine) ? startLine : -1
+    };
+}
+
+function findPawnDocDeclarationForLine(declarations, lineNumber, options = {}) {
+    const targetLine = Number(lineNumber);
+    if (!Number.isInteger(targetLine) || targetLine < 0) return null;
+    const candidates = [];
+    for (const decl of Array.isArray(declarations) ? declarations : []) {
+        if (!isPawnDocTargetDeclaration(decl, options)) continue;
+        const { startLine, endLine } = getPawnDocDeclarationLineRange(decl);
+        if (startLine < 0 || endLine < startLine) continue;
+        if (targetLine < startLine || targetLine > endLine) continue;
+        candidates.push({ decl, startLine, endLine });
+    }
+    candidates.sort((left, right) => {
+        const leftSpan = left.endLine - left.startLine;
+        const rightSpan = right.endLine - right.startLine;
+        return leftSpan - rightSpan || left.startLine - right.startLine;
+    });
+    return candidates[0]?.decl || null;
 }
 
 function stripTopLevelDefaultValue(text = '') {
@@ -161,6 +208,7 @@ function generatePawnDocBlock(decl, options = {}) {
     const eol = options.eol || '\n';
     const indent = String(options.indent || '');
     const paramNames = extractPawnDocParamNames(decl, options);
+    const includeReturn = options.includeReturn !== false;
     const lines = [
         `${indent}/**`,
         `${indent} *`,
@@ -169,8 +217,10 @@ function generatePawnDocBlock(decl, options = {}) {
     for (const name of paramNames) {
         lines.push(`${indent} * @param ${name}`);
     }
-    lines.push(`${indent} *`);
-    lines.push(`${indent} * @return`);
+    if (includeReturn) {
+        lines.push(`${indent} *`);
+        lines.push(`${indent} * @return`);
+    }
     lines.push(`${indent} */`);
     return lines.join(eol);
 }
@@ -214,11 +264,63 @@ function buildPawnDocInsertionPlan(text, declarations, options = {}) {
     };
 }
 
+function buildPawnDocSingleInsertionPlan(text, declarations, selection = {}, options = {}) {
+    const source = String(text || '');
+    const eol = options.eol || detectLineEnding(source);
+    const lines = Array.isArray(options.lines) ? options.lines : splitTextLines(source);
+    const offsets = getLineStartOffsets(source);
+    const startLine = Number.isInteger(selection?.startLine) ? selection.startLine : Number(selection?.startLine) || 0;
+    const endLine = Number.isInteger(selection?.endLine) ? selection.endLine : startLine;
+    const targetLine = findFirstNonEmptyLine(lines, startLine, endLine);
+    const insertions = [];
+    if (targetLine < 0) return { eol, insertions };
+
+    const decl = findPawnDocDeclarationForLine(declarations, targetLine, {
+        targetTypes: options.targetTypes || 'any-function'
+    });
+    const isDeclarationDoc = !!decl && !String(decl.docs || '').trim();
+    const insertionLine = isDeclarationDoc
+        ? findPawnDocInsertionLine(lines, decl.lineNumber)
+        : targetLine;
+
+    if (hasExistingLeadingDocumentation(lines, insertionLine)) {
+        return { eol, insertions };
+    }
+
+    const sourceLine = String(lines[isDeclarationDoc ? decl.lineNumber : targetLine] || '');
+    const indent = (sourceLine.match(/^\s*/) || [''])[0];
+    const block = generatePawnDocBlock(
+        isDeclarationDoc
+            ? decl
+            : { type: 'selection', name: '', args: '', lineNumber: targetLine, docs: '' },
+        {
+            ...options,
+            eol,
+            indent,
+            includeReturn: isDeclarationDoc
+        }
+    );
+
+    insertions.push({
+        line: insertionLine,
+        offset: offsets[insertionLine] ?? source.length,
+        text: `${block}${eol}`,
+        decl: isDeclarationDoc ? decl : null
+    });
+
+    return {
+        eol,
+        insertions
+    };
+}
+
 module.exports = {
     buildPawnDocInsertionPlan,
+    buildPawnDocSingleInsertionPlan,
     detectLineEnding,
     extractPawnDocParamNames,
     fallbackExtractParamName,
+    findPawnDocDeclarationForLine,
     findPawnDocInsertionLine,
     generatePawnDocBlock,
     hasExistingLeadingDocumentation,

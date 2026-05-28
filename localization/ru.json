@@ -211,10 +211,18 @@
   "compiler.failure.toast": "Компиляция AMXX завершилась с ошибкой. Подробности смотрите в output-канале и diagnostics.",
   "compiler.showOutput": "Показать Output",
   "pawndoc.invalidDocument": "Откройте AMXX Pawn include-файл, чтобы сгенерировать PawnDoc-заготовки.",
+  "pawndoc.invalidPawnDocument": "Откройте AMXX Pawn документ, чтобы сгенерировать PawnDoc.",
   "pawndoc.fileDocumentRequired": "Для генерации PawnDoc нужен сохраненный include-файл на диске.",
   "pawndoc.noDeclarations": "Не найдено недокументированных native или forward объявлений.",
+  "pawndoc.noTarget": "Не найден участок кода для генерации PawnDoc.",
+  "pawndoc.codeAction.generateHere": "Сгенерировать PawnDoc здесь",
+  "pawndoc.backupPrompt.message": "Создать backup перед генерацией PawnDoc?",
+  "pawndoc.backupPrompt.yes": "Создать backup",
+  "pawndoc.backupPrompt.no": "Без backup",
+  "pawndoc.backupPrompt.cancel": "Отмена",
   "pawndoc.backupFailed": "Не удалось создать backup перед PawnDoc: {message}",
   "pawndoc.editFailed": "Не удалось применить PawnDoc-правки.",
   "pawndoc.generated": "PawnDoc сгенерирован для объявлений: {count}. Backup: {backupFile}",
+  "pawndoc.generatedNoBackup": "PawnDoc сгенерирован для объявлений: {count}. Backup пропущен.",
   "common.cannotOpenFile": "Не удалось открыть: {filePath}"
 }

@@ -2,7 +2,7 @@
   "name": "amxx-pawn-all-in",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.11.0",
+  "version": "1.11.1",
   "publisher": "Faktor",
   "icon": "resources/icon.png",
   "repository": {
@@ -43,7 +43,8 @@
     "onStartupFinished",
     "onLanguage:amxxpawn",
     "onCommand:amxxPawnAllIn.compileCurrentFile",
-    "onCommand:amxxPawnAllIn.generatePawnDoc"
+    "onCommand:amxxPawnAllIn.generatePawnDoc",
+    "onCommand:amxxPawnAllIn.generatePawnDocHere"
   ],
   "scripts": {
     "package": "vsce package"
@@ -68,6 +69,10 @@
           "light": "resources/light/pawndoc.svg",
           "dark": "resources/dark/pawndoc.svg"
         }
+      },
+      {
+        "command": "amxxPawnAllIn.generatePawnDocHere",
+        "title": "%commands.generatePawnDocHere.title%"
       }
     ],
     "menus": {

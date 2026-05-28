@@ -3,6 +3,7 @@
   "description": "AMXX Pawn language toolkit with semantic hover, completion, live validation, includes, and compiler helpers.",
   "commands.compileCurrentFile.title": "AMXX Pawn All-In: Compile Current File",
   "commands.generatePawnDoc.title": "AMXX Pawn All-In: Generate PawnDoc Stubs",
+  "commands.generatePawnDocHere.title": "AMXX Pawn All-In: Generate PawnDoc Here",
   "configuration.title": "AMXX Pawn All-In",
   "config.fileExtensions.description": "Source file suffixes that should automatically activate the AMXX Pawn language. By default this is only `.sma`. Put include suffixes in Include File Extensions instead.",
   "config.includeFileExtensions.description": "Extra include file suffixes that should automatically activate AMXX Pawn and can be resolved by Pawn #include directives when the include name has no explicit extension. The compiler-style include suffixes `.inc`, `.p`, `.i`, and `.pawn` are always enabled and cannot be removed here.",
