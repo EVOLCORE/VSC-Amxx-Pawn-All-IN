@@ -142,6 +142,11 @@ function main() {
             wiringFile: 'bootstrap/build-feature-runtime.js'
         },
         {
+            factoryFile: 'features/pawndoc/index.js',
+            factoryName: 'createPawnDocFeature',
+            wiringFile: 'bootstrap/build-feature-runtime.js'
+        },
+        {
             factoryFile: 'services/document-language.js',
             factoryName: 'createDocumentLanguageService',
             wiringFile: 'bootstrap/feature-wiring/support.js'

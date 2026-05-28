@@ -1520,14 +1520,17 @@ function createDocumentIncludeSystem(deps) {
                 let i = 0;
                 while (i < rawLines.length) {
                     if (depths[i] !== 0) { i++; continue; }
-                    const deprecatedMessage = parseDeprecatedPragmaMessage(strippedLines[i]);
-                    if (deprecatedMessage != null) {
-                        pendingDeprecatedMessage = deprecatedMessage;
-                        i++;
-                        continue;
+                    const strippedLine = strippedLines[i];
+                    if (String(strippedLine || '').indexOf('#') >= 0) {
+                        const deprecatedMessage = parseDeprecatedPragmaMessage(strippedLine);
+                        if (deprecatedMessage != null) {
+                            pendingDeprecatedMessage = deprecatedMessage;
+                            i++;
+                            continue;
+                        }
                     }
-                    if (!isPotentialDeclarationStartLine(strippedLines[i])) { i++; continue; }
-                    if (isPotentialEnumDeclarationLine(strippedLines[i])) {
+                    if (!isPotentialDeclarationStartLine(strippedLine)) { i++; continue; }
+                    if (isPotentialEnumDeclarationLine(strippedLine)) {
                         const enumBlock = parseEnumBlock(rawLines, i, filePath, fileName, lineCtrlChars, strippedLines, decls);
                         if (enumBlock) {
                             if (

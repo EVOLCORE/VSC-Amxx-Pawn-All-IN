@@ -1,18 +1,8 @@
-const { findFormatPlaceholderLinkAtOffset } = require('../../core/format-strings');
+const { createFormatPlaceholderResolver } = require('./resolver');
 
 function createFormatStringFeature(deps) {
-    const {
-        vscode,
-        getPawnDocumentContext,
-        getDocumentTextAndResolver,
-        findCallContext,
-        findMatchingParenOffset,
-        splitTopLevelWithRanges,
-        isEscapedQuote,
-        getPreferredFunctionHoverMatch = null,
-        buildCallArgLayout = null,
-        createLazyCallContextOptions = null
-    } = deps;
+    const { vscode } = deps;
+    const formatPlaceholderResolver = createFormatPlaceholderResolver(deps);
 
     function makeRange(document, startOffset, endOffset) {
         if (!Number.isInteger(startOffset) || !Number.isInteger(endOffset) || endOffset <= startOffset) return null;
@@ -23,42 +13,7 @@ function createFormatStringFeature(deps) {
     }
 
     function findPlaceholderLink(document, position) {
-        const lineText = String(document?.lineAt?.(position.line)?.text || '');
-        if (!lineText.includes('%')) return null;
-
-        const ctx = typeof getPawnDocumentContext === 'function'
-            ? getPawnDocumentContext(document, position.line)
-            : null;
-        const { text, resolver } = getDocumentTextAndResolver(document);
-        const callContextOptions = typeof createLazyCallContextOptions === 'function'
-            ? createLazyCallContextOptions(document, ctx?.semanticSession || null)
-            : {};
-        const callCtx = findCallContext(document, position, callContextOptions);
-        if (!callCtx?.funcName) return null;
-        const signatureMatch = typeof getPreferredFunctionHoverMatch === 'function'
-            ? getPreferredFunctionHoverMatch(
-                callCtx.funcName,
-                ctx?.parsedDecls?.functions || [],
-                ctx?.incDecls || [],
-                {},
-                ctx?.lookup || null
-            )
-            : null;
-        const layout = typeof buildCallArgLayout === 'function' && signatureMatch?.data
-            ? buildCallArgLayout(signatureMatch.data.args || '', [], null, { useDynamicCache: false })
-            : null;
-        if (!layout || layout.variadicIndex < 0) return null;
-
-        const offset = document.offsetAt(position);
-        const escapeChar = resolver?.ctrlCharAtLine?.(position.line) || '';
-        return findFormatPlaceholderLinkAtOffset(text, callCtx, offset, {
-            splitTopLevelWithRanges,
-            findMatchingParenOffset,
-            ctrlCharResolver: resolver,
-            isEscapedQuote,
-            escapeChar,
-            maxFormatArgIndexExclusive: layout.variadicIndex
-        });
+        return formatPlaceholderResolver.findPlaceholderLink(document, position);
     }
 
     function provideDocumentHighlights(document, position) {

@@ -47,6 +47,7 @@ function buildCompletionNavigationFeatures(deps, support) {
         getDocumentTextAndResolver,
         findCallContext,
         findMatchingParenOffset,
+        collectInlineNamedCallContexts,
         buildCallArgLayout,
         createLazyCallContextOptions
     } = sharedRuntime;
@@ -132,7 +133,9 @@ function buildCompletionNavigationFeatures(deps, support) {
         isEscapedQuote,
         getPreferredFunctionHoverMatch,
         buildCallArgLayout,
-        createLazyCallContextOptions
+        createLazyCallContextOptions,
+        isFunctionLikeDefineDecl,
+        collectInlineNamedCallContexts
     });
 
     const symbolHighlightFeature = createSymbolHighlightFeature({

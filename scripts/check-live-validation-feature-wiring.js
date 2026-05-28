@@ -1086,6 +1086,49 @@ public plugin_init()
         `commented preprocessor and multiline const declarations should stay clean, got: ${commentedPreprocessorAndMultilineConstDiagnostics.map(diagnostic => `${diagnostic.message} @ ${commentedPreprocessorAndMultilineConstDocument.getText(diagnostic.range)}`).join(' | ')}`
     );
 
+    const commentedDynamicPragmaDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-commented-dynamic-pragma.sma'),
+        `
+/*
+#pragma dynamic 10000
+*/
+public test_dynamic()
+{
+    new big[5000]
+    big[0] = big[0]
+}
+`.trimStart()
+    );
+    const commentedDynamicPragmaDiagnostics = liveValidation.collectLiveValidationDiagnostics(commentedDynamicPragmaDocument);
+    assert(
+        commentedDynamicPragmaDiagnostics.some(diagnostic =>
+            /dynamic/i.test(diagnostic.message) &&
+            diagnostic.message.includes('big') &&
+            diagnostic.message.includes('4096')
+        ),
+        `commented #pragma dynamic should not affect stack diagnostics, got: ${commentedDynamicPragmaDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+
+    const activeDynamicPragmaDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-active-dynamic-pragma.sma'),
+        `
+#pragma dynamic 10000
+public test_dynamic_active()
+{
+    new big[5000]
+    big[0] = big[0]
+}
+`.trimStart()
+    );
+    const activeDynamicPragmaDiagnostics = liveValidation.collectLiveValidationDiagnostics(activeDynamicPragmaDocument);
+    assert(
+        !activeDynamicPragmaDiagnostics.some(diagnostic =>
+            /dynamic/i.test(diagnostic.message) &&
+            diagnostic.message.includes('big')
+        ),
+        `active #pragma dynamic should still affect stack diagnostics, got: ${activeDynamicPragmaDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+
     const missingFunctionBodyDocument = new MockDocument(
         path.join(workspaceRoot, 'feature-wiring-missing-function-body.sma'),
         `

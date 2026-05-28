@@ -5,8 +5,17 @@ const {
     getEffectiveIncludeFileExtensions,
     normalizeIncludeExtensionList
 } = require('../core/include-extensions');
-const { isPawnIncludeDirectiveCandidateLine } = require('../core/syntax/includes');
+const { createIncludeDocumentMatcher } = require('../core/include-documents');
+const {
+    createPawnLanguageProbeScanState,
+    isPawnLanguageDetectionEligibleDocument,
+    readPawnLanguageProbeLine
+} = require('../core/language-detection/pawn-probe');
 const { createPrefixedDebugLogger } = require('../core/utils/debug-logger');
+const {
+    PAWNDOC_ACTIVE_INCLUDE_CONTEXT,
+    PAWNDOC_COMMAND_ID
+} = require('../features/pawndoc');
 
 function buildLazyActivationRuntime(deps, options = {}) {
     const {
@@ -46,12 +55,19 @@ function buildLazyActivationRuntime(deps, options = {}) {
         settingsService.shouldDetectPawnLanguageByIncludes();
     const hasPawnIncludeDirectiveCandidate = document => {
         if (!document || shouldDetectPawnByIncludes() !== true) return false;
+        if (!isPawnLanguageDetectionEligibleDocument(document)) return false;
         if (typeof document.lineAt !== 'function') return false;
         const lineCount = Math.max(0, Math.min(Number(document.lineCount) || 0, 160));
+        const scanState = createPawnLanguageProbeScanState();
+        let includeCandidate = false;
+        let syntaxSignal = false;
         try {
             for (let lineNumber = 0; lineNumber < lineCount; lineNumber++) {
                 const lineText = String(document.lineAt(lineNumber)?.text || '');
-                if (isPawnIncludeDirectiveCandidateLine(lineText)) return true;
+                const probe = readPawnLanguageProbeLine(lineText, scanState);
+                includeCandidate = includeCandidate || probe.includeCandidate;
+                syntaxSignal = syntaxSignal || probe.syntaxSignal;
+                if (includeCandidate && syntaxSignal) return true;
             }
         } catch {
             return false;
@@ -67,6 +83,21 @@ function buildLazyActivationRuntime(deps, options = {}) {
         (vscode.workspace.textDocuments || []).some(doc => shouldEnsureForDocumentLifecycle(doc)) ||
         (vscode.window.visibleTextEditors || []).some(editor => shouldEnsureForDocumentLifecycle(editor?.document || null)) ||
         shouldEnsureForDocumentLifecycle(vscode.window.activeTextEditor?.document || null);
+    const pawnDocIncludeMatcher = createIncludeDocumentMatcher(() => settingsService?.getIncludeFileExtensions?.() || []);
+    const isPawnDocIncludeDocument = document =>
+        !!document &&
+        document.languageId === 'amxxpawn' &&
+        pawnDocIncludeMatcher.isIncludeDocument(document);
+    let pawnDocActiveIncludeContextValue = null;
+    const updatePawnDocActiveIncludeContext = (editor = vscode.window.activeTextEditor) => {
+        const nextValue = isPawnDocIncludeDocument(editor?.document || null);
+        if (nextValue === pawnDocActiveIncludeContextValue) return;
+        pawnDocActiveIncludeContextValue = nextValue;
+        vscode.commands.executeCommand('setContext', PAWNDOC_ACTIVE_INCLUDE_CONTEXT, nextValue).then(
+            undefined,
+            () => {}
+        );
+    };
     const affectsExtensionConfiguration = event => {
         if (!event || typeof settingsService?.affectsAnyConfiguration !== 'function') return false;
         const keys = settingsService.SETTINGS_REFRESH_CONFIG_KEYS || [];
@@ -131,6 +162,7 @@ function buildLazyActivationRuntime(deps, options = {}) {
         activeRuntime.renameFeature?.register?.(context);
         activeRuntime.semanticTokensFeature?.register?.(context);
         activeRuntime.documentHighlightFeature?.register?.(context);
+        activeRuntime.pawnDocFeature?.register?.(context);
         realRegistered = true;
         return activeRuntime;
     }
@@ -289,6 +321,29 @@ function buildLazyActivationRuntime(deps, options = {}) {
         }
     };
 
+    const proxyPawnDocFeature = {
+        register() {
+            updatePawnDocActiveIncludeContext();
+            trackProxyDisposable(vscode.commands.registerCommand(PAWNDOC_COMMAND_ID, async () => {
+                const activeRuntime = ensureRegisteredRuntime();
+                return activeRuntime.pawnDocFeature?.generatePawnDocForEditor?.(vscode.window.activeTextEditor) || null;
+            }));
+            trackProxyDisposable(vscode.window.onDidChangeActiveTextEditor(editor => {
+                updatePawnDocActiveIncludeContext(editor);
+            }));
+            trackProxyDisposable(vscode.workspace.onDidOpenTextDocument(() => {
+                updatePawnDocActiveIncludeContext();
+            }));
+            trackProxyDisposable(vscode.workspace.onDidCloseTextDocument(() => {
+                updatePawnDocActiveIncludeContext();
+            }));
+            trackProxyDisposable(vscode.workspace.onDidChangeConfiguration(event => {
+                if (affectsExtensionConfiguration(event)) settingsService?.refresh?.();
+                updatePawnDocActiveIncludeContext();
+            }));
+        }
+    };
+
     const proxyRenameFeature = {
         register() {
             if (typeof vscode.languages.registerRenameProvider !== 'function') return;
@@ -380,6 +435,7 @@ function buildLazyActivationRuntime(deps, options = {}) {
         semanticTokensFeature: proxySemanticTokensFeature,
         formatStringFeature: proxyFormatStringFeature,
         documentHighlightFeature: proxyFormatStringFeature,
+        pawnDocFeature: proxyPawnDocFeature,
         buildHoverAtPosition(document, position) {
             return ensureRegisteredRuntime().buildHoverAtPosition(document, position);
         },

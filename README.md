@@ -10,7 +10,7 @@ Recommended AMX Mod X version: 1.9.0 or newer.
 ### Language & Syntax
 
 1. AMXX Pawn syntax highlighting for source files and compiler-recognized include files, with configurable file extensions.
-2. Automatic Pawn language detection for custom file extensions when a file includes Pawn headers.
+2. Automatic Pawn language detection for custom file extensions when a file includes Pawn headers and contains Pawn-specific syntax, while avoiding documentation and C/C++ snippets.
 3. TextMate grammar support for AMXX Pawn declarations, enums, tags, macros, preprocessor directives, comments, strings, and compiler-style include forms.
 4. Built-in AMXX/Pawn compiler constants and preprocessor symbols such as `__FILE__` and `__LINE__` are understood in expression/preprocessor contexts.
 
@@ -54,6 +54,7 @@ Recommended AMX Mod X version: 1.9.0 or newer.
 1. Rename Symbol support for local variables, function arguments, current-file globals, current-file functions, and unresolved scoped names in the edited source.
 2. Scope-aware reference matching to avoid renaming unrelated symbols with the same name in another function/block.
 3. Include declarations are intentionally not renamed.
+4. PawnDoc stub generation for undocumented `native` and `forward` declarations in include files, with a backup created before edits.
 
 ### Live Diagnostics
 
@@ -157,6 +158,8 @@ code --install-extension amxx-pawn-all-in-*.vsix
 
 Then use the `AMXX Pawn All-In: Compile Current File` command or the editor title button.
 
+For include API files, use `AMXX Pawn All-In: Generate PawnDoc Stubs` from the editor title button or command palette to add basic PawnDoc blocks above undocumented `native` and `forward` declarations.
+
 ## Important Settings
 
 - `amxxPawnAllIn.fileExtensions`
@@ -166,7 +169,7 @@ Then use the `AMXX Pawn All-In: Compile Current File` command or the editor titl
   Extra include file extensions used for Pawn include resolution and language activation. Compiler-style include suffixes are always enabled and cannot be removed: `.inc`, `.p`, `.i`, `.pawn`. The default extra suffix is `.inl`.
 
 - `amxxPawnAllIn.detectPawnLanguageByIncludes`
-  Detect Pawn files by `#include` usage even when the file extension is custom.
+  Detect Pawn files by resolved Pawn `#include` usage plus Pawn-specific syntax even when the file extension is custom. Documentation and common C/C++ files are ignored.
 
 - `amxxPawnAllIn.projectLocalIncludePaths`
   Project-relative include directories. Defaults to `["include"]`.

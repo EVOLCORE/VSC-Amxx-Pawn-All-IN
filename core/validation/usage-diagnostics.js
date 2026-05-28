@@ -7,6 +7,7 @@ const { findBalancedGroupEnd } = require('../syntax/balanced');
 const { readPawnAssignmentOperatorAt } = require('../syntax/operators');
 const { parsePragmaDirectiveLine } = require('../syntax/pragma-directives');
 const { splitPawnLines } = require('../syntax/lines');
+const { getSemanticScanLines } = require('../syntax/preprocessed-state');
 const {
     hasAnyDeclModifier,
     hasDeclModifier
@@ -454,12 +455,7 @@ function createSymbolUsageDiagnostics(deps = {}) {
     function collectSymbolUsageIssues(rootCtx, options = {}) {
         const parsedDecls = rootCtx?.parsedDecls || {};
         const rawLines = rootCtx?.rawLines || splitPawnLines(rootCtx?.text || '');
-        const preprocessedLines = Array.isArray(rootCtx?.preprocessedState?.rawLines)
-            ? rootCtx.preprocessedState.rawLines
-            : splitPawnLines(rootCtx?.preprocessedState?.content || '');
-        const scanLines = preprocessedLines.length === rawLines.length
-            ? preprocessedLines
-            : rawLines;
+        const scanLines = getSemanticScanLines(rootCtx, { rawLines });
         const documentPath = normalizePath(rootCtx?.fp || '');
         const functionRanges = options.functionRangeMaps || {};
         const functionBodyRangeByLine = functionRanges.byLine || [];
@@ -739,8 +735,12 @@ function createSymbolUsageDiagnostics(deps = {}) {
             if (options.globalOnly && !variableEntry.global) return false;
             const occurrence = classifyVariableOccurrence(source, start, end);
             if (occurrence.skip) return false;
+            const wasRead = variableEntry.read;
             if (occurrence.read) variableEntry.read = true;
             if (occurrence.written) variableEntry.written = true;
+            if (!wasRead && variableEntry.read && typeof options.onReadEntry === 'function') {
+                options.onReadEntry(variableEntry);
+            }
             return true;
         };
 
@@ -974,22 +974,16 @@ function createSymbolUsageDiagnostics(deps = {}) {
         const scanDirectIncludeGlobalUsages = () => {
             const includeEntries = Array.isArray(rootCtx?.includeEntries) ? rootCtx.includeEntries : [];
             if (!includeEntries.length) return;
-            const unreadGlobalEntryCandidates = entries.filter(entry =>
+            const unreadGlobalEntries = new Set(entries.filter(entry =>
                 entry.global &&
+                !entry.read &&
                 !entry.stock &&
                 !entry.public
-            );
-            if (!unreadGlobalEntryCandidates.length) return;
-            const hasPotentialUnreadGlobalEntry = () => {
-                for (const entry of unreadGlobalEntryCandidates) {
-                    if (!entry.read) return true;
-                }
-                return false;
-            };
-            if (!hasPotentialUnreadGlobalEntry()) return;
+            ));
+            if (!unreadGlobalEntries.size) return;
             const scannedIncludePaths = new Set();
             for (const includeEntry of includeEntries) {
-                if (!hasPotentialUnreadGlobalEntry()) break;
+                if (!unreadGlobalEntries.size) break;
                 if ((includeEntry?.depth ?? 0) !== 0) continue;
                 const includePath = includeEntry?.filePath || '';
                 const normalizedIncludePath = normalizePath(includePath);
@@ -1005,9 +999,10 @@ function createSymbolUsageDiagnostics(deps = {}) {
                     scanVariableUsageSource(includeLine, includeLineNumber, {
                         synthetic: true,
                         globalOnly: true,
+                        onReadEntry: entry => unreadGlobalEntries.delete(entry),
                         syntheticDeclarationRanges: syntheticDeclarations.ranges
                     });
-                    if (!hasPotentialUnreadGlobalEntry()) break;
+                    if (!unreadGlobalEntries.size) break;
                 }
             }
         };

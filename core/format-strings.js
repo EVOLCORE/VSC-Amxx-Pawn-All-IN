@@ -473,10 +473,16 @@ function collectFormatArgumentLinksForArgumentPieces(source, args, options = {})
     const maxFormatArgIndexExclusive = Number.isInteger(options.maxFormatArgIndexExclusive)
         ? Math.max(0, options.maxFormatArgIndexExclusive)
         : Infinity;
+    const allowedFormatArgIndexes = options.allowedFormatArgIndexes instanceof Set
+        ? options.allowedFormatArgIndexes
+        : (Array.isArray(options.allowedFormatArgIndexes)
+            ? new Set(options.allowedFormatArgIndexes)
+            : null);
 
     const links = [];
     for (let argIndex = 0; argIndex < argPieces.length; argIndex++) {
         if (argIndex >= maxFormatArgIndexExclusive) break;
+        if (allowedFormatArgIndexes && !allowedFormatArgIndexes.has(argIndex)) continue;
         if (!hasFormatPlaceholderSyntaxCandidate(argPieces[argIndex]?.text)) continue;
         const placeholderSequences = collectFormatPlaceholderSequencesInArgument(text, argPieces[argIndex], options);
         if (!placeholderSequences.length) continue;
@@ -512,7 +518,7 @@ function collectFormatArgumentLinksForCall(source, callCtx, options = {}) {
     const args = getCallArgumentPieces(text, callCtx, options);
     return collectFormatArgumentLinksForArgumentPieces(text, args, {
         ...options,
-        callName: callCtx?.funcName || ''
+        callName: options.callName || callCtx?.funcName || ''
     });
 }
 

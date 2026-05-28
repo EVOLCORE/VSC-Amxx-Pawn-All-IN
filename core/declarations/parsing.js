@@ -1899,14 +1899,17 @@ function createDeclarationParsingCore(deps) {
                     while (i < strippedLines.length) {
                         if (depths[i] !== 0) { i++; continue; }
                         advanceTopLevelActiveDefinesBefore(i);
-                        const deprecatedMessage = parseDeprecatedPragmaMessage(strippedLines[i]);
-                        if (deprecatedMessage != null) {
-                            pendingDeprecatedMessage = deprecatedMessage;
-                            i++;
-                            continue;
+                        const strippedLine = strippedLines[i];
+                        if (String(strippedLine || '').indexOf('#') >= 0) {
+                            const deprecatedMessage = parseDeprecatedPragmaMessage(strippedLine);
+                            if (deprecatedMessage != null) {
+                                pendingDeprecatedMessage = deprecatedMessage;
+                                i++;
+                                continue;
+                            }
                         }
-                        if (!isPotentialDeclarationStartLine(strippedLines[i])) { i++; continue; }
-                        if (isPotentialEnumDeclarationLine(strippedLines[i])) {
+                        if (!isPotentialDeclarationStartLine(strippedLine)) { i++; continue; }
+                        if (isPotentialEnumDeclarationLine(strippedLine)) {
                             const enumEvalOuterDecls = globals.concat(
                                 topLevelActiveDefines.size ? [...topLevelActiveDefines.values()] : [],
                                 getParseOuterDeclsForLine(i)

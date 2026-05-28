@@ -150,6 +150,7 @@ function createStateSyntaxCore() {
 
     function parseStateStatement(source) {
         const text = String(source || '');
+        if (text.indexOf('state') < 0) return null;
         let cursor = skipPawnWhitespace(text, 0);
         const stateKeyword = readPawnIdentifierAt(text, cursor);
         if (!stateKeyword || stateKeyword.text !== 'state') return null;

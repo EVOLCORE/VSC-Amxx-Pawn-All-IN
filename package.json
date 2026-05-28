@@ -2,7 +2,7 @@
   "name": "amxx-pawn-all-in",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "publisher": "Faktor",
   "icon": "resources/icon.png",
   "repository": {
@@ -42,7 +42,8 @@
   "activationEvents": [
     "onStartupFinished",
     "onLanguage:amxxpawn",
-    "onCommand:amxxPawnAllIn.compileCurrentFile"
+    "onCommand:amxxPawnAllIn.compileCurrentFile",
+    "onCommand:amxxPawnAllIn.generatePawnDoc"
   ],
   "scripts": {
     "package": "vsce package"
@@ -59,6 +60,14 @@
           "light": "resources/light/compile.svg",
           "dark": "resources/dark/compile.svg"
         }
+      },
+      {
+        "command": "amxxPawnAllIn.generatePawnDoc",
+        "title": "%commands.generatePawnDoc.title%",
+        "icon": {
+          "light": "resources/light/pawndoc.svg",
+          "dark": "resources/dark/pawndoc.svg"
+        }
       }
     ],
     "menus": {
@@ -67,9 +76,22 @@
           "command": "amxxPawnAllIn.compileCurrentFile",
           "when": "editorLangId == amxxpawn",
           "group": "navigation"
+        },
+        {
+          "command": "amxxPawnAllIn.generatePawnDoc",
+          "when": "editorLangId == amxxpawn && amxxPawnAllIn.activeIncludeFile",
+          "group": "navigation@2"
         }
       ]
     },
+    "keybindings": [
+      {
+        "command": "amxxPawnAllIn.generatePawnDoc",
+        "key": "ctrl+alt+shift+d",
+        "mac": "cmd+alt+shift+d",
+        "when": "editorTextFocus && editorLangId == amxxpawn && amxxPawnAllIn.activeIncludeFile"
+      }
+    ],
     "configuration": {
       "title": "%configuration.title%",
       "properties": {

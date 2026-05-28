@@ -92,6 +92,64 @@ function createHoverBitmaskFeature(deps) {
         };
     }
 
+    function countUnmatchedTrailingCloseParens(rawSlice, escapeChar = getActiveCtrlChar()) {
+        const text = String(rawSlice || '');
+        let balance = 0;
+        let inString = false;
+        let stringChar = '';
+        for (let index = 0; index < text.length; index++) {
+            const char = text[index];
+            if (inString) {
+                if (char === stringChar && !isEscapedQuote(text, index, escapeChar)) {
+                    inString = false;
+                    stringChar = '';
+                }
+                continue;
+            }
+            if (char === '"' || char === "'") {
+                inString = true;
+                stringChar = char;
+                continue;
+            }
+            if (char === '(') balance++;
+            else if (char === ')') balance--;
+        }
+        if (balance >= 0) return 0;
+
+        let unmatched = -balance;
+        let trailing = 0;
+        for (let index = text.length - 1; index >= 0 && unmatched > 0; index--) {
+            if (/\s/.test(text[index])) continue;
+            if (text[index] !== ')') break;
+            trailing++;
+            unmatched--;
+        }
+        return trailing;
+    }
+
+    function addDanglingParenTrimmedBitmaskCandidate(candidates, candidate, escapeChar = getActiveCtrlChar()) {
+        const raw = String(candidate?.rawSlice || '');
+        if (!raw || raw.indexOf(')') < 0) return;
+        const trailingCloseParens = countUnmatchedTrailingCloseParens(raw, escapeChar);
+        if (trailingCloseParens <= 0) return;
+
+        let trimEnd = raw.length;
+        let remaining = trailingCloseParens;
+        while (trimEnd > 0 && remaining > 0) {
+            trimEnd--;
+            if (/\s/.test(raw[trimEnd])) continue;
+            if (raw[trimEnd] !== ')') break;
+            remaining--;
+        }
+        const trimmedRaw = raw.slice(0, trimEnd).trimEnd();
+        if (!trimmedRaw || trimmedRaw === raw) return;
+        candidates.push(createBitmaskExpressionCandidate(
+            candidate.start,
+            candidate.start + trimmedRaw.length,
+            trimmedRaw
+        ));
+    }
+
     function collectParenthesizedBitmaskCandidates(rawSlice, cursorInRaw, baseStart) {
         const text = String(rawSlice || '');
         const stack = [];
@@ -168,14 +226,16 @@ function createHoverBitmaskFeature(deps) {
     function getBitmaskExpressionCandidates(lineText, cursorColumn) {
         const primary = getBitmaskExpressionSlice(lineText, cursorColumn);
         const cursorInRaw = Math.max(0, cursorColumn - primary.start);
-        return dedupeBitmaskExpressionCandidates([
+        const candidates = [
             primary,
             ...collectParenthesizedBitmaskCandidates(
                 primary.rawSlice,
                 cursorInRaw,
                 primary.start
             )
-        ]);
+        ];
+        addDanglingParenTrimmedBitmaskCandidate(candidates, primary);
+        return dedupeBitmaskExpressionCandidates(candidates);
     }
 
     function trimBitmaskContinuationLine(line, escapeChar = getActiveCtrlChar()) {

@@ -209,7 +209,12 @@
   "compiler.success.toast": "AMXX compilation finished successfully. Click to show output logs.",
   "compiler.warning.toast": "AMXX compilation finished with warnings. Click to show output logs.",
   "compiler.failure.toast": "AMXX compilation failed. Check the output channel and diagnostics for details.",
-  "compiler.showOutput": "Show Output"
-  ,
+  "compiler.showOutput": "Show Output",
+  "pawndoc.invalidDocument": "Open an AMXX Pawn include file to generate PawnDoc stubs.",
+  "pawndoc.fileDocumentRequired": "PawnDoc generation needs a saved include file on disk.",
+  "pawndoc.noDeclarations": "No undocumented native or forward declarations were found.",
+  "pawndoc.backupFailed": "Could not create PawnDoc backup: {message}",
+  "pawndoc.editFailed": "Could not apply PawnDoc edits.",
+  "pawndoc.generated": "PawnDoc generated for {count} declaration(s). Backup: {backupFile}",
   "common.cannotOpenFile": "Cannot open: {filePath}"
 }

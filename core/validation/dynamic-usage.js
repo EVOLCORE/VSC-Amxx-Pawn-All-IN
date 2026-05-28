@@ -1,4 +1,5 @@
 const { parsePragmaDirectiveLine } = require('../syntax/pragma-directives');
+const { getSemanticScanLines } = require('../syntax/preprocessed-state');
 const { hasDeclModifier } = require('../declarations/modifiers');
 
 function createDynamicUsageDiagnostics(deps = {}) {
@@ -12,10 +13,7 @@ function createDynamicUsageDiagnostics(deps = {}) {
     const EMPTY_ISSUES = [];
 
     function getPragmaDynamicLimit(rootCtx, analysisCache = null) {
-        const lines = rootCtx?.preprocessedState?.rawLines ||
-            rootCtx?.strippedLines ||
-            rootCtx?.rawLines ||
-            [];
+        const lines = getSemanticScanLines(rootCtx);
         let limit = DEFAULT_DYNAMIC_CELLS;
         let decls = null;
         const getDecls = () => {

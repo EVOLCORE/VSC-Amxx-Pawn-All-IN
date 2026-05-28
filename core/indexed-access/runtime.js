@@ -35,7 +35,42 @@ function createIndexedAccessCore(deps) {
         const results = [];
 
         let index = 0;
+        let inString = false;
+        let stringCode = 0;
+        let inBlockComment = false;
         while (index < source.length) {
+            const code = source.charCodeAt(index);
+            const nextCode = index + 1 < source.length ? source.charCodeAt(index + 1) : 0;
+            if (inBlockComment) {
+                if (code === 42 && nextCode === 47) {
+                    inBlockComment = false;
+                    index += 2;
+                    continue;
+                }
+                index++;
+                continue;
+            }
+            if (inString) {
+                if (code === stringCode && !isEscapedQuote(source, index, escapeChar)) {
+                    inString = false;
+                    stringCode = 0;
+                }
+                index++;
+                continue;
+            }
+            if (code === 34 || code === 39) {
+                inString = true;
+                stringCode = code;
+                index++;
+                continue;
+            }
+            if (code === 47 && nextCode === 47) break;
+            if (code === 47 && nextCode === 42) {
+                inBlockComment = true;
+                index += 2;
+                continue;
+            }
+
             const startCode = source.charCodeAt(index);
             const prevCode = index > 0 ? source.charCodeAt(index - 1) : 0;
             if (!isPawnIdentifierStartCode(startCode) || isPawnIdentifierContinueCode(prevCode)) {
@@ -57,11 +92,33 @@ function createIndexedAccessCore(deps) {
                 let depth = 0;
                 let inStr = false;
                 let strChCode = 0;
+                let inIndexBlockComment = false;
+                let inIndexLineComment = false;
 
                 for (; cursor < source.length; cursor++) {
                     const code = source.charCodeAt(cursor);
+                    const nextCode = cursor + 1 < source.length ? source.charCodeAt(cursor + 1) : 0;
+                    if (inIndexLineComment) {
+                        break;
+                    }
+                    if (inIndexBlockComment) {
+                        if (code === 42 && nextCode === 47) {
+                            inIndexBlockComment = false;
+                            cursor++;
+                        }
+                        continue;
+                    }
                     if (inStr) {
                         if (code === strChCode && !isEscapedQuote(source, cursor, escapeChar)) inStr = false;
+                        continue;
+                    }
+                    if (code === 47 && nextCode === 47) {
+                        inIndexLineComment = true;
+                        continue;
+                    }
+                    if (code === 47 && nextCode === 42) {
+                        inIndexBlockComment = true;
+                        cursor++;
                         continue;
                     }
                     if (code === 34 || code === 39) {

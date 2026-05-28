@@ -210,5 +210,11 @@
   "compiler.warning.toast": "Компиляция AMXX завершилась с warning-ами. Нажмите, чтобы открыть логи output.",
   "compiler.failure.toast": "Компиляция AMXX завершилась с ошибкой. Подробности смотрите в output-канале и diagnostics.",
   "compiler.showOutput": "Показать Output",
+  "pawndoc.invalidDocument": "Откройте AMXX Pawn include-файл, чтобы сгенерировать PawnDoc-заготовки.",
+  "pawndoc.fileDocumentRequired": "Для генерации PawnDoc нужен сохраненный include-файл на диске.",
+  "pawndoc.noDeclarations": "Не найдено недокументированных native или forward объявлений.",
+  "pawndoc.backupFailed": "Не удалось создать backup перед PawnDoc: {message}",
+  "pawndoc.editFailed": "Не удалось применить PawnDoc-правки.",
+  "pawndoc.generated": "PawnDoc сгенерирован для объявлений: {count}. Backup: {backupFile}",
   "common.cannotOpenFile": "Не удалось открыть: {filePath}"
 }

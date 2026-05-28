@@ -40,6 +40,20 @@ function createEnumSyntaxDiagnosticsCore(deps) {
                 : [];
         }
 
+        let hasComplexSyntax = false;
+        for (let index = 0; index < text.length; index++) {
+            const code = text.charCodeAt(index);
+            if (
+                code === 34 || code === 39 ||
+                code === 40 || code === 41 ||
+                code === 91 || code === 93 ||
+                code === 123 || code === 125
+            ) {
+                hasComplexSyntax = true;
+                break;
+            }
+        }
+
         let startOffset = 0;
         let startLineOffset = 0;
         let lineOffset = 0;
@@ -64,6 +78,21 @@ function createEnumSyntaxDiagnosticsCore(deps) {
             startOffset = endOffset + 1;
             startLineOffset = lineOffset;
         };
+        if (!hasComplexSyntax) {
+            for (let index = 0; index < text.length; index++) {
+                const code = text.charCodeAt(index);
+                if (code === 10) {
+                    lineOffset++;
+                    continue;
+                }
+                if (code === 44) {
+                    pushPart(index);
+                }
+            }
+            pushPart(text.length);
+            return parts;
+        }
+
         const escapeChar = getActiveCtrlChar();
         let depth = 0;
         let inStr = false;

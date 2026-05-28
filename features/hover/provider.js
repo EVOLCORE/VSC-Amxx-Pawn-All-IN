@@ -2,6 +2,8 @@ const { spawn } = require('child_process');
 const path = require('path');
 const { unrefTimer } = require('../../core/utils/timers');
 const {
+    DEFAULT_HOVER_MODIFIER_HACK_HOLD_DELAY_MS,
+    createModifierHoldGate,
     getHoverModifierHackKey,
     isHoverModifierHackMode
 } = require('../../core/hover-modes');
@@ -20,6 +22,7 @@ function createHoverFeature(deps) {
     } = deps;
     const MODIFIER_HACK_REOPEN_WINDOW_MS = 700;
     const MODIFIER_HACK_SELECTION_RESTORE_DELAY_MS = 0;
+    const MODIFIER_HACK_HOLD_DELAY_MS = DEFAULT_HOVER_MODIFIER_HACK_HOLD_DELAY_MS;
     const MODIFIER_HACK_RESTART_MIN_DELAY_MS = 800;
     const MODIFIER_HACK_RESTART_MAX_DELAY_MS = 8000;
 
@@ -34,13 +37,17 @@ function createHoverFeature(deps) {
             };
         }
 
-        let modifierPressed = false;
         let trackerProcess = null;
         let stdoutBuffer = '';
         let restartTimer = null;
         let restartDelayMs = MODIFIER_HACK_RESTART_MIN_DELAY_MS;
         let disposed = false;
         let processExitHandler = null;
+        const modifierHoldGate = createModifierHoldGate({
+            holdDelayMs: MODIFIER_HACK_HOLD_DELAY_MS,
+            keepTimer: unrefTimer,
+            onActiveChange: active => onStateChange?.(active)
+        });
         const powershellPath = path.join(
             process.env.SystemRoot || 'C:\\Windows',
             'System32',
@@ -78,11 +85,8 @@ function createHoverFeature(deps) {
             processExitHandler = null;
         };
 
-        const emitState = nextState => {
-            const normalized = !!nextState;
-            if (normalized === modifierPressed) return;
-            modifierPressed = normalized;
-            onStateChange?.(modifierPressed);
+        const setPhysicalPressed = nextState => {
+            modifierHoldGate.setPhysicalPressed(!!nextState);
         };
 
         const stop = () => {
@@ -96,7 +100,7 @@ function createHoverFeature(deps) {
                 trackerProcess = null;
             }
             restartDelayMs = MODIFIER_HACK_RESTART_MIN_DELAY_MS;
-            emitState(false);
+            modifierHoldGate.dispose();
         };
 
         const scheduleRestart = () => {
@@ -155,8 +159,8 @@ function createHoverFeature(deps) {
                 stdoutBuffer = lines.pop() || '';
                 for (const line of lines) {
                     const value = String(line || '').trim();
-                    if (value === '1') emitState(true);
-                    else if (value === '0') emitState(false);
+                    if (value === '1') setPhysicalPressed(true);
+                    else if (value === '0') setPhysicalPressed(false);
                 }
             });
             trackerProcess.stderr?.setEncoding('utf8');
@@ -164,7 +168,7 @@ function createHoverFeature(deps) {
             trackerProcess.on('exit', (code, signal) => {
                 trackerProcess = null;
                 stdoutBuffer = '';
-                emitState(false);
+                setPhysicalPressed(false);
                 scheduleRestart();
             });
             trackerProcess.on('error', () => {
@@ -174,7 +178,7 @@ function createHoverFeature(deps) {
                     trackerProcess.stderr?.removeAllListeners();
                     trackerProcess = null;
                 }
-                emitState(false);
+                setPhysicalPressed(false);
                 scheduleRestart();
             });
             return true;
@@ -184,7 +188,7 @@ function createHoverFeature(deps) {
             start,
             stop,
             isRunning: () => !!trackerProcess,
-            isPressed: () => modifierPressed,
+            isPressed: () => modifierHoldGate.isActivePressed(),
             keyLabel: keySpec.label,
             mode
         };

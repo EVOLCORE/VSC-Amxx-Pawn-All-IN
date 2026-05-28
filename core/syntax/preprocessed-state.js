@@ -1,3 +1,5 @@
+const { splitPawnLines } = require('./lines');
+
 function getPreprocessedCtrlCharState(preprocessedState) {
     if (!preprocessedState || typeof preprocessedState !== 'object') return null;
     if (!Array.isArray(preprocessedState.rawLines)) return null;
@@ -14,4 +16,38 @@ function getPreprocessedCtrlCharState(preprocessedState) {
     };
 }
 
-module.exports = { getPreprocessedCtrlCharState };
+function getSemanticScanLines(sourceState, options = {}) {
+    const rawLines = Array.isArray(options.rawLines)
+        ? options.rawLines
+        : (Array.isArray(sourceState?.rawLines)
+            ? sourceState.rawLines
+            : splitPawnLines(sourceState?.text || options.text || ''));
+    const preprocessedState = sourceState?.preprocessedState || null;
+    const preprocessedStrippedLines = Array.isArray(preprocessedState?.strippedLines)
+        ? preprocessedState.strippedLines
+        : [];
+    if (preprocessedStrippedLines.length === rawLines.length) {
+        return preprocessedStrippedLines;
+    }
+
+    const strippedLines = Array.isArray(sourceState?.strippedLines)
+        ? sourceState.strippedLines
+        : [];
+    if (strippedLines.length === rawLines.length) {
+        return strippedLines;
+    }
+
+    const preprocessedRawLines = Array.isArray(preprocessedState?.rawLines)
+        ? preprocessedState.rawLines
+        : splitPawnLines(preprocessedState?.content || '');
+    if (preprocessedRawLines.length === rawLines.length) {
+        return preprocessedRawLines;
+    }
+
+    return rawLines;
+}
+
+module.exports = {
+    getPreprocessedCtrlCharState,
+    getSemanticScanLines
+};

@@ -308,8 +308,13 @@ function createEditImpactResolver(deps) {
 
             const previousWindowStart = Math.max(functionBodyRange.startLine, startLine - 1);
             const previousWindowEnd = Math.min(functionBodyRange.endLine, endLine + 1);
+            const nextText = getNextDocumentLines().slice(previousWindowStart, previousWindowEnd + 1).join('\n');
             const previousText = previousBase.rawLines.slice(previousWindowStart, previousWindowEnd + 1).join('\n');
-            if (structuralMarkerRe.test(previousText) || structuralMarkerRe.test(changeText)) {
+            if (
+                structuralMarkerRe.test(previousText) ||
+                structuralMarkerRe.test(nextText) ||
+                structuralMarkerRe.test(changeText)
+            ) {
                 return withDecision(document, contentChanges, { kind: 'structural' });
             }
         }

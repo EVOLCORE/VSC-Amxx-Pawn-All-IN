@@ -5,7 +5,11 @@ const {
     getFirstContentChangeStartLine,
     normalizeContentChangeLineRange
 } = require('../../core/document-context/incremental-lines');
-const { isPawnIncludeDirectiveCandidateLine } = require('../../core/syntax/includes');
+const {
+    createPawnLanguageProbeScanState,
+    isPawnLanguageDetectionEligibleDocument,
+    readPawnLanguageProbeLine
+} = require('../../core/language-detection/pawn-probe');
 const { sortUniqueLineNumbers } = require('../../core/syntax/line-number-lists');
 const { unrefTimer } = require('../../core/utils/timers');
 const { createPrefixedDebugLogger } = require('../../core/utils/debug-logger');
@@ -108,23 +112,26 @@ function createEditorLifecycleFeature(deps) {
         if (!isFileBackedLifecycleDocument(document)) return false;
         return !/\.git$/i.test(String(document?.fileName || ''));
     };
-    const hasIncludeDirectiveCandidate = lineText => {
+    const hasPawnLanguageProbeTriggerCandidate = lineText => {
         const lines = String(lineText || '').split(/\r\n|\r|\n/);
+        const scanState = createPawnLanguageProbeScanState();
         for (const line of lines) {
-            if (isPawnIncludeDirectiveCandidateLine(line)) return true;
+            const probe = readPawnLanguageProbeLine(line, scanState);
+            if (probe.includeCandidate || probe.syntaxSignal) return true;
         }
         return false;
     };
     const shouldProbePawnLanguageAfterTextChange = (document, contentChanges) => {
         if (!document?.fileName || !Array.isArray(contentChanges) || !contentChanges.length) return false;
+        if (!isPawnLanguageDetectionEligibleDocument(document)) return false;
         if (typeof document.lineAt !== 'function') {
-            return contentChanges.some(change => hasIncludeDirectiveCandidate(change?.text || ''));
+            return contentChanges.some(change => hasPawnLanguageProbeTriggerCandidate(change?.text || ''));
         }
         const lineCount = Number.isInteger(document.lineCount) ? document.lineCount : 0;
         if (lineCount <= 0) return false;
         for (const change of contentChanges) {
             const changeText = String(change?.text || '');
-            if (hasIncludeDirectiveCandidate(changeText)) return true;
+            if (hasPawnLanguageProbeTriggerCandidate(changeText)) return true;
             const scanRange = normalizeContentChangeLineRange(change, {
                 lineCount,
                 paddingBefore: 1,
@@ -136,7 +143,7 @@ function createEditorLifecycleFeature(deps) {
             const scanStart = scanRange.startLine;
             const scanEnd = scanRange.endLine;
             for (let lineNumber = scanStart; lineNumber <= scanEnd; lineNumber++) {
-                if (hasIncludeDirectiveCandidate(document.lineAt(lineNumber)?.text || '')) {
+                if (hasPawnLanguageProbeTriggerCandidate(document.lineAt(lineNumber)?.text || '')) {
                     return true;
                 }
             }

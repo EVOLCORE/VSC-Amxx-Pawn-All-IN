@@ -8,7 +8,7 @@ const {
     hasHoverMatch
 } = require('./match-dedupe');
 const { isInactivePreprocessorMaskedLine } = require('../../core/syntax/preprocessor-lines');
-const { findFormatPlaceholderLinkAtOffset } = require('../../core/format-strings');
+const { createFormatPlaceholderResolver } = require('../format-strings/resolver');
 
 function createHoverBuilderFeature(deps) {
     const {
@@ -35,6 +35,7 @@ function createHoverBuilderFeature(deps) {
         buildStructuredEnumFieldHover,
         buildHoverMarkdown: buildRawHoverMarkdown,
         buildArgHoverInfo: buildRawArgHoverInfo,
+        getDocumentTextAndResolver,
         findDefinitionContext,
         findPreferredKnownCallContext,
         isNearbyCallContext,
@@ -43,6 +44,7 @@ function createHoverBuilderFeature(deps) {
         findFunctionCallNameContext,
         findCallContext,
         findMatchingParenOffset,
+        collectInlineNamedCallContexts,
         getPreferredFunctionHoverMatch,
         extractCallSiteArgs,
         hasIncludeFunctionTwin,
@@ -55,6 +57,7 @@ function createHoverBuilderFeature(deps) {
         isKnownFunctionName,
         finalizeDeclMatches,
         extractEnumSymbolName,
+        isFunctionLikeDefineDecl,
         isFunctionLikeDecl,
         resolveArgumentSymbolName,
         getDeclMatchKey,
@@ -224,6 +227,19 @@ function createHoverBuilderFeature(deps) {
             return null;
         };
         const callContextOptions = createLazyCallContextOptions(document, ctx.semanticSession || null);
+        const formatPlaceholderResolver = createFormatPlaceholderResolver({
+            getPawnDocumentContext,
+            getDocumentTextAndResolver,
+            findCallContext,
+            findMatchingParenOffset,
+            splitTopLevelWithRanges,
+            isEscapedQuote,
+            getPreferredFunctionHoverMatch,
+            buildCallArgLayout,
+            createLazyCallContextOptions,
+            isFunctionLikeDefineDecl,
+            collectInlineNamedCallContexts
+        });
         const isSamePosition = (left, right) =>
             !!left &&
             !!right &&
@@ -312,31 +328,7 @@ function createHoverBuilderFeature(deps) {
             return buildArgHoverInfo(unique, fp, includeDocs, options);
         };
         const buildFormatPlaceholderHover = () => {
-            if (!lineText.includes('%')) return null;
-            if (typeof findCallContext !== 'function') return null;
-            const callCtx = findCallContext(document, position, callContextOptions);
-            if (!callCtx?.funcName) return null;
-            const signatureMatch = typeof getPreferredFunctionHoverMatch === 'function'
-                ? getPreferredFunctionHoverMatch(
-                    callCtx.funcName,
-                    functions,
-                    incDecls,
-                    {},
-                    lookup
-                )
-                : null;
-            const layout = typeof buildCallArgLayout === 'function' && signatureMatch?.data
-                ? buildCallArgLayout(signatureMatch.data.args || '', [], null, { useDynamicCache: false })
-                : null;
-            if (!layout || layout.variadicIndex < 0) return null;
-            const link = findFormatPlaceholderLinkAtOffset(text, callCtx, positionOffset, {
-                splitTopLevelWithRanges,
-                findMatchingParenOffset,
-                ctrlCharResolver: resolver,
-                isEscapedQuote,
-                escapeChar: resolver.ctrlCharAtLine?.(position.line) || '',
-                maxFormatArgIndexExclusive: layout.variadicIndex
-            });
+            const link = formatPlaceholderResolver.findPlaceholderLink(document, position);
             if (!link) return null;
 
             const md = new vscode.MarkdownString();
@@ -1089,7 +1081,7 @@ function createHoverBuilderFeature(deps) {
                     globals,
                     functions,
                     incDecls,
-                    !matches.length ? bitmaskPartCtx : null,
+                    bitmaskPartCtx,
                     {
                         validateSignatureArgs,
                         forceColoredSignature,
