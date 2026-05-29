@@ -30,7 +30,12 @@
   },
   "semanticHighlighting": true,
   "semanticTokenColors": {
-    "number": "#8F5CD6"
+    "number": "#8F5CD6",
+    "function": "#117DAA",
+    "function.declaration": {
+      "foreground": "#7EA80E",
+      "fontStyle": "bold"
+    }
   },
   "tokenColors": [
     { "scope": ["comment", "comment.block.pawn", "comment.block.documentation.pawn", "comment.line.double-slash.pawn"], "settings": { "foreground": "#8C8579", "fontStyle": "italic" } },

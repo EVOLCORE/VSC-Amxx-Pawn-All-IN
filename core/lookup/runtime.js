@@ -2,6 +2,9 @@
 // (hover, navigation, live validation, document-context building), so keeping
 // them in one module makes later optimization safer.
 const {
+    findBestDeclInNameBuckets,
+    findDeclInNameBuckets,
+    filterDeclsInNameBuckets,
     getPrecomputedDeclNameBuckets,
     getPrecomputedVariableNameBuckets
 } = require('./precomputed-buckets');
@@ -18,55 +21,6 @@ function createDeclLookupCore(deps) {
     const objectAliasTargetNameCache = new WeakMap();
     const EMPTY_DECL_NAME_BUCKETS = new Map();
     const EMPTY_VARIABLE_NAME_BUCKETS = new Map();
-
-    const findDeclInNameBuckets = (buckets, name, predicate = null) => {
-        const matches = buckets.get(name);
-        if (!matches?.length) return null;
-        if (!predicate) return matches[0];
-        if (matches.length === 1) {
-            const match = matches[0];
-            return predicate(match) ? match : null;
-        }
-        for (const decl of matches) {
-            if (predicate(decl)) return decl;
-        }
-        return null;
-    };
-
-    const filterDeclsInNameBuckets = (buckets, name, predicate = null) => {
-        const matches = buckets.get(name);
-        if (!matches?.length) return [];
-        if (!predicate) return matches.slice();
-        if (matches.length === 1) {
-            const match = matches[0];
-            return predicate(match) ? [match] : [];
-        }
-        const result = [];
-        for (const decl of matches) {
-            if (predicate(decl)) result.push(decl);
-        }
-        return result;
-    };
-
-    const findBestDeclInNameBuckets = (buckets, name, predicate = null, score = null) => {
-        const matches = buckets.get(name);
-        if (!matches?.length) return null;
-        if (matches.length === 1) {
-            const match = matches[0];
-            return !predicate || predicate(match) ? match : null;
-        }
-        let best = null;
-        let bestScore = -Infinity;
-        for (const decl of matches) {
-            if (predicate && !predicate(decl)) continue;
-            const currentScore = score ? score(decl) : 0;
-            if (!best || currentScore > bestScore) {
-                best = decl;
-                bestScore = currentScore;
-            }
-        }
-        return best;
-    };
 
     const getDeclNameBuckets = decls => {
         if (!Array.isArray(decls) || decls.length === 0) return EMPTY_DECL_NAME_BUCKETS;
@@ -211,6 +165,7 @@ function createDeclLookupCore(deps) {
         let builtinNameBuckets = null;
         const anyLocalDeclByNameCache = new Map();
         const anyDeclByNameCache = new Map();
+        const defineByNameCache = new Map();
         const getArgSet = () => (argSet ||= new Set(funcArgs));
         const getLocalSet = () => (localSet ||= new Set(locals));
         const getGlobalSet = () => (globalSet ||= new Set(globals));
@@ -309,6 +264,21 @@ function createDeclLookupCore(deps) {
             if (!predicate) anyDeclByNameCache.set(name, decl || null);
             return decl || null;
         };
+        const findDefine = name => {
+            if (!name) return null;
+            if (defineByNameCache.has(name)) return defineByNameCache.get(name);
+            const isDefine = item => item.type === 'define';
+            const decl =
+                findDeclInNameBuckets(getFuncArgNameBuckets(), name, isDefine) ||
+                findDeclInNameBuckets(getLocalNameBuckets(), name, isDefine) ||
+                findDeclInNameBuckets(getGlobalNameBuckets(), name, isDefine) ||
+                findDeclInNameBuckets(getFunctionNameBuckets(), name, isDefine) ||
+                findDeclInNameBuckets(getIncludeNameBuckets(), name, isDefine) ||
+                findDeclInNameBuckets(getBuiltinNameBuckets(), name, isDefine) ||
+                null;
+            defineByNameCache.set(name, decl);
+            return decl;
+        };
 
         const lookup = {
             findFuncArg: name => findDeclInNameBuckets(getFuncArgNameBuckets(), name),
@@ -331,6 +301,7 @@ function createDeclLookupCore(deps) {
             findInclude: (name, predicate = null) => findDeclInNameBuckets(getIncludeNameBuckets(), name, predicate),
             filterIncludes: (name, predicate = null) => filterDeclsInNameBuckets(getIncludeNameBuckets(), name, predicate),
             filterBuiltins: (name, predicate = null) => filterDeclsInNameBuckets(getBuiltinNameBuckets(), name, predicate),
+            findDefine,
             hasIncludeFunctionTwin: name => !!findDeclInNameBuckets(getIncludeNameBuckets(), name, isFunctionLikeDecl),
             getPreferredFunctionMatch,
             collectWordDecls: name => [

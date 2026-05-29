@@ -25,7 +25,11 @@ const { startsWithLocalDeclarationKeyword } = require('../syntax/keywords');
 const { createMacroExpansionSyntaxCore } = require('../syntax/macro-expander');
 const { createVirtualExpandedLineContextCore } = require('../syntax/virtual-expanded-line-context');
 const { getPreprocessedCtrlCharState } = require('../syntax/preprocessed-state');
-const { attachLazyPrecomputedDeclBuckets } = require('../lookup/precomputed-buckets');
+const {
+    attachLazyPrecomputedDeclBuckets,
+    buildDeclBuckets,
+    findDeclInNameBuckets
+} = require('../lookup/precomputed-buckets');
 const { maskPreprocessorDirectiveLines } = require('../syntax/preprocessor-lines');
 
 function createDeclarationParsingCore(deps) {
@@ -42,6 +46,9 @@ function createDeclarationParsingCore(deps) {
         parseDimsParts,
         parseDimSpec,
         evaluatePawnNumericExpr,
+        findDeclByNameCached,
+        getDeclNameBuckets,
+        BUILTIN_DECLS = [],
         formatAutoEnumValueDisplay,
         formatResolvedEnumValueDisplay,
         applyEnumStep,
@@ -114,6 +121,59 @@ function createDeclarationParsingCore(deps) {
         enumEvalOuterDeclsCache.set(decls, filtered);
         return filtered;
     };
+
+    function createEnumEvalLookup(outerDecls = [], enumDecls = []) {
+        const outerSource = Array.isArray(outerDecls) ? outerDecls : [];
+        const enumSource = Array.isArray(enumDecls) ? enumDecls : [];
+        let outerNameBuckets = null;
+        let builtinNameBuckets = null;
+        let enumIndexedCount = 0;
+        const enumNameBuckets = new Map();
+
+        const getOuterNameBuckets = () => {
+            if (!outerNameBuckets) {
+                outerNameBuckets = typeof getDeclNameBuckets === 'function'
+                    ? getDeclNameBuckets(outerSource)
+                    : buildDeclBuckets(outerSource).nameBuckets;
+            }
+            return outerNameBuckets;
+        };
+        const getBuiltinNameBuckets = () => {
+            if (!builtinNameBuckets) {
+                builtinNameBuckets = buildDeclBuckets(BUILTIN_DECLS).nameBuckets;
+            }
+            return builtinNameBuckets;
+        };
+        const getEnumNameBuckets = () => {
+            while (enumIndexedCount < enumSource.length) {
+                const decl = enumSource[enumIndexedCount++];
+                if (!decl?.name) continue;
+                const bucket = enumNameBuckets.get(decl.name);
+                if (bucket) bucket.push(decl);
+                else enumNameBuckets.set(decl.name, [decl]);
+            }
+            return enumNameBuckets;
+        };
+        const findLocal = (name, predicate = null) =>
+            findDeclInNameBuckets(getOuterNameBuckets(), name, predicate) ||
+            findDeclInNameBuckets(getEnumNameBuckets(), name, predicate);
+        const findBuiltin = (name, predicate = null) => {
+            if (!Array.isArray(BUILTIN_DECLS) || !BUILTIN_DECLS.length) return null;
+            return typeof findDeclByNameCached === 'function'
+                ? findDeclByNameCached(BUILTIN_DECLS, name, predicate)
+                : findDeclInNameBuckets(getBuiltinNameBuckets(), name, predicate);
+        };
+        const findDefineByName = name =>
+            findLocal(name, item => item.type === 'define') ||
+            findBuiltin(name, item => item.type === 'define');
+
+        return {
+            findDeclByName: findLocal,
+            findAnyDeclByName: (name, predicate = null) =>
+                findLocal(name, predicate) || findBuiltin(name, predicate),
+            findDefineByName
+        };
+    }
 
     function parseVarPiece(piece, modifiers, filePath, fileName, lineNumber, docs, mayHaveDocs = true) {
         let s = piece.trim().replace(/;$/, '').trim();
@@ -487,6 +547,7 @@ function createDeclarationParsingCore(deps) {
         const hasOuterDecls = Array.isArray(outerDecls) && outerDecls.length;
         let enumEvalDeclsCache = null;
         let enumEvalDeclsCacheDeclCount = -1;
+        const enumEvalLookup = createEnumEvalLookup(outerDecls, decls);
         let enumEvalAnalysisCache = null;
         let enumEvalAnalysisCacheDeclCount = -1;
         const getEnumEvalDecls = () => {
@@ -503,7 +564,10 @@ function createDeclarationParsingCore(deps) {
                 return enumEvalAnalysisCache;
             }
             enumEvalAnalysisCacheDeclCount = decls.length;
-            enumEvalAnalysisCache = { numericExprByText: new Map() };
+            enumEvalAnalysisCache = {
+                ...enumEvalLookup,
+                numericExprByText: new Map()
+            };
             return enumEvalAnalysisCache;
         };
         let nextValue = 0;
@@ -1615,6 +1679,63 @@ function createDeclarationParsingCore(deps) {
         return { lineNumber: startLine, charIndex: -1 };
     }
 
+    function readLastPawnIdentifier(source) {
+        const text = String(source || '');
+        let end = text.length;
+        while (end > 0 && isWhitespaceCharCode(text.charCodeAt(end - 1))) end--;
+        let start = end;
+        while (start > 0 && isPawnIdentifierContinueCode(text.charCodeAt(start - 1))) start--;
+        if (start >= end || !isPawnIdentifierStartCode(text.charCodeAt(start))) return '';
+        return text.slice(start, end);
+    }
+
+    function readFirstPawnIdentifier(source) {
+        const text = String(source || '').trimStart();
+        if (!text || !isPawnIdentifierStartCode(text.charCodeAt(0))) return '';
+        let end = 1;
+        while (end < text.length && isPawnIdentifierContinueCode(text.charCodeAt(end))) end++;
+        return text.slice(0, end);
+    }
+
+    function isFunctionDefinitionBoundaryLine(lineNumber, rawLines, strippedLines = rawLines, lineCtrlChars = []) {
+        const firstLineText = String(strippedLines?.[lineNumber] ?? rawLines[lineNumber] ?? '');
+        const firstLineTrimmed = firstLineText.trim();
+        if (!firstLineTrimmed || firstLineTrimmed.includes(';')) return false;
+        if (isPreprocessorDirectiveLine(firstLineTrimmed)) return false;
+
+        const headerEndPosition = findFunctionHeaderEndPosition(rawLines, lineNumber, lineCtrlChars);
+        if ((headerEndPosition.charIndex ?? -1) < 0) return false;
+
+        const headerEndLine = headerEndPosition.lineNumber ?? lineNumber;
+        const headerLines = [];
+        for (let line = lineNumber; line <= headerEndLine && line < rawLines.length; line++) {
+            headerLines.push(String(strippedLines?.[line] ?? rawLines[line] ?? ''));
+        }
+        const headerText = headerLines.join(' ').trim();
+        const openParenIndex = headerText.indexOf('(');
+        if (openParenIndex <= 0) return false;
+
+        const head = headerText.slice(0, openParenIndex).trim();
+        const name = readLastPawnIdentifier(head);
+        if (!name || FORBIDDEN.has(name)) return false;
+
+        const leadingWord = readFirstPawnIdentifier(head);
+        if (leadingWord && FORBIDDEN.has(leadingWord)) return false;
+
+        const endLineText = String(strippedLines?.[headerEndLine] ?? rawLines[headerEndLine] ?? '');
+        const trailingText = endLineText.slice((headerEndPosition.charIndex ?? -1) + 1).trim();
+        if (trailingText.startsWith('{')) return true;
+        if (trailingText.startsWith(';')) return false;
+
+        for (let line = headerEndLine + 1; line < rawLines.length; line++) {
+            const trimmed = String(strippedLines?.[line] ?? rawLines[line] ?? '').trim();
+            if (!trimmed) continue;
+            return trimmed.startsWith('{');
+        }
+
+        return false;
+    }
+
     function findSingleStatementFunctionBodyLine(functionDecl, rawLines, strippedLines = rawLines, lineCtrlChars = []) {
         if (!functionDecl || !rawLines?.length) return null;
         if (functionDecl.type === 'forward' || functionDecl.type === 'native' || functionDecl.type === 'define') {
@@ -1645,6 +1766,7 @@ function createDeclarationParsingCore(deps) {
             if (!trimmed) continue;
             if (trimmed.startsWith('{')) return null;
             if (isPreprocessorDirectiveLine(trimmed) || isExplicitDeclarationStartLine(trimmed)) return null;
+            if (isFunctionDefinitionBoundaryLine(line, rawLines, strippedLines, lineCtrlChars)) return null;
             return line;
         }
 
@@ -2273,6 +2395,7 @@ function createDeclarationParsingCore(deps) {
         isPotentialDeclarationStartLine,
         isExplicitDeclarationStartLine,
         parseDeclLine,
+        collectDefineDeclarationText,
         collectActiveDefineDecls,
         filterEnumEvalOuterDecls,
         parseFileDecls

@@ -147,6 +147,11 @@ function main() {
             wiringFile: 'bootstrap/build-feature-runtime.js'
         },
         {
+            factoryFile: 'features/manual-function-body/index.js',
+            factoryName: 'createManualFunctionBodyFeature',
+            wiringFile: 'bootstrap/build-feature-runtime.js'
+        },
+        {
             factoryFile: 'services/document-language.js',
             factoryName: 'createDocumentLanguageService',
             wiringFile: 'bootstrap/feature-wiring/support.js'

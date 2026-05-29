@@ -1167,6 +1167,98 @@ public plugin_natives()
         'missing function body should not cascade onto the following public declaration'
     );
 
+    const missingBareFunctionBodyDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-missing-bare-function-body.sma'),
+        `
+enum _:STRUCT_AGR_DATA
+{
+    AGR_TARGET_LAST_TRY_REACH
+}
+
+target_update_position(iTarget, Float:vOrigin)
+
+target_last_try_reach(eAgrData[STRUCT_AGR_DATA])
+{
+    if(eAgrData[AGR_TARGET_LAST_TRY_REACH])
+        return false
+    return true
+}
+`.trimStart()
+    );
+    const missingBareFunctionBodyContext = coreRuntime.sharedRuntime.getPawnDocumentContext(missingBareFunctionBodyDocument);
+    const danglingBareFunction = missingBareFunctionBodyContext.parsedDecls.functions.find(decl => decl.name === 'target_update_position');
+    const followingBareFunction = missingBareFunctionBodyContext.parsedDecls.functions.find(decl => decl.name === 'target_last_try_reach');
+    assert(
+        danglingBareFunction && !Number.isInteger(danglingBareFunction.singleStatementBodyLine),
+        `dangling bare function header should not claim the next bare declaration as a single-statement body, got: ${JSON.stringify(danglingBareFunction)}`
+    );
+    assert(
+        followingBareFunction?.startLine === 7,
+        `bare function after a dangling bare header should remain independently parseable, got: ${JSON.stringify(followingBareFunction)}`
+    );
+    const missingBareFunctionBodyDiagnostics = liveValidation.collectLiveValidationDiagnostics(missingBareFunctionBodyDocument);
+    const missingBareFunctionBodyDiagnostic = missingBareFunctionBodyDiagnostics.find(diagnostic =>
+        diagnostic.message === functionBodyExpected &&
+        missingBareFunctionBodyDocument.getText(diagnostic.range) === 'target_update_position'
+    );
+    assert(
+        missingBareFunctionBodyDiagnostic,
+        `missing bare function body should be reported on the dangling function name, got: ${missingBareFunctionBodyDiagnostics.map(diagnostic => `${diagnostic.message} @ ${missingBareFunctionBodyDocument.getText(diagnostic.range)}`).join(' | ')}`
+    );
+    assert(
+        !missingBareFunctionBodyDiagnostics.some(diagnostic =>
+            missingBareFunctionBodyDocument.getText(diagnostic.range) === 'target_last_try_reach' ||
+            missingBareFunctionBodyDocument.getText(diagnostic.range) === 'eAgrData'
+        ),
+        `missing bare function body should not cascade onto the following declaration/body, got: ${missingBareFunctionBodyDiagnostics.map(diagnostic => `${diagnostic.message} @ ${missingBareFunctionBodyDocument.getText(diagnostic.range)}`).join(' | ')}`
+    );
+
+    const unusedReferenceArgsDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-unused-reference-args.sma'),
+        `
+enum _:STRUCT_AGR_DATA
+{
+    AGR_TARGET_LAST_TRY_REACH
+}
+
+target_update_position(iTarget, Float:vOrigin[3], eAgrData[STRUCT_AGR_DATA], &outputCell)
+{
+}
+`.trimStart()
+    );
+    const unusedReferenceArgsDiagnostics = liveValidation.collectLiveValidationDiagnostics(unusedReferenceArgsDocument);
+    for (const name of ['iTarget', 'vOrigin', 'eAgrData', 'outputCell']) {
+        const message = t('validation.symbolNeverUsed', { name });
+        assert(
+            unusedReferenceArgsDiagnostics.some(diagnostic =>
+                diagnostic.message === message &&
+                unusedReferenceArgsDocument.getText(diagnostic.range) === name
+            ),
+            `unused function argument ${name} should be reported on its own declaration range, got: ${unusedReferenceArgsDiagnostics.map(diagnostic => `${diagnostic.message} @ ${unusedReferenceArgsDocument.getText(diagnostic.range)}`).join(' | ')}`
+        );
+    }
+
+    const writtenReferenceArgsDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-written-reference-args.sma'),
+        `
+fill_result(Float:vOrigin[3], &outputCell)
+{
+    vOrigin[0] = 1.0
+    outputCell = 1
+}
+`.trimStart()
+    );
+    const writtenReferenceArgsDiagnostics = liveValidation.collectLiveValidationDiagnostics(writtenReferenceArgsDocument);
+    for (const name of ['vOrigin', 'outputCell']) {
+        assert(
+            !writtenReferenceArgsDiagnostics.some(diagnostic =>
+                diagnostic.message === t('validation.symbolNeverUsed', { name }) ||
+                diagnostic.message === t('validation.symbolAssignedValueNeverUsed', { name })
+            ),
+            `written reference/output argument ${name} should count as used, got: ${writtenReferenceArgsDiagnostics.map(diagnostic => `${diagnostic.message} @ ${writtenReferenceArgsDocument.getText(diagnostic.range)}`).join(' | ')}`
+        );
+    }
+
     const inlineEmptyFunctionBodyDocument = new MockDocument(
         path.join(workspaceRoot, 'feature-wiring-inline-empty-function-body.sma'),
         `

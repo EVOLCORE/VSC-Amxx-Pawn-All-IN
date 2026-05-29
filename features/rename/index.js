@@ -10,6 +10,9 @@ function createRenameFeature(deps) {
         isLinePositionInsideCommentOrString,
         isEscapedQuote,
         isSameFilePath,
+        splitTopLevel,
+        parseParamMeta,
+        isFunctionLikeDecl,
         symbolReferenceCore: providedSymbolReferenceCore = null
     } = deps;
     const symbolReferenceCore = providedSymbolReferenceCore || createSymbolReferenceCore({
@@ -20,7 +23,10 @@ function createRenameFeature(deps) {
         findVariableDeclarationSpanInRange,
         isLinePositionInsideCommentOrString,
         isEscapedQuote,
-        isSameFilePath
+        isSameFilePath,
+        splitTopLevel,
+        parseParamMeta,
+        isFunctionLikeDecl
     });
 
     function prepareRename(document, position) {

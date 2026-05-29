@@ -524,6 +524,13 @@ function createLiveValidationScanner(deps) {
                 lineCtx.lookup,
                 createHoverTypeAnalysisCache
             );
+            if (analysisCache?.setSourceSnapshot && !analysisCache.sourceText) {
+                analysisCache.setSourceSnapshot({
+                    filePath: lineCtx.fp || rootCtx.fp || document.fileName,
+                    text: lineCtx.text || rootCtx.text || document.getText(),
+                    rawLines: lineCtx.rawLines || rootCtx.rawLines || documentScanPlan.rawLines
+                });
+            }
             if (!hadAnalysisCache && scanStats) {
                 scanStats.analysisCacheCount++;
             }
@@ -615,13 +622,6 @@ function createLiveValidationScanner(deps) {
                 if (!lineDiagnostics) lineDiagnostics = [];
                 lineDiagnostics.push(diagnostic);
             };
-            const { text: lineText, startOffset: lineStartOffset } = getValidationLineSnapshot(lineNumber);
-            const strippedLineText = rootCtx.strippedLines?.[lineNumber] ?? lineText;
-            const trimmedStrippedLineText = String(strippedLineText || '').trim();
-            if (!trimmedStrippedLineText) {
-                if (lineDiagnosticsByLine) lineDiagnosticsByLine[lineNumber] = EMPTY_DIAGNOSTICS;
-                return EMPTY_DIAGNOSTICS;
-            }
             const mayNeedUnknownSymbolValidation = !!unknownSymbolCandidateLineFlags[lineNumber];
             const mayNeedDeclarationValidation = !!declarationDiagnosticCandidateLineFlags[lineNumber];
             const mayNeedExpressionOperatorValidation = !!expressionOperatorCandidateLineFlags[lineNumber];
@@ -632,6 +632,13 @@ function createLiveValidationScanner(deps) {
                 !mayNeedExpressionOperatorValidation &&
                 !mayNeedStrayTokenValidation
             ) {
+                if (lineDiagnosticsByLine) lineDiagnosticsByLine[lineNumber] = EMPTY_DIAGNOSTICS;
+                return EMPTY_DIAGNOSTICS;
+            }
+            const { text: lineText, startOffset: lineStartOffset } = getValidationLineSnapshot(lineNumber);
+            const strippedLineText = rootCtx.strippedLines?.[lineNumber] ?? lineText;
+            const trimmedStrippedLineText = String(strippedLineText || '').trim();
+            if (!trimmedStrippedLineText) {
                 if (lineDiagnosticsByLine) lineDiagnosticsByLine[lineNumber] = EMPTY_DIAGNOSTICS;
                 return EMPTY_DIAGNOSTICS;
             }

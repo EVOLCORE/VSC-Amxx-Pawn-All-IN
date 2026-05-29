@@ -16,7 +16,7 @@ const {
     PAWNDOC_ACTIVE_INCLUDE_CONTEXT,
     PAWNDOC_COMMAND_ID,
     PAWNDOC_SELECTION_COMMAND_ID
-} = require('../features/pawndoc');
+} = require('../features/pawndoc/constants');
 
 function buildLazyActivationRuntime(deps, options = {}) {
     const {
@@ -123,7 +123,7 @@ function buildLazyActivationRuntime(deps, options = {}) {
     const logHover = createPrefixedDebugLogger(liveValidationOutputChannel, 'hover');
     const proxySemanticTokensLegend =
         typeof vscode?.SemanticTokensLegend === 'function'
-            ? new vscode.SemanticTokensLegend(['number'], [])
+            ? new vscode.SemanticTokensLegend(['number', 'function'], ['declaration'])
             : null;
     const disposeProxyRegistrations = () => {
         while (proxyDisposables.length) {
@@ -164,6 +164,7 @@ function buildLazyActivationRuntime(deps, options = {}) {
         activeRuntime.semanticTokensFeature?.register?.(context);
         activeRuntime.documentHighlightFeature?.register?.(context);
         activeRuntime.pawnDocFeature?.register?.(context);
+        activeRuntime.manualFunctionBodyFeature?.register?.(context);
         realRegistered = true;
         return activeRuntime;
     }
@@ -446,6 +447,16 @@ function buildLazyActivationRuntime(deps, options = {}) {
         }
     };
 
+    const proxyManualFunctionBodyFeature = {
+        register() {
+            if (typeof vscode.workspace.onDidChangeTextDocument !== 'function') return;
+            trackProxyDisposable(vscode.workspace.onDidChangeTextDocument(event => {
+                if (!event?.contentChanges?.length || !shouldEnsureForDocumentLifecycle(event.document)) return;
+                ensureRegisteredRuntime().manualFunctionBodyFeature?.handleDidChangeTextDocument?.(event);
+            }));
+        }
+    };
+
     return {
         editorLifecycleFeature: proxyEditorLifecycleFeature,
         persistentHoverFeature: proxyPersistentHoverFeature,
@@ -457,6 +468,7 @@ function buildLazyActivationRuntime(deps, options = {}) {
         formatStringFeature: proxyFormatStringFeature,
         documentHighlightFeature: proxyFormatStringFeature,
         pawnDocFeature: proxyPawnDocFeature,
+        manualFunctionBodyFeature: proxyManualFunctionBodyFeature,
         buildHoverAtPosition(document, position) {
             return ensureRegisteredRuntime().buildHoverAtPosition(document, position);
         },

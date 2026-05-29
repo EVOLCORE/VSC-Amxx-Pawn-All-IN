@@ -37,6 +37,7 @@ const {
 const { createIncludePersistentCache } = require('./include-persistent-cache');
 
 const { normalizeExtensionList: defaultNormalizeExtensionList } = createUtilityCore();
+const DEFINE_STATE_DIRECTIVE_RE = /^#\s*(define|undef)\b/;
 
 function createDocumentIncludeSystem(deps) {
     const {
@@ -71,8 +72,10 @@ function createDocumentIncludeSystem(deps) {
         isPotentialEnumDeclarationLine,
         isPotentialDeclarationStartLine,
         collectDeclarationText,
+        collectDefineDeclarationText,
         parseDeclLine,
-        collectActiveDefineDecls,
+        parsePreprocessorDirectiveLine,
+        parsePreprocessorSingleIdentifierPayload,
         activeIncludeDeclsCache,
         areDependencyStampsFresh,
         buildDependencyStampMap,
@@ -1516,17 +1519,61 @@ function createDocumentIncludeSystem(deps) {
                 const lineCtrlChars = contentSnapshot.lineCtrlChars;
                 const depths = contentSnapshot.lineDepths;
                 const decls = [];
+                let activeDefineDecls = null;
                 let pendingDeprecatedMessage = null;
                 let i = 0;
                 while (i < rawLines.length) {
                     if (depths[i] !== 0) { i++; continue; }
                     const strippedLine = strippedLines[i];
                     if (String(strippedLine || '').indexOf('#') >= 0) {
-                        const deprecatedMessage = parseDeprecatedPragmaMessage(strippedLine);
+                        const trimmedDirectiveLine = String(strippedLine || '').trim();
+                        const deprecatedMessage = parseDeprecatedPragmaMessage(trimmedDirectiveLine);
                         if (deprecatedMessage != null) {
                             pendingDeprecatedMessage = deprecatedMessage;
                             i++;
                             continue;
+                        }
+                        if (DEFINE_STATE_DIRECTIVE_RE.test(trimmedDirectiveLine)) {
+                            const directive = typeof parsePreprocessorDirectiveLine === 'function'
+                                ? parsePreprocessorDirectiveLine(trimmedDirectiveLine)
+                                : null;
+                            if (directive?.keyword === 'define') {
+                                const startI = i;
+                                const { text: joined, nextLine } = collectDefineDeclarationText(
+                                    rawLines,
+                                    i,
+                                    lineCtrlChars,
+                                    strippedLines
+                                );
+                                i = nextLine;
+                                const parsedDefineDecls = parseDeclLine(
+                                    { text: joined, startLine: startI },
+                                    rawLines,
+                                    filePath,
+                                    fileName,
+                                    'global'
+                                );
+                                if (
+                                    pendingDeprecatedMessage != null &&
+                                    applyDeprecatedPragmaToNextDecl(parsedDefineDecls, pendingDeprecatedMessage)
+                                ) {
+                                    pendingDeprecatedMessage = null;
+                                }
+                                const defineDecl = parsedDefineDecls.find(d => d.type === 'define');
+                                if (defineDecl?.name) {
+                                    if (!activeDefineDecls) activeDefineDecls = new Map();
+                                    activeDefineDecls.set(defineDecl.name, defineDecl);
+                                }
+                                continue;
+                            }
+                            if (directive?.keyword === 'undef') {
+                                const parsedUndef = typeof parsePreprocessorSingleIdentifierPayload === 'function'
+                                    ? parsePreprocessorSingleIdentifierPayload(directive)
+                                    : null;
+                                if (parsedUndef?.name) activeDefineDecls?.delete(parsedUndef.name);
+                                i++;
+                                continue;
+                            }
                         }
                     }
                     if (!isPotentialDeclarationStartLine(strippedLine)) { i++; continue; }
@@ -1558,15 +1605,9 @@ function createDocumentIncludeSystem(deps) {
                         if (d.type !== 'define') decls.push(d);
                     }
                 }
-                decls.push(...collectActiveDefineDecls(
-                    rawLines,
-                    filePath,
-                    fileName,
-                    lineCtrlChars,
-                    undefined,
-                    strippedLines,
-                    resolvedPreprocessedState.directiveCandidateLines || null
-                ));
+                if (activeDefineDecls?.size) {
+                    decls.push(...activeDefineDecls.values());
+                }
                 const dependencyStamps = buildDependencyStampMap([
                     filePath,
                     ...(resolvedPreprocessedState.includeEntries || []).map(entry => entry.filePath)
@@ -1623,13 +1664,18 @@ function createDocumentIncludeSystem(deps) {
         return getActiveIncludeEntryDedupeKey(entry);
     }
 
-    function dedupeActiveIncludeEntries(includeEntries = []) {
+    function normalizeActiveIncludeEntries(includeEntries = []) {
         if (!Array.isArray(includeEntries) || includeEntries.length <= 1) {
-            return Array.isArray(includeEntries) ? includeEntries : [];
+            return {
+                entries: Array.isArray(includeEntries) ? includeEntries : [],
+                hasRepeatedFilePath: false
+            };
         }
         const seenLogicalKeys = new Set();
         const seenFiles = new Set();
+        const seenFilePaths = new Set();
         const result = [];
+        let hasRepeatedFilePath = false;
         for (const entry of includeEntries) {
             const logicalKey = getActiveIncludeEntryLogicalKey(entry);
             if (logicalKey && seenLogicalKeys.has(logicalKey)) continue;
@@ -1637,27 +1683,24 @@ function createDocumentIncludeSystem(deps) {
             const key = getActiveIncludeEntryDedupeKey(entry);
             if (key && seenFiles.has(key)) continue;
             if (key) seenFiles.add(key);
+            const filePath = normalizeFsPath(entry?.filePath || '');
+            if (filePath) {
+                if (seenFilePaths.has(filePath)) hasRepeatedFilePath = true;
+                else seenFilePaths.add(filePath);
+            }
             result.push(entry);
         }
-        return result.length === includeEntries.length ? includeEntries : result;
-    }
-
-    function hasRepeatedActiveIncludeFilePath(includeEntries = []) {
-        if (!Array.isArray(includeEntries) || includeEntries.length <= 1) return false;
-        const seen = new Set();
-        for (const entry of includeEntries) {
-            const filePath = normalizeFsPath(entry?.filePath || '');
-            if (!filePath) continue;
-            if (seen.has(filePath)) return true;
-            seen.add(filePath);
-        }
-        return false;
+        return {
+            entries: result.length === includeEntries.length ? includeEntries : result,
+            hasRepeatedFilePath
+        };
     }
 
     function getActiveDecls(docContent, searchPaths, docFilePath, preprocessedState = null) {
-        const includeEntries = dedupeActiveIncludeEntries(
+        const activeIncludeState = normalizeActiveIncludeEntries(
             collectActiveIncludeEntries(docContent, searchPaths, docFilePath, preprocessedState)
         );
+        const includeEntries = activeIncludeState.entries;
         const includeEntriesSignatureHash = buildIncludeEntriesSignatureHash(
             includeEntries,
             normalizeFsPath,
@@ -1697,7 +1740,7 @@ function createDocumentIncludeSystem(deps) {
             return persistentEntry.decls;
         }
         const declAccumulator = createIncludeDeclAccumulator({
-            dedupe: hasRepeatedActiveIncludeFilePath(includeEntries)
+            dedupe: activeIncludeState.hasRepeatedFilePath
         });
         for (const entry of includeEntries) {
             const preparedState = includePreprocessedStates

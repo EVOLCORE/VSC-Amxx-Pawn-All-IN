@@ -606,7 +606,7 @@
       "patterns": [
         {
           "name": "meta.function.definition.pawn",
-          "match": "^((?:(?:public|stock|native|forward|static)\\s+)*?)((?:[A-Za-z_@][A-Za-z0-9_@]*\\s*:\\s*)*)((?!(?:enum|struct|if|for|while|switch|return|sizeof|charsmax|assert)\\b)[A-Za-z_@][A-Za-z0-9_@]*)\\s*(\\()",
+          "match": "^(?=(?:(?:public|stock|native|forward|static)\\s+)|(?:[A-Za-z_@][A-Za-z0-9_@]*\\s*:\\s*))((?:(?:public|stock|native|forward|static)\\s+)*?)((?:[A-Za-z_@][A-Za-z0-9_@]*\\s*:\\s*)*)((?!(?:enum|struct|if|for|while|switch|return|sizeof|charsmax|assert)\\b)[A-Za-z_@][A-Za-z0-9_@]*)\\s*(\\()",
           "captures": {
             "1": {
               "name": "storage.type.function.pawn"

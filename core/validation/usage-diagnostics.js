@@ -222,6 +222,7 @@ function createSymbolUsageDiagnostics(deps = {}) {
             public: !!options.public,
             native: !!options.native,
             global: !!options.global,
+            referenceArg: !!options.referenceArg,
             scopeStartLine: Number.isInteger(options.scopeStartLine)
                 ? options.scopeStartLine
                 : (decl.lineNumber ?? 0),
@@ -553,8 +554,9 @@ function createSymbolUsageDiagnostics(deps = {}) {
                 const isReferenceArg = !!(decl.isArg && (hasDeclModifier(decl, '&') || String(decl.dims || '').trim()));
                 const isPublicVariable = hasDeclModifier(decl, 'public');
                 addEntry(createEntry(decl, 'variable', {
-                    read: isPublicArg || isCompilerLikeCallbackArg || isReferenceArg || isPublicVariable,
+                    read: isPublicArg || isCompilerLikeCallbackArg || isPublicVariable,
                     written: !!String(decl.value || '').trim() || isPublicVariable,
+                    referenceArg: isReferenceArg,
                     public: isPublicVariable,
                     stock: hasDeclModifier(decl, 'stock') || isStockFunction,
                     functionDecl,
@@ -584,6 +586,26 @@ function createSymbolUsageDiagnostics(deps = {}) {
                 variableNameFirstCharCodes[firstCode] = 1;
             }
         }
+        const usageNameFirstCharCodes = new Uint8Array(128);
+        const markUsageNameFirstCode = name => {
+            const firstCode = String(name || '').charCodeAt(0);
+            if (firstCode >= 0 && firstCode < usageNameFirstCharCodes.length) {
+                usageNameFirstCharCodes[firstCode] = 1;
+            }
+        };
+        for (const name of variableEntriesByName.keys()) markUsageNameFirstCode(name);
+        for (const name of parameterizedDefinesByName.keys()) markUsageNameFirstCode(name);
+        for (const name of objectLikeDefinesByName.keys()) markUsageNameFirstCode(name);
+        const lineMayContainTrackedIdentifierStart = (source, firstCharCodes) => {
+            const text = String(source || '');
+            for (let index = 0; index < text.length; index++) {
+                const code = text.charCodeAt(index);
+                if (code >= firstCharCodes.length || !firstCharCodes[code]) continue;
+                if (index > 0 && isIdentifierContinueCode(text.charCodeAt(index - 1))) continue;
+                return true;
+            }
+            return false;
+        };
         const objectLikeDefineUsageRelevanceCache = new WeakMap();
         const objectLikeDefineNameUsageRelevanceCache = new Map();
         const scanDefineValueIdentifiers = (value, onIdentifier) => {
@@ -736,7 +758,7 @@ function createSymbolUsageDiagnostics(deps = {}) {
             const occurrence = classifyVariableOccurrence(source, start, end);
             if (occurrence.skip) return false;
             const wasRead = variableEntry.read;
-            if (occurrence.read) variableEntry.read = true;
+            if (occurrence.read || (occurrence.written && variableEntry.referenceArg)) variableEntry.read = true;
             if (occurrence.written) variableEntry.written = true;
             if (!wasRead && variableEntry.read && typeof options.onReadEntry === 'function') {
                 options.onReadEntry(variableEntry);
@@ -747,6 +769,7 @@ function createSymbolUsageDiagnostics(deps = {}) {
         const scanVariableUsageSource = (source, lineNumber, options = {}) => {
             const text = String(source || '');
             if (!text) return;
+            if (!lineMayContainTrackedIdentifierStart(text, variableNameFirstCharCodes)) return;
             let inSyntheticBlockComment = false;
             let inString = false;
             let stringCharCode = 0;
@@ -874,6 +897,7 @@ function createSymbolUsageDiagnostics(deps = {}) {
             if (activeUsageScopeLineCount <= 0) continue;
             if (identifierCandidateLineFlags && !identifierCandidateLineFlags[lineNumber]) continue;
             const line = String(scanLines[lineNumber] || '');
+            if (!lineMayContainTrackedIdentifierStart(line, usageNameFirstCharCodes)) continue;
             const rawLine = String(rawLines[lineNumber] || '');
             const syntheticLocalDeclarations = line !== rawLine && SYNTHETIC_LOCAL_DECLARATION_KEYWORD_RE.test(line)
                 ? collectSyntheticLocalDeclarationInfo(line)
@@ -912,6 +936,7 @@ function createSymbolUsageDiagnostics(deps = {}) {
                 }
                 if (!isIdentifierStartCode(code)) continue;
                 if (index > 0 && isIdentifierContinueCode(line.charCodeAt(index - 1))) continue;
+                if (code >= usageNameFirstCharCodes.length || !usageNameFirstCharCodes[code]) continue;
 
                 const start = index;
                 let end = index + 1;

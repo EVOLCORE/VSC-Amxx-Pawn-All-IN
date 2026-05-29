@@ -164,12 +164,14 @@ function createNumericDimensionValidationCore(deps) {
         const expanded = macroExpansionCore.expandMacros(source, decls, {
             escapeChar: getActiveCtrlChar(),
             disabledNames: seen,
-            getDefine: name => findAnyDeclByNameFromSources(
-                decls,
-                name,
-                item => item.type === 'define',
-                analysisCache
-            ),
+            getDefine: name => analysisCache?.findDefineByName
+                ? analysisCache.findDefineByName(name)
+                : findAnyDeclByNameFromSources(
+                    decls,
+                    name,
+                    item => item.type === 'define',
+                    analysisCache
+                ),
             maxOutputLength: 8192
         });
         if (!expanded.complete) return cacheNumericExprResult(null);

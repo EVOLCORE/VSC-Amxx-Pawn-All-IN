@@ -25,8 +25,12 @@ const {
     INCLUDE_COMPLETION_TRIGGER_CHARACTERS
 } = require('../../core/completion/triggers');
 const {
-    createServiceKeywordCandidateSelector
+    createServiceKeywordCandidateSelector,
+    getServiceKeywordInsertText
 } = require('../../core/completion/service-keywords');
+const {
+    buildBlockSnippet
+} = require('../../core/completion/block-snippets');
 const {
     normalizeCompletionCallArgumentMode
 } = require('../../core/completion/call-argument-mode');
@@ -376,11 +380,9 @@ function createCompletionFeature(deps) {
                 item.range = getForwardBodyReplacementRange(replaceRange, options.existingArgumentBlock);
                 const argSnippetText = getDeclarationArgSnippetText(data);
                 const header = `${declarationInsertName}(${argSnippetText})`;
-                item.insertText = new vscode.SnippetString(
-                    options.forwardBodyStyle === 'next-line'
-                        ? `${header}\n{\n\t$0\n}`
-                        : `${header} {\n\t$0\n}`
-                );
+                item.insertText = new vscode.SnippetString(buildBlockSnippet(header, {
+                    braceStyle: options.forwardBodyStyle
+                }));
             } else if (options.callInsertMode === 'name-only') {
                 item.insertText = callInsertName;
             } else {
@@ -972,7 +974,7 @@ function createCompletionFeature(deps) {
         return !before || before === '}';
     }
 
-    function makeServiceKeywordItem(definition, sortIndex, replaceRange = null, match = null) {
+    function makeServiceKeywordItem(definition, sortIndex, replaceRange = null, match = null, options = {}) {
         const item = new vscode.CompletionItem(definition.name);
         item.kind = vscode.CompletionItemKind.Keyword;
         item.filterText = definition.name;
@@ -981,8 +983,11 @@ function createCompletionFeature(deps) {
         item.detail = definition.detail;
         item.label = { label: definition.name, description: definition.detail };
         item.labelDetails = { description: definition.detail };
-        item.insertText = new vscode.SnippetString(definition.insertText);
+        item.insertText = new vscode.SnippetString(getServiceKeywordInsertText(definition, {
+            braceStyle: options.braceStyle
+        }));
         if (replaceRange) item.range = replaceRange;
+        item._pawnServiceKeywordDefinition = definition;
         return item;
     }
 
@@ -998,6 +1003,8 @@ function createCompletionFeature(deps) {
 
     function isServiceKeywordDefinitionAllowed(definition, state) {
         switch (definition?.context) {
+            case 'declaration':
+                return state.statementContext;
             case 'statement':
                 return state.statementContext;
             case 'else':
@@ -1013,7 +1020,19 @@ function createCompletionFeature(deps) {
         }
     }
 
-    function getCachedServiceKeywordItems(candidates, replaceRange, state) {
+    function getDominantServiceKeywordItems(items, prefix = '', state = {}) {
+        if (!Array.isArray(items) || !items.length || !state.statementContext) return [];
+        const normalizedPrefix = String(prefix || '').trim().toLowerCase();
+        if (!normalizedPrefix) return [];
+        return items.filter(item => {
+            const definition = item?._pawnServiceKeywordDefinition;
+            if (!definition?.preferOverSymbolFallback) return false;
+            const name = String(definition.name || '').toLowerCase();
+            return name.startsWith(normalizedPrefix);
+        });
+    }
+
+    function getCachedServiceKeywordItems(candidates, replaceRange, state, options = {}) {
         if (!Array.isArray(candidates) || !candidates.length) return [];
         let cache = serviceKeywordItemsCache.get(candidates);
         if (!cache) {
@@ -1026,14 +1045,15 @@ function createCompletionFeature(deps) {
             state.elseContext ? 1 : 0,
             state.inLoop ? 1 : 0,
             state.inSwitch ? 1 : 0,
-            state.inDirectSwitchBody ? 1 : 0
+            state.inDirectSwitchBody ? 1 : 0,
+            options.braceStyle || ''
         ].join('|');
         if (cache.has(cacheKey)) return cache.get(cacheKey);
         const items = [];
         for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex++) {
             const { definition, index, match } = candidates[candidateIndex];
             if (!isServiceKeywordDefinitionAllowed(definition, state)) continue;
-            items.push(makeServiceKeywordItem(definition, index, replaceRange, match));
+            items.push(makeServiceKeywordItem(definition, index, replaceRange, match, options));
         }
         cache.set(cacheKey, items);
         return items;
@@ -1188,9 +1208,9 @@ function createCompletionFeature(deps) {
         );
     }
 
-    function getServiceKeywordCompletionItems(document, position, replaceRange, ctx, prefix = '', hasExistingStartsWith = false) {
+    function getServiceKeywordCompletionItems(document, position, replaceRange, ctx, prefix = '', hasExistingStartsWith = false, options = {}) {
         const candidates = getServiceKeywordCandidatesForPrefix(prefix, hasExistingStartsWith);
-        if (!candidates.length) return [];
+        if (!candidates.length) return { items: [], dominantItems: [] };
         const beforeCompletion = getLineTextBeforeCompletion(document, position, replaceRange);
         const statementContext = isStatementStartCompletionText(beforeCompletion);
         const elseContext = isElseCompletionText(beforeCompletion);
@@ -1208,13 +1228,20 @@ function createCompletionFeature(deps) {
             })
             : null;
 
-        return getCachedServiceKeywordItems(candidates, replaceRange, {
+        const state = {
             statementContext,
             elseContext,
             inLoop: !!controlContext?.inLoop,
             inSwitch: !!controlContext?.inSwitch,
             inDirectSwitchBody: !!controlContext?.inDirectSwitchBody
+        };
+        const items = getCachedServiceKeywordItems(candidates, replaceRange, state, {
+            braceStyle: options.braceStyle
         });
+        return {
+            items,
+            dominantItems: getDominantServiceKeywordItems(items, prefix, state)
+        };
     }
 
     function getMergedCompletionItems(baseItems, extraItems) {
@@ -1416,15 +1443,20 @@ function createCompletionFeature(deps) {
                 );
                 let items = baseItems;
                 if (completionIntent === 'call') {
-                    const serviceItems = getServiceKeywordCompletionItems(
+                    const serviceCompletion = getServiceKeywordCompletionItems(
                         document,
                         position,
                         replaceRange,
                         ctx,
                         prefix,
-                        filteredCandidates.startsWithCount > 0
+                        filteredCandidates.startsWithCount > 0,
+                        { braceStyle: forwardBodyStyle }
                     );
-                    items = getMergedCompletionItems(baseItems, serviceItems);
+                    const serviceItems = serviceCompletion.items || [];
+                    const dominantServiceItems = serviceCompletion.dominantItems || [];
+                    items = dominantServiceItems.length && filteredCandidates.startsWithCount === 0
+                        ? serviceItems
+                        : getMergedCompletionItems(baseItems, serviceItems);
                 }
 
                 logCompletion(() =>

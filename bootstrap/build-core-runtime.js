@@ -125,6 +125,7 @@ function buildCoreActivationRuntime(deps) {
     let parseDimsParts = null;
     let parseDimSpec = null;
     let evaluatePawnNumericExpr = null;
+    let collectDefineDeclarationText = null;
     let collectActiveDefineDecls = null;
     let filterEnumEvalOuterDecls = null;
     let parseFileDecls = null;
@@ -357,6 +358,7 @@ function buildCoreActivationRuntime(deps) {
         parseDimsParts,
         parseDimSpec,
         evaluatePawnNumericExpr,
+        collectDefineDeclarationText,
         collectActiveDefineDecls,
         filterEnumEvalOuterDecls,
         parseFileDecls
@@ -398,8 +400,9 @@ function buildCoreActivationRuntime(deps) {
         isPotentialEnumDeclarationLine,
         isPotentialDeclarationStartLine,
         collectDeclarationText,
+        collectDefineDeclarationText,
         parseDeclLine,
-        collectActiveDefineDecls,
+        parsePreprocessorSingleIdentifierPayload,
         activeIncludeDeclsCache,
         areDependencyStampsFresh,
         buildDependencyStampMap,

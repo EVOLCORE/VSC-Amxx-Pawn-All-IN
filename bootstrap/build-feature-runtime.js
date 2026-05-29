@@ -5,6 +5,7 @@ const { buildCompletionNavigationFeatures } = require('./feature-wiring/completi
 const { buildEditorLifecycleFeature } = require('./feature-wiring/editor-lifecycle');
 const { createDocumentHighlightFeature } = require('../features/document-highlights');
 const { createPawnDocFeature } = require('../features/pawndoc');
+const { createManualFunctionBodyFeature } = require('../features/manual-function-body');
 
 function buildFeatureActivationRuntime(deps) {
     const settingsService = deps.settingsService || {};
@@ -37,6 +38,11 @@ function buildFeatureActivationRuntime(deps) {
         parseFuncArgs: deps.coreRuntime.sharedRuntime.parseFuncArgs,
         getActiveCtrlChar: deps.coreRuntime.sharedRuntime.getActiveCtrlChar
     });
+    const manualFunctionBodyFeature = createManualFunctionBodyFeature({
+        vscode: deps.vscode,
+        getPawnDocumentContext: deps.coreRuntime.sharedRuntime.getPawnDocumentContext,
+        getManualFunctionBodyStyle: () => settingsService.getCompletionForwardDeclarationStyle?.() || 'same-line'
+    });
     const editorLifecycleFeature = buildEditorLifecycleFeature(deps, support, liveValidationRuntime);
 
     return {
@@ -51,7 +57,8 @@ function buildFeatureActivationRuntime(deps) {
         formatStringFeature,
         symbolHighlightFeature,
         documentHighlightFeature,
-        pawnDocFeature
+        pawnDocFeature,
+        manualFunctionBodyFeature
     };
 }
 

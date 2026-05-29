@@ -7,6 +7,7 @@ function createTypeAnalysisCacheFactory(deps) {
         parseDimsParts,
         parseParamMeta
     } = deps;
+    const isVariableDecl = decl => decl?.type === 'variable';
 
     const hoverTypeAnalysisCacheProto = {
         findDeclByName(name, predicate = null) {
@@ -28,6 +29,37 @@ function createTypeAnalysisCacheFactory(deps) {
             const localDecl = this.findDeclByName(name, predicate);
             if (localDecl) return localDecl;
             return findDeclByNameCached(BUILTIN_DECLS, name, predicate);
+        },
+        findVariableByName(name) {
+            if (this.lookup?.findDocumentVariable) {
+                const documentVariable = this.lookup.findDocumentVariable(name);
+                if (documentVariable) return documentVariable;
+            }
+            return this.findAnyDeclByName(name, isVariableDecl);
+        },
+        findDefineByName(name) {
+            if (this.lookup?.findDefine) {
+                return this.lookup.findDefine(name);
+            }
+            if (!this.defineDeclByName) {
+                this.defineDeclByName = new Map();
+                const appendDecls = decls => {
+                    for (const decl of decls || []) {
+                        if (decl?.type !== 'define' || !decl.name || this.defineDeclByName.has(decl.name)) continue;
+                        this.defineDeclByName.set(decl.name, decl);
+                    }
+                };
+                appendDecls(this.sourceDecls);
+                appendDecls(BUILTIN_DECLS);
+            }
+            return this.defineDeclByName.get(name) || null;
+        },
+        setSourceSnapshot(snapshot = {}) {
+            if (typeof snapshot.text !== 'string' || !snapshot.filePath) return this;
+            this.sourceFilePath = snapshot.filePath;
+            this.sourceText = snapshot.text;
+            this.sourceRawLines = Array.isArray(snapshot.rawLines) ? snapshot.rawLines : null;
+            return this;
         },
         getParamMeta(paramText) {
             const key = String(paramText || '');
@@ -81,6 +113,10 @@ function createTypeAnalysisCacheFactory(deps) {
         cache.indexedDimCompatByKey = new Map();
         cache.typeCompatByKey = new Map();
         cache.macroDefineByName = new Map();
+        cache.defineDeclByName = null;
+        cache.sourceFilePath = '';
+        cache.sourceText = '';
+        cache.sourceRawLines = null;
         return cache;
     };
 }

@@ -540,6 +540,67 @@ function createPreprocessorSyntaxCore(deps) {
         return { valid: true, normalized };
     }
 
+    function tryEvaluateSimpleDefinedCondition(source, hasDefine) {
+        const text = String(source || '').trim();
+        if (!text) return null;
+
+        let cursor = 0;
+        let negated = false;
+        if (text[cursor] === '!') {
+            negated = true;
+            cursor = skipDirectiveSpaces(text, cursor + 1);
+        }
+
+        const definedToken = readDirectiveIdentifier(text, cursor);
+        if (!definedToken || definedToken.start !== cursor || definedToken.name !== 'defined') return null;
+        cursor = skipDirectiveSpaces(text, definedToken.end);
+
+        let wrapped = false;
+        if (text[cursor] === '(') {
+            wrapped = true;
+            cursor = skipDirectiveSpaces(text, cursor + 1);
+        }
+
+        const defineName = readDirectiveIdentifier(text, cursor);
+        if (!defineName || defineName.start !== cursor) return null;
+        cursor = skipDirectiveSpaces(text, defineName.end);
+
+        if (wrapped) {
+            if (text[cursor] !== ')') return null;
+            cursor = skipDirectiveSpaces(text, cursor + 1);
+        }
+        if (cursor !== text.length) return null;
+
+        const value = !!hasDefine(defineName.name);
+        const normalizedValue = negated ? !value : value;
+        return {
+            valid: true,
+            value: normalizedValue ? 1 : 0,
+            normalized: normalizedValue ? '1' : '0'
+        };
+    }
+
+    function tryEvaluateSimpleLiteralCondition(source) {
+        const text = String(source || '').trim();
+        if (!text) return null;
+        const lower = text.toLowerCase();
+        if (lower === 'true') {
+            return { valid: true, value: 1, normalized: '1' };
+        }
+        if (lower === 'false') {
+            return { valid: true, value: 0, normalized: '0' };
+        }
+        if (!/^[+-]?\d(?:[\d_]*\d)?$/.test(text)) return null;
+        const normalized = text.replace(/_/g, '');
+        const value = Number.parseInt(normalized, 10);
+        if (!Number.isFinite(value)) return null;
+        return {
+            valid: true,
+            value,
+            normalized
+        };
+    }
+
     function normalizePreprocessorRemainingIdentifiers(source, options = {}) {
         const text = String(source || '');
         const lineValue = Number.isInteger(options.lineNumber)
@@ -588,10 +649,16 @@ function createPreprocessorSyntaxCore(deps) {
         const hasDefine = name => isCompilerPredefinedConstantName(name) ||
             (defineLookup ? defineLookup.has(name) : defineDecls.some(d => d.name === name));
         const getDefine = name => defineLookup ? (defineLookup.get(name) || null) : (defineDecls.find(d => d.name === name) || null);
-        const evalDecls = getDefineLookupValues(defineLookup, defineDecls);
         const source = String(expr || '').trim();
         if (!source) return { valid: false, value: null, normalized: '' };
 
+        const simpleDefined = tryEvaluateSimpleDefinedCondition(source, hasDefine);
+        if (simpleDefined) return simpleDefined;
+
+        const simpleLiteral = tryEvaluateSimpleLiteralCondition(source);
+        if (simpleLiteral) return simpleLiteral;
+
+        const evalDecls = getDefineLookupValues(defineLookup, defineDecls);
         const definedResolved = replaceDefinedOperatorsInPreprocessorExpression(source, hasDefine);
         if (!definedResolved.valid) {
             return { valid: false, value: null, normalized: definedResolved.normalized };

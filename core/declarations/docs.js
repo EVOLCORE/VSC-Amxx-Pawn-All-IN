@@ -11,14 +11,42 @@ function createMayHaveDocsState(rawLines) {
     };
 }
 
+function isDocScanWhitespaceCode(code) {
+    return code === 32 || code === 9 || code === 10 || code === 13 || code === 11 || code === 12;
+}
+
+function getFirstNonWhitespaceIndex(line) {
+    const source = typeof line === 'string' ? line : String(line || '');
+    for (let index = 0; index < source.length; index++) {
+        if (!isDocScanWhitespaceCode(source.charCodeAt(index))) return index;
+    }
+    return -1;
+}
+
+function lineHasCommentMarker(line) {
+    const source = typeof line === 'string' ? line : String(line || '');
+    if (!source) return false;
+    return source.indexOf('//') >= 0 || source.indexOf('/*') >= 0 || source.indexOf('*/') >= 0;
+}
+
+function lineStartsAttachableDoc(line, firstNonWhitespaceIndex) {
+    if (firstNonWhitespaceIndex < 0) return false;
+    const source = typeof line === 'string' ? line : String(line || '');
+    const char = source[firstNonWhitespaceIndex];
+    if (char === '*') return true;
+    if (char !== '/') return false;
+    const next = source[firstNonWhitespaceIndex + 1] || '';
+    return next === '/' || next === '*';
+}
+
 function scanMayHaveDocsFlags(rawLines, state, targetLine) {
     for (let lineNumber = state.computedThrough + 1; lineNumber <= targetLine; lineNumber++) {
-        const line = String(rawLines[lineNumber] || '');
-        const ownLineHasComment = line.includes('//') || line.includes('/*') || line.includes('*/');
+        const line = rawLines[lineNumber] || '';
+        const firstNonWhitespaceIndex = getFirstNonWhitespaceIndex(line);
+        const ownLineHasComment = lineHasCommentMarker(line);
         state.flags[lineNumber] = (ownLineHasComment || state.previousAttachableDoc) ? 2 : 1;
 
-        const trimmed = line.trim();
-        if (!trimmed) {
+        if (firstNonWhitespaceIndex < 0) {
             if (state.previousAttachableDoc) {
                 state.blankGap++;
                 if (state.blankGap > 1) {
@@ -29,7 +57,7 @@ function scanMayHaveDocsFlags(rawLines, state, targetLine) {
             continue;
         }
 
-        if (trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*')) {
+        if (lineStartsAttachableDoc(line, firstNonWhitespaceIndex)) {
             state.previousAttachableDoc = true;
             state.blankGap = 0;
         } else {

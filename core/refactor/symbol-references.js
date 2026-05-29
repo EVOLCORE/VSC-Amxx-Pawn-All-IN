@@ -14,7 +14,10 @@ function createSymbolReferenceCore(deps) {
         findVariableDeclarationSpanInRange,
         isLinePositionInsideCommentOrString,
         isEscapedQuote,
-        isSameFilePath
+        isSameFilePath,
+        splitTopLevel,
+        parseParamMeta,
+        isFunctionLikeDecl
     } = deps;
 
     const MAX_RENAME_TARGET_CACHE_ENTRIES_PER_DOCUMENT = 256;
@@ -223,6 +226,196 @@ function createSymbolReferenceCore(deps) {
             if (!/\s/.test(source[index] || '')) return { char: source[index], index };
         }
         return { char: '', index: -1 };
+    }
+
+    function readPreviousIdentifier(source, index) {
+        let end = Math.max(0, Math.min(source.length, index));
+        while (end > 0 && /\s/.test(source[end - 1] || '')) end--;
+        let start = end;
+        while (start > 0 && isPawnIdentifierContinueChar(source[start - 1] || '')) start--;
+        const name = source.slice(start, end);
+        return isPawnIdentifierName(name) ? name : '';
+    }
+
+    function readStringLiteral(source, quoteOffset) {
+        const quote = source[quoteOffset];
+        if (quote !== '"' && quote !== "'") return null;
+        let value = '';
+        for (let index = quoteOffset + 1; index < source.length; index++) {
+            const char = source[index];
+            if (char === quote && !isBackslashEscaped(source, index) && !isPawnCtrlEscaped(source, index)) {
+                return {
+                    value,
+                    valueStartOffset: quoteOffset + 1,
+                    valueEndOffset: index,
+                    endOffset: index + 1
+                };
+            }
+            value += char;
+        }
+        return null;
+    }
+
+    function isBackslashEscaped(source, index) {
+        let count = 0;
+        for (let cursor = index - 1; cursor >= 0 && source[cursor] === '\\'; cursor--) count++;
+        return (count % 2) === 1;
+    }
+
+    function isPawnCtrlEscaped(source, index) {
+        return index > 0 && source[index - 1] === '^' && !isBackslashEscaped(source, index - 1);
+    }
+
+    function getFunctionLikeDecl(ctx, name) {
+        if (!name) return null;
+        const predicate = typeof isFunctionLikeDecl === 'function'
+            ? item => isFunctionLikeDecl(item)
+            : item => !!item && item.type !== 'variable' && item.type !== 'enum' && item.type !== 'enum-item';
+        return ctx?.lookup?.getPreferredFunctionMatch?.(name)?.data ||
+            ctx?.lookup?.findAnyDeclByName?.(name, predicate) ||
+            (ctx?.parsedDecls?.functions || []).find(item => item?.name === name && predicate(item)) ||
+            (ctx?.incDecls || []).find(item => item?.name === name && predicate(item)) ||
+            null;
+    }
+
+    function splitParamList(args) {
+        const source = String(args || '');
+        if (!source) return [];
+        if (typeof splitTopLevel === 'function') {
+            try {
+                return splitTopLevel(source).map(part => String(part || '').trim());
+            } catch {
+                // Fall through to the conservative splitter below.
+            }
+        }
+        return source.split(',').map(part => part.trim());
+    }
+
+    function getParamName(paramText) {
+        if (typeof parseParamMeta === 'function') {
+            try {
+                const parsed = parseParamMeta(paramText);
+                if (parsed?.name) return String(parsed.name);
+            } catch {
+                // Fall through to the local conservative parser.
+            }
+        }
+        let source = String(paramText || '').trim();
+        const assignmentIndex = source.indexOf('=');
+        if (assignmentIndex >= 0) source = source.slice(0, assignmentIndex).trim();
+        source = source.replace(/^const\b\s*/i, '').replace(/^&\s*/, '').trim();
+        source = source.replace(/^[A-Za-z_@][A-Za-z0-9_@]*\s*:\s*/, '').trim();
+        const match = source.match(/[A-Za-z_@][A-Za-z0-9_@]*/);
+        return match ? match[0] : '';
+    }
+
+    function isFunctionNameParameter(paramText) {
+        const paramName = getParamName(paramText).toLowerCase();
+        if (!paramName) return false;
+        if (
+            paramName.includes('callback') ||
+            paramName.includes('handler') ||
+            paramName.includes('function')
+        ) {
+            return true;
+        }
+        return /(?:^|_)(?:func|think|touch|use|blocked|keyvalue|spawn)(?:$|_)/.test(paramName);
+    }
+
+    function isCallbackStringArgument(ctx, calleeName, argIndex) {
+        const decl = getFunctionLikeDecl(ctx, calleeName);
+        const params = splitParamList(decl?.args);
+        const paramText = params[argIndex] || '';
+        return !!paramText && isFunctionNameParameter(paramText);
+    }
+
+    function scanCallbackStringReferenceRanges(document, ctx, targetDecl) {
+        const name = targetDecl?.name || '';
+        if (!name) return [];
+        const text = ctx?.text != null ? String(ctx.text) : String(document.getText?.() || '');
+        if (!text.includes(`"${name}"`)) return [];
+        const ranges = [];
+        const parens = [];
+        let inLineComment = false;
+        let inBlockComment = false;
+
+        for (let index = 0; index < text.length;) {
+            const char = text[index];
+            const next = text[index + 1] || '';
+
+            if (inLineComment) {
+                if (char === '\n' || char === '\r') inLineComment = false;
+                index++;
+                continue;
+            }
+
+            if (inBlockComment) {
+                if (char === '*' && next === '/') {
+                    inBlockComment = false;
+                    index += 2;
+                    continue;
+                }
+                index++;
+                continue;
+            }
+
+            if (char === '/' && next === '/') {
+                inLineComment = true;
+                index += 2;
+                continue;
+            }
+
+            if (char === '/' && next === '*') {
+                inBlockComment = true;
+                index += 2;
+                continue;
+            }
+
+            if (char === '"' || char === "'") {
+                const literal = readStringLiteral(text, index);
+                if (!literal) {
+                    index++;
+                    continue;
+                }
+                const currentCall = parens[parens.length - 1] || null;
+                if (
+                    char === '"' &&
+                    literal.value === name &&
+                    currentCall?.calleeName &&
+                    isCallbackStringArgument(ctx, currentCall.calleeName, currentCall.commaCount)
+                ) {
+                    ranges.push(new vscode.Range(
+                        document.positionAt(literal.valueStartOffset),
+                        document.positionAt(literal.valueEndOffset)
+                    ));
+                }
+                index = literal.endOffset;
+                continue;
+            }
+
+            if (char === '(') {
+                parens.push({
+                    calleeName: readPreviousIdentifier(text, index),
+                    commaCount: 0
+                });
+                index++;
+                continue;
+            }
+
+            if (char === ')') {
+                if (parens.length) parens.pop();
+                index++;
+                continue;
+            }
+
+            if (char === ',' && parens.length) {
+                parens[parens.length - 1].commaCount++;
+            }
+
+            index++;
+        }
+
+        return ranges;
     }
 
     function isRenameableSourceOccurrence(ctx, lineNumber, source, start, end, name, escapeChar) {
@@ -460,6 +653,9 @@ function createSymbolReferenceCore(deps) {
             )
         )) {
             collector.addRange(occurrence.lineNumber, occurrence.start, occurrence.end);
+        }
+        for (const range of scanCallbackStringReferenceRanges(document, ctx, targetDecl)) {
+            collector.addDocumentRange(range);
         }
         collector.addDocumentRange(getFunctionDeclarationNameRange(document, ctx, targetDecl));
         return collector.sortedRanges();

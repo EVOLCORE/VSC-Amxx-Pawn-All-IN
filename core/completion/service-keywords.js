@@ -1,14 +1,23 @@
 const { getBestCompletionMatch } = require('./matching');
+const {
+    buildBlockSnippet,
+    buildDoWhileSnippet,
+    buildSwitchSnippet
+} = require('./block-snippets');
 
 const SERVICE_KEYWORD_COMPLETIONS = [
-    { name: 'if', detail: 'statement', insertText: 'if (${1:condition}) {\n\t$0\n}', context: 'statement' },
-    { name: 'else', detail: 'statement', insertText: 'else {\n\t$0\n}', context: 'else' },
-    { name: 'for', detail: 'loop statement', insertText: 'for (new ${1:i} = 0; ${1:i} < ${2:count}; ${1:i}++) {\n\t$0\n}', context: 'statement' },
-    { name: 'while', detail: 'loop statement', insertText: 'while (${1:condition}) {\n\t$0\n}', context: 'statement' },
-    { name: 'do', detail: 'loop statement', insertText: 'do {\n\t$0\n} while (${1:condition});', context: 'statement' },
-    { name: 'switch', detail: 'switch statement', insertText: 'switch (${1:value}) {\n\tcase ${2:0}: {\n\t\t$0\n\t}\n}', context: 'statement' },
-    { name: 'case', detail: 'switch label', insertText: 'case ${1:value}: {\n\t$0\n}', context: 'switch-label' },
-    { name: 'default', detail: 'switch label', insertText: 'default: {\n\t$0\n}', context: 'switch-label' },
+    { name: 'new', detail: 'declaration', insertText: 'new', context: 'declaration', preferOverSymbolFallback: true },
+    { name: 'static', detail: 'declaration', insertText: 'static', context: 'declaration', preferOverSymbolFallback: true },
+    { name: 'const', detail: 'declaration', insertText: 'const', context: 'declaration', preferOverSymbolFallback: true },
+    { name: 'enum', detail: 'declaration', blockHeader: 'enum', context: 'declaration', preferOverSymbolFallback: true },
+    { name: 'if', detail: 'statement', blockHeader: 'if (${1:condition})', context: 'statement' },
+    { name: 'else', detail: 'statement', blockHeader: 'else', context: 'else' },
+    { name: 'for', detail: 'loop statement', blockHeader: 'for (new ${1:i} = 0; ${1:i} < ${2:count}; ${1:i}++)', context: 'statement' },
+    { name: 'while', detail: 'loop statement', blockHeader: 'while (${1:condition})', context: 'statement' },
+    { name: 'do', detail: 'loop statement', snippetKind: 'do-while', context: 'statement' },
+    { name: 'switch', detail: 'switch statement', snippetKind: 'switch', context: 'statement' },
+    { name: 'case', detail: 'switch label', blockHeader: 'case ${1:value}:', context: 'switch-label' },
+    { name: 'default', detail: 'switch label', blockHeader: 'default:', context: 'switch-label' },
     { name: 'break', detail: 'loop/switch control', insertText: 'break;', context: 'break' },
     { name: 'continue', detail: 'loop control', insertText: 'continue;', context: 'loop' },
     { name: 'return', detail: 'statement', insertText: 'return $0;', context: 'statement' },
@@ -16,6 +25,20 @@ const SERVICE_KEYWORD_COMPLETIONS = [
     { name: 'state', detail: 'statement', insertText: 'state ${1:name};', context: 'statement' },
     { name: 'exit', detail: 'statement', insertText: 'exit;', context: 'statement' }
 ];
+
+function getServiceKeywordInsertText(definition, options = {}) {
+    if (!definition) return '';
+    if (definition.snippetKind === 'do-while') {
+        return buildDoWhileSnippet('${1:condition}', { braceStyle: options.braceStyle });
+    }
+    if (definition.snippetKind === 'switch') {
+        return buildSwitchSnippet({ braceStyle: options.braceStyle });
+    }
+    if (definition.blockHeader) {
+        return buildBlockSnippet(definition.blockHeader, { braceStyle: options.braceStyle });
+    }
+    return definition.insertText || definition.name || '';
+}
 
 function createServiceKeywordCandidateSelector() {
     const cache = new Map();
@@ -74,5 +97,6 @@ function createServiceKeywordCandidateSelector() {
 
 module.exports = {
     SERVICE_KEYWORD_COMPLETIONS,
+    getServiceKeywordInsertText,
     createServiceKeywordCandidateSelector
 };

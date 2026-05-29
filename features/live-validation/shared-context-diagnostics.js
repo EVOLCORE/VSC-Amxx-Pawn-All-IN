@@ -280,6 +280,7 @@ function createSharedContextDiagnostics(deps) {
             ? { currentArgs, currentLocals, currentGlobals }
             : null;
         if (!lineDecls) {
+            index.declsByLine.set(lineNumber, EMPTY_VARIABLE_DECLS_FOR_LINE);
             return EMPTY_VARIABLE_DECLS_FOR_LINE;
         }
         index.declsByLine.set(lineNumber, lineDecls);

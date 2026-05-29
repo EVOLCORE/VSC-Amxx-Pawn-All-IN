@@ -198,7 +198,7 @@ For include API files, use `AMXX Pawn All-In: Generate PawnDoc Stubs` from the e
   Enable or disable completion provider.
 
 - `amxxPawnAllIn.completionForwardDeclarationStyle`
-  Controls whether forward suggestions at top level insert only a signature, a same-line body, or a next-line body.
+  Controls whether forward suggestions at top level insert only a signature, a same-line body, or a next-line body. The same brace placement is used by statement snippets such as `if`, `else`, `for`, `while`, `switch`, `case`, and `default`, and by Enter-assisted bodies for manually typed function declarations.
 
 - `amxxPawnAllIn.completionCallArgumentMode`
   Controls whether call snippets insert all arguments or only the required arguments before the first default value.

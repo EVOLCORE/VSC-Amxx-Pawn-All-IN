@@ -35,11 +35,63 @@ function buildDeclBuckets(decls = []) {
         else nameBuckets.set(name, [decl]);
         if (decl.type !== 'variable') continue;
         if (!variableBuckets) variableBuckets = new Map();
-        if (!variableBuckets.get(name)) {
+        if (!variableBuckets.has(name)) {
             variableBuckets.set(name, decl);
         }
     }
     return { nameBuckets, variableBuckets: variableBuckets || EMPTY_VARIABLE_NAME_BUCKETS };
+}
+
+function findDeclInNameBuckets(buckets, name, predicate = null) {
+    if (!buckets) return null;
+    const matches = buckets.get(name);
+    if (!matches || matches.length === 0) return null;
+    if (!predicate) return matches[0] || null;
+    if (matches.length === 1) {
+        const match = matches[0];
+        return predicate(match) ? match : null;
+    }
+    for (const decl of matches) {
+        if (predicate(decl)) return decl;
+    }
+    return null;
+}
+
+function filterDeclsInNameBuckets(buckets, name, predicate = null) {
+    if (!buckets) return [];
+    const matches = buckets.get(name);
+    if (!matches || matches.length === 0) return [];
+    if (!predicate) return matches.slice();
+    if (matches.length === 1) {
+        const match = matches[0];
+        return predicate(match) ? [match] : [];
+    }
+    const result = [];
+    for (const decl of matches) {
+        if (predicate(decl)) result.push(decl);
+    }
+    return result;
+}
+
+function findBestDeclInNameBuckets(buckets, name, predicate = null, score = null) {
+    if (!buckets) return null;
+    const matches = buckets.get(name);
+    if (!matches || matches.length === 0) return null;
+    if (matches.length === 1) {
+        const match = matches[0];
+        return !predicate || predicate(match) ? match : null;
+    }
+    let best = null;
+    let bestScore = -Infinity;
+    for (const decl of matches) {
+        if (predicate && !predicate(decl)) continue;
+        const currentScore = score ? score(decl) : 0;
+        if (!best || currentScore > bestScore) {
+            best = decl;
+            bestScore = currentScore;
+        }
+    }
+    return best;
 }
 
 function attachPrecomputedDeclBuckets(decls, nameBuckets, variableBuckets) {
@@ -104,6 +156,9 @@ module.exports = {
     attachBuiltPrecomputedDeclBuckets,
     attachLazyPrecomputedDeclBuckets,
     buildDeclBuckets,
+    findBestDeclInNameBuckets,
+    findDeclInNameBuckets,
+    filterDeclsInNameBuckets,
     getPrecomputedDeclNameBuckets,
     getPrecomputedVariableNameBuckets
 };

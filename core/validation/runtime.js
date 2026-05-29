@@ -25,7 +25,6 @@ const {
     findPreviousNonWhitespaceIndex: findPreviousPawnNonWhitespaceIndex,
     skipPawnWhitespace
 } = require('../syntax/whitespace');
-const { splitPawnLines } = require('../syntax/lines');
 const { createArrayShapeCore } = require('../array-shape');
 const { createArrayShapeDiagnosticsCore } = require('./array-shape-diagnostics');
 const { getEnumMemberTagNameForExpression } = require('./enum-member-tag-compat');
@@ -104,6 +103,7 @@ function createValidationCore(deps) {
         }
         return semanticSyntaxCore.parseIndexedAccessExpression(expr, expressionOptions);
     };
+    const isVariableDecl = item => item?.type === 'variable';
     const getOpenDocumentForFile = filePath => {
         const targetPath = normalizeCachePath(filePath);
         if (!targetPath) return null;
@@ -234,7 +234,7 @@ function createValidationCore(deps) {
             findObjectAliasTargetDeclByNameFromSources(
                 decls,
                 name,
-                item => item?.type === 'variable',
+                isVariableDecl,
                 analysisCache
             );
     }
@@ -323,12 +323,10 @@ function createValidationCore(deps) {
     function findVariableDeclByNameFromSources(decls = [], name = '', analysisCache = null) {
         const symbolName = String(name || '').trim();
         if (!symbolName) return null;
-        return findAnyDeclByNameFromSources(
-            decls,
-            symbolName,
-            item => item?.type === 'variable',
-            analysisCache
-        );
+        if (analysisCache?.findVariableByName) {
+            return analysisCache.findVariableByName(symbolName);
+        }
+        return findAnyDeclByNameFromSources(decls, symbolName, isVariableDecl, analysisCache);
     }
 
     function parseAssignableAccessExpression(expr, escapeChar = getActiveCtrlChar()) {
@@ -659,12 +657,14 @@ function createValidationCore(deps) {
             if (!key) return null;
             const cache = analysisCache?.macroDefineByName;
             if (cache?.has(key)) return cache.get(key);
-            const decl = findAnyDeclByNameFromSources(
-                decls,
-                key,
-                item => item.type === 'define',
-                analysisCache
-            );
+            const decl = analysisCache?.findDefineByName
+                ? analysisCache.findDefineByName(key)
+                : findAnyDeclByNameFromSources(
+                    decls,
+                    key,
+                    item => item.type === 'define',
+                    analysisCache
+                );
             const result = decl?.type === 'define' ? decl : null;
             cache?.set(key, result);
             return result;
@@ -697,8 +697,16 @@ function createValidationCore(deps) {
         };
 
         try {
-            const openDocument = getOpenDocumentForFile(decl.filePath);
-            const stat = openDocument ? null : fs.statSync?.(decl.filePath);
+            const analysisSourcePath = normalizeCachePath(analysisCache?.sourceFilePath || '');
+            const declPath = normalizeCachePath(decl.filePath);
+            const cachedSourceText = analysisSourcePath && analysisSourcePath === declPath
+                ? String(analysisCache?.sourceText || '')
+                : '';
+            const cachedRawLines = cachedSourceText && Array.isArray(analysisCache?.sourceRawLines)
+                ? analysisCache.sourceRawLines
+                : null;
+            const openDocument = cachedSourceText ? null : getOpenDocumentForFile(decl.filePath);
+            const stat = (cachedSourceText || openDocument) ? null : fs.statSync?.(decl.filePath);
             const stableCacheKey = stat
                 ? [
                     decl.filePath,
@@ -711,22 +719,40 @@ function createValidationCore(deps) {
             if (stableCacheKey && functionReturnTypeStableCache.has(stableCacheKey)) {
                 return cacheFunctionReturnTypeResult(functionReturnTypeStableCache.get(stableCacheKey));
             }
-            const text = openDocument
+            const text = cachedSourceText || (openDocument
                 ? String(openDocument.getText?.() || '')
-                : String(fs.readFileSync(decl.filePath, 'utf8') || '');
+                : String(fs.readFileSync(decl.filePath, 'utf8') || ''));
             if (!text) return cacheFunctionReturnTypeResult(fallback);
-            const lines = splitPawnLines(text);
-            const startLine = Math.max(0, Math.min(lines.length - 1, decl.lineNumber));
-            let headerLine = startLine;
             const headerRe = new RegExp(`\\b${escapeRegExp(decl.name)}\\s*\\(`);
-            for (let probe = startLine; probe < Math.min(lines.length, startLine + 6); probe++) {
-                if (headerRe.test(String(lines[probe] || ''))) {
-                    headerLine = probe;
-                    break;
+            const startLine = Math.max(0, Number.isInteger(decl.lineNumber) ? decl.lineNumber : 0);
+            let headerStartOffset = getTextLineStartOffset(text, startLine);
+            if (cachedRawLines?.length) {
+                const safeStartLine = Math.min(cachedRawLines.length - 1, startLine);
+                let headerLine = safeStartLine;
+                for (let probe = safeStartLine; probe < Math.min(cachedRawLines.length, safeStartLine + 6); probe++) {
+                    if (headerRe.test(String(cachedRawLines[probe] || ''))) {
+                        headerLine = probe;
+                        break;
+                    }
+                }
+                headerStartOffset = getTextLineStartOffset(text, headerLine);
+            } else {
+                let probeOffset = headerStartOffset;
+                for (let probe = 0; probe < 6 && probeOffset <= text.length; probe++) {
+                    const newlineIndex = text.indexOf('\n', probeOffset);
+                    const lineEnd = newlineIndex >= 0
+                        ? (newlineIndex > probeOffset && text.charCodeAt(newlineIndex - 1) === 13 ? newlineIndex - 1 : newlineIndex)
+                        : text.length;
+                    const lineText = text.slice(probeOffset, lineEnd);
+                    if (headerRe.test(lineText)) {
+                        headerStartOffset = probeOffset;
+                        break;
+                    }
+                    if (newlineIndex < 0) break;
+                    probeOffset = newlineIndex + 1;
                 }
             }
 
-            const headerStartOffset = getTextLineStartOffset(text, headerLine);
             const sourceFromHeader = text.slice(headerStartOffset);
             const bodyOpenRelative = sourceFromHeader.indexOf('{');
             if (bodyOpenRelative < 0) return cacheFunctionReturnTypeResult(fallback);
@@ -1676,12 +1702,6 @@ function createValidationCore(deps) {
         }
 
         const source = String(expr || '');
-        const expandedSource = expandExpressionMacrosForTypeInference(source, decls, analysisCache);
-        if (expandedSource) {
-            const expandedResult = findUnresolvedReferenceNames(expandedSource, decls, analysisCache, escapeChar);
-            if (analysisCache) analysisCache.unresolvedRefsByExpr.set(cacheKey, expandedResult);
-            return expandedResult;
-        }
         const hasKnownSymbol = (name, isCallLike) => {
             const predicate = isCallLike
                 ? item => isFunctionLikeDecl(item)
@@ -1697,14 +1717,34 @@ function createValidationCore(deps) {
             }
             return false;
         };
+        const findDefineSymbol = name => analysisCache?.findDefineByName
+            ? analysisCache.findDefineByName(name)
+            : findAnyDeclByNameFromSources(
+                decls,
+                name,
+                item => item.type === 'define',
+                analysisCache
+            );
 
         const bareName = getPawnIdentifierName(cacheKey);
-        if (bareName) {
-            const result = isIgnoredReferenceName(bareName) || hasKnownSymbol(bareName, false)
+        if (bareName && isIgnoredReferenceName(bareName)) {
+            const result = [];
+            if (analysisCache) analysisCache.unresolvedRefsByExpr.set(cacheKey, result);
+            return result;
+        }
+        if (bareName && !findDefineSymbol(bareName)) {
+            const result = hasKnownSymbol(bareName, false)
                 ? []
                 : [bareName];
             if (analysisCache) analysisCache.unresolvedRefsByExpr.set(cacheKey, result);
             return result;
+        }
+
+        const expandedSource = expandExpressionMacrosForTypeInference(source, decls, analysisCache);
+        if (expandedSource) {
+            const expandedResult = findUnresolvedReferenceNames(expandedSource, decls, analysisCache, escapeChar);
+            if (analysisCache) analysisCache.unresolvedRefsByExpr.set(cacheKey, expandedResult);
+            return expandedResult;
         }
 
         const unresolved = new Set();

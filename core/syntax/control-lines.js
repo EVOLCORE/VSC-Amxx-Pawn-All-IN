@@ -11,7 +11,7 @@ function findNextNonEmptyLine(lines, startLine, options = {}) {
     const sourceLines = Array.isArray(lines) ? lines : [];
     const fallback = Number.isInteger(options.fallback) ? options.fallback : -1;
     for (let lineNumber = Math.max(0, startLine); lineNumber < sourceLines.length; lineNumber++) {
-        if (getLineText(sourceLines, lineNumber, options).trim()) return lineNumber;
+        if (getCompilerTrimmedLine(sourceLines, lineNumber, options)) return lineNumber;
     }
     return fallback;
 }
@@ -20,7 +20,7 @@ function findPreviousNonEmptyLine(lines, startLine, options = {}) {
     const sourceLines = Array.isArray(lines) ? lines : [];
     const fallback = Number.isInteger(options.fallback) ? options.fallback : -1;
     for (let lineNumber = Math.min(startLine, sourceLines.length - 1); lineNumber >= 0; lineNumber--) {
-        if (getLineText(sourceLines, lineNumber, options).trim()) return lineNumber;
+        if (getCompilerTrimmedLine(sourceLines, lineNumber, options)) return lineNumber;
     }
     return fallback;
 }
@@ -58,6 +58,9 @@ function getCompilerLineDepth(lineNumber, options = {}) {
 }
 
 function getCompilerTrimmedLine(lines, lineNumber, options = {}) {
+    if (typeof options.getTrimmedLine === 'function') {
+        return String(options.getTrimmedLine(lineNumber) || '');
+    }
     return getLineText(lines, lineNumber, options).trim();
 }
 

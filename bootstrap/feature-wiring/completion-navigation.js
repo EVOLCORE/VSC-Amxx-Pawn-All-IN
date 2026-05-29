@@ -102,7 +102,10 @@ function buildCompletionNavigationFeatures(deps, support) {
         findVariableDeclarationSpanInRange,
         isLinePositionInsideCommentOrString,
         isEscapedQuote,
-        isSameFilePath
+        isSameFilePath,
+        splitTopLevel,
+        parseParamMeta,
+        isFunctionLikeDecl
     });
 
     const renameFeature = createRenameFeature({
@@ -114,6 +117,9 @@ function buildCompletionNavigationFeatures(deps, support) {
         isLinePositionInsideCommentOrString,
         isEscapedQuote,
         isSameFilePath,
+        splitTopLevel,
+        parseParamMeta,
+        isFunctionLikeDecl,
         symbolReferenceCore
     });
 
@@ -147,6 +153,9 @@ function buildCompletionNavigationFeatures(deps, support) {
         isLinePositionInsideCommentOrString,
         isEscapedQuote,
         isSameFilePath,
+        splitTopLevel,
+        parseParamMeta,
+        isFunctionLikeDecl,
         symbolReferenceCore
     });
 

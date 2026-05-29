@@ -30,7 +30,12 @@
   },
   "semanticHighlighting": true,
   "semanticTokenColors": {
-    "number": "#AE81FF"
+    "number": "#AE81FF",
+    "function": "#66D9EF",
+    "function.declaration": {
+      "foreground": "#C6E64A",
+      "fontStyle": "bold"
+    }
   },
   "tokenColors": [
     {

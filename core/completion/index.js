@@ -30,6 +30,10 @@ const {
     SERVICE_KEYWORD_COMPLETIONS,
     createServiceKeywordCandidateSelector
 } = require('./service-keywords');
+const {
+    getManualFunctionBodyInsertionPlan,
+    normalizeManualFunctionBodyStyle
+} = require('./manual-function-body');
 
 module.exports = {
     COMPLETION_TRIGGER_CHARACTERS,
@@ -44,10 +48,12 @@ module.exports = {
     getCompletionCandidateDedupeKey,
     getCompletionCandidateSourcePriority,
     getCompletionMatch,
+    getManualFunctionBodyInsertionPlan,
     isCompletionCandidateDeprecated,
     normalizeCompletionMatchText,
     normalizeCompletionCandidateDedupeName,
     normalizeCompletionCallArgumentMode,
+    normalizeManualFunctionBodyStyle,
     SERVICE_KEYWORD_COMPLETIONS,
     createCompletionInsertTextCore,
     createServiceKeywordCandidateSelector,
