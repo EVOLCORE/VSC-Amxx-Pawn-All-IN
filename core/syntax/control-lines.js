@@ -46,6 +46,10 @@ function continuesCompilerMultilineToNextLine(trimmedLine) {
     return /(?:&&|\|\||[+\-*/%&|^<>=!?:,[({])\s*$/.test(source);
 }
 
+function isStandaloneCompilerMultilineOperatorLine(trimmedLine) {
+    return /^(?:&&|\|\||==|!=|<=|>=|[+\-*/%&|^<>?:,=])$/.test(String(trimmedLine || '').trim());
+}
+
 function areCompilerMultilineLinesConnected(previousTrimmed, currentTrimmed) {
     return startsCompilerMultilineContinuation(currentTrimmed) ||
         continuesCompilerMultilineToNextLine(previousTrimmed);
@@ -132,6 +136,23 @@ function isCompilerMultilineContinuationLine(lines, lineNumber, options = {}) {
     return !!range && range.startLine < lineNumber;
 }
 
+function isCompilerMultilineOperatorBridgeLine(lines, lineNumber, options = {}) {
+    const sourceLines = Array.isArray(lines) ? lines : [];
+    if (!isStandaloneCompilerMultilineOperatorLine(getCompilerTrimmedLine(sourceLines, lineNumber, options))) {
+        return false;
+    }
+    const previousLine = findPreviousNonEmptyLine(sourceLines, lineNumber - 1, options);
+    const nextLine = findNextNonEmptyLine(sourceLines, lineNumber + 1, options);
+    if (previousLine < 0 || nextLine < 0) return false;
+    const previousTrimmed = getCompilerTrimmedLine(sourceLines, previousLine, options);
+    const nextTrimmed = getCompilerTrimmedLine(sourceLines, nextLine, options);
+    if (!previousTrimmed || !nextTrimmed) return false;
+    if (/^[{}]+;?$/.test(previousTrimmed) || /[;{]\s*$/.test(previousTrimmed)) return false;
+    if (/^[{}]+;?$/.test(nextTrimmed) || isCompilerIgnoredLine(nextTrimmed, options)) return false;
+    const range = getCompilerMultilineStatementRange(sourceLines, lineNumber, options);
+    return !!range && range.startLine < lineNumber && range.endLine > lineNumber;
+}
+
 function isDoWhileClosingLine(lines, depths, lineNumber, options = {}) {
     const sourceLines = Array.isArray(lines) ? lines : [];
     const trimmedLine = getLineText(sourceLines, lineNumber, options).trim();
@@ -168,6 +189,8 @@ module.exports = {
     getCompilerMultilineStatementRange,
     isDoWhileClosingLine,
     isCompilerMultilineContinuationLine,
+    isCompilerMultilineOperatorBridgeLine,
+    isStandaloneCompilerMultilineOperatorLine,
     isWhileConditionOnlyLine,
     startsCompilerMultilineContinuation
 };

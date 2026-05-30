@@ -11,6 +11,7 @@ const {
     startsWithDeclarationKeyword
 } = require('../../core/syntax/keywords');
 const { isPreprocessorDirectiveLine } = require('../../core/syntax/preprocessor-lines');
+const { isCompilerMultilineOperatorBridgeLine } = require('../../core/syntax/control-lines');
 const { getTypeAnalysisSourceDecls } = require('../../core/validation/type-analysis-cache');
 
 const DELIMITER_PREFIXED_IDENTIFIER_TAIL_RE = new RegExp(`^([)\\]}]+)((?:${PAWN_IDENTIFIER_SOURCE})|(?:[^\\x00-\\x7F]+))$`);
@@ -321,6 +322,7 @@ function createSymbolDiagnostics(deps) {
         if (/[=([{,:?]/.test(trimmedLine)) return diagnostics;
         if (trimmedLine.endsWith(';')) return diagnostics;
         if (looksLikeExpressionFragment(trimmedLine)) return diagnostics;
+        if (isCompilerMultilineOperatorBridgeLine(allStrippedLines, lineNumber)) return diagnostics;
         const previousLine = findNearbyNonEmptyLine(lineNumber, -1);
         if (previousLine.endsWith(',')) {
             const trailingCloserTrimmed = trimmedLine.replace(/[)\]}]+[,;]?\s*$/, '').trimEnd();
