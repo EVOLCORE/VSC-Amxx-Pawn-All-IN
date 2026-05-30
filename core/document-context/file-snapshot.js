@@ -66,7 +66,7 @@ function createFileSnapshotCore(deps) {
                         ctrlCharState = getCtrlCharStateForContent(
                             sourceText,
                             filePath,
-                            new Set(),
+                            null,
                             rawLines,
                             [],
                             lineIndex

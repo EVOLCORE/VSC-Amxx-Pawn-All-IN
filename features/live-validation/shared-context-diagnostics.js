@@ -171,6 +171,18 @@ function createSharedContextDiagnostics(deps) {
     function findDocumentVariableDeclByName(ctx, name, lineNumber = -1, options = {}) {
         if (!name || !ctx?.lookup) return null;
         const sameLineOnly = options.sameLineOnly === true;
+        if (sameLineOnly) {
+            if (!Number.isInteger(lineNumber) || lineNumber < 0) return null;
+            const {
+                currentArgs,
+                currentLocals,
+                currentGlobals
+            } = getVariableDeclsForLine(ctx, lineNumber);
+            return findSameLineVariableDecl(currentArgs, name, lineNumber, ctx.fp) ||
+                findSameLineVariableDecl(currentLocals, name, lineNumber, ctx.fp) ||
+                findSameLineVariableDecl(currentGlobals, name, lineNumber, ctx.fp) ||
+                null;
+        }
         const lookupKey = ctx.lookup;
         const fpKey = ctx.fp || '';
         const cacheKey = `${sameLineOnly ? '1' : '0'}:${Number.isInteger(lineNumber) ? lineNumber : -1}:${name}`;
@@ -201,10 +213,6 @@ function createSharedContextDiagnostics(deps) {
                 cacheByName.set(cacheKey, sameLineDecl);
                 return sameLineDecl;
             }
-        }
-        if (sameLineOnly) {
-            cacheByName.set(cacheKey, null);
-            return null;
         }
         const decl = ctx.lookup.findDocumentVariable?.(name) ||
             ctx.lookup.findFuncArg(name) ||

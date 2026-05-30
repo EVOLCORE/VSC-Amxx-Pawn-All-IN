@@ -312,6 +312,11 @@ function createTextSyntaxDiagnosticsCore(deps) {
         for (let lineNumber = 0; lineNumber < sourceLines.length; lineNumber++) {
             const line = String(sourceLines[lineNumber] || '');
             if (isPreprocessorLine(line)) continue;
+            if (line.indexOf('"') < 0) continue;
+            const trimmedEnd = findPawnLineTrimEndIndex(line, 0, { allowCarriageReturn: true });
+            if (trimmedEnd <= 0) continue;
+            const lastCode = line.charCodeAt(trimmedEnd - 1);
+            if (lastCode !== 34 && lastCode !== 43) continue; // " or +
             const pending = getLineEndStringContinuation(
                 line,
                 getEscapeChar(lineNumber),

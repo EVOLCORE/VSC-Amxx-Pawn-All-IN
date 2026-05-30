@@ -4,6 +4,7 @@ const {
 } = require('./identifiers');
 const {
     PAWN_DECLARATION_KEYWORD_SET,
+    PAWN_STRUCTURAL_KEYWORD_SET,
     startsWithDeclarationKeyword
 } = require('./keywords');
 
@@ -44,6 +45,67 @@ function isPotentialDeclarationStartLine(line) {
     return (
         code === 123 || // {tag}:
         isPawnIdentifierStartCode(code)
+    );
+}
+
+function skipOptionalDeclarationTypeTag(source, cursor) {
+    let index = skipDeclarationHorizontalWhitespace(source, cursor);
+    if (source.charCodeAt(index) === 123) { // {
+        const closeIndex = source.indexOf('}', index + 1);
+        if (closeIndex < 0) return index;
+        let colonIndex = skipDeclarationHorizontalWhitespace(source, closeIndex + 1);
+        if (source.charCodeAt(colonIndex) !== 58) return index; // :
+        return skipDeclarationHorizontalWhitespace(source, colonIndex + 1);
+    }
+
+    const start = index;
+    if (!isPawnIdentifierStartCode(source.charCodeAt(index))) return index;
+    index++;
+    while (index < source.length && isPawnIdentifierContinueCode(source.charCodeAt(index))) index++;
+    const word = source.slice(start, index);
+    if (PAWN_STRUCTURAL_KEYWORD_SET.has(word)) return start;
+    let colonIndex = skipDeclarationHorizontalWhitespace(source, index);
+    if (source.charCodeAt(colonIndex) !== 58) return start; // :
+    return skipDeclarationHorizontalWhitespace(source, colonIndex + 1);
+}
+
+function isVariableDeclarationContinuationLine(line) {
+    const source = String(line || '');
+    let cursor = skipDeclarationHorizontalWhitespace(source, 0);
+    if (cursor >= source.length) return false;
+
+    const firstCode = source.charCodeAt(cursor);
+    if (
+        firstCode === 35 || // #
+        firstCode === 40 || // (
+        firstCode === 41 || // )
+        firstCode === 44 || // ,
+        firstCode === 59 || // ;
+        firstCode === 91 || // [
+        firstCode === 93 || // ]
+        firstCode === 125    // }
+    ) {
+        return false;
+    }
+    if (firstCode === 47 || firstCode === 42) return false; // / or * comment leftovers
+    if (isExplicitDeclarationStartLine(source)) return false;
+
+    const leadingWord = readLeadingDeclarationWord(source.slice(cursor));
+    if (leadingWord && PAWN_STRUCTURAL_KEYWORD_SET.has(leadingWord)) return false;
+
+    cursor = skipOptionalDeclarationTypeTag(source, cursor);
+    if (!isPawnIdentifierStartCode(source.charCodeAt(cursor))) return false;
+    cursor++;
+    while (cursor < source.length && isPawnIdentifierContinueCode(source.charCodeAt(cursor))) cursor++;
+    cursor = skipDeclarationHorizontalWhitespace(source, cursor);
+    if (cursor >= source.length) return true;
+
+    const code = source.charCodeAt(cursor);
+    return (
+        code === 44 || // ,
+        code === 59 || // ;
+        code === 61 || // =
+        code === 91    // [
     );
 }
 
@@ -116,5 +178,6 @@ module.exports = {
     isPawnIdentifierStartCode,
     isPotentialDeclarationStartLine,
     isPotentialEnumDeclarationLine,
+    isVariableDeclarationContinuationLine,
     readLeadingDeclarationWord
 };

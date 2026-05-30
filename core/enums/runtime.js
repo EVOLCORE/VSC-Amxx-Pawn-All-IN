@@ -28,7 +28,7 @@ function createEnumCore(deps = {}) {
         const numericValue = Number(value);
         if (!stepSpec || !Number.isFinite(numericValue)) return String(value);
 
-        const stepValue = evaluatePawnNumericExpr(stepSpec.expr, decls, new Set(), analysisCache);
+        const stepValue = evaluatePawnNumericExpr(stepSpec.expr, decls, null, analysisCache);
         if (stepSpec.op === '<<' && stepValue === 1 && isPowerOfTwo(numericValue)) {
             return `(1<<${Math.log2(numericValue)}) [${numericValue}]`;
         }

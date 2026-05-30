@@ -212,10 +212,9 @@ function createValidationCore(deps) {
         return findDeclByNameFromList(decls, name, predicate);
     }
 
-    function findObjectAliasTargetDeclByNameFromSources(decls = [], name = '', predicate = null, analysisCache = null, seen = new Set()) {
+    function findObjectAliasTargetDeclByNameFromSources(decls = [], name = '', predicate = null, analysisCache = null, seen = null) {
         const aliasName = String(name || '').trim();
-        if (!aliasName || seen.has(aliasName)) return null;
-        seen.add(aliasName);
+        if (!aliasName || seen?.has(aliasName)) return null;
         const aliasDefine = findAnyDeclByNameFromSources(
             decls,
             aliasName,
@@ -223,10 +222,14 @@ function createValidationCore(deps) {
             analysisCache
         );
         const targetName = getObjectAliasTargetName(aliasDefine);
-        if (!targetName || seen.has(targetName)) return null;
+        if (!targetName || seen?.has(targetName)) return null;
         const directTarget = findAnyDeclByNameFromSources(decls, targetName, predicate, analysisCache);
         if (directTarget) return directTarget;
-        return findObjectAliasTargetDeclByNameFromSources(decls, targetName, predicate, analysisCache, seen);
+        const localSeen = seen || new Set();
+        localSeen.add(aliasName);
+        const resolved = findObjectAliasTargetDeclByNameFromSources(decls, targetName, predicate, analysisCache, localSeen);
+        localSeen.delete(aliasName);
+        return resolved;
     }
 
     function findVariableOrObjectAliasTargetDeclByNameFromSources(decls = [], name = '', analysisCache = null) {
@@ -826,12 +829,13 @@ function createValidationCore(deps) {
         }
     }
 
-    function inferCallReturnType(expr, decls = [], analysisCache = null, seenExprs = new Set()) {
+    function inferCallReturnType(expr, decls = [], analysisCache = null, seenExprs = null) {
         const source = String(expr || '').trim();
-        if (!source || seenExprs.has(source)) return null;
+        if (!source || seenExprs?.has(source)) return null;
         if (analysisCache?.callReturnTypeByExpr?.has(source)) {
             return analysisCache.callReturnTypeByExpr.get(source);
         }
+        if (!seenExprs) seenExprs = new Set();
         seenExprs.add(source);
         const cacheCallReturnTypeResult = result => {
             if (analysisCache?.callReturnTypeByExpr) {
@@ -881,7 +885,7 @@ function createValidationCore(deps) {
         });
     }
 
-    function inferArrayLikeCallReturnType(expr, decls = [], analysisCache = null, seenExprs = new Set()) {
+    function inferArrayLikeCallReturnType(expr, decls = [], analysisCache = null, seenExprs = null) {
         const inferred = inferCallReturnType(expr, decls, analysisCache, seenExprs);
         return inferred?.dims
             ? inferred
@@ -1094,7 +1098,7 @@ function createValidationCore(deps) {
         if (
             s === 'cellmin' ||
             s === 'cellmax' ||
-            (!/^[A-Za-z_@]\w*$/.test(s) && evaluatePawnNumericExpr(s, allDecls, new Set(), analysisCache) != null)
+            (!/^[A-Za-z_@]\w*$/.test(s) && evaluatePawnNumericExpr(s, allDecls, null, analysisCache) != null)
         ) {
             return finish({ tag: '', dims: '' });
         }
@@ -1194,7 +1198,7 @@ function createValidationCore(deps) {
                 }
             }
         }
-        if (evaluatePawnNumericExpr(s, allDecls, new Set(), analysisCache) != null) {
+        if (evaluatePawnNumericExpr(s, allDecls, null, analysisCache) != null) {
             return finish({ tag: '', dims: '' });
         }
         const expandedTypeSource = expandExpressionMacrosForTypeInference(s, allDecls, analysisCache);
@@ -1230,32 +1234,33 @@ function createValidationCore(deps) {
         let span = 1;
         for (const part of memberDimParts) {
             const spec = analysisCache?.getDimSpec(part) ||
-                parseDimSpec(part, allDecls, new Set(), analysisCache);
+                parseDimSpec(part, allDecls, null, analysisCache);
             if (spec?.capacity == null) return null;
             span *= spec.capacity;
         }
         return span;
     }
 
-    function getEnumDeclResolvedCapacity(enumDecl, decls = [], seen = new Set(), analysisCache = null) {
+    function getEnumDeclResolvedCapacity(enumDecl, decls = [], seen = null, analysisCache = null) {
         if (!enumDecl || enumDecl.type !== 'enum') return null;
         const enumKey = `enum:${normalizeEnumName(enumDecl.name || enumDecl.enumName || '')}`;
-        if (seen.has(enumKey)) return null;
-        seen.add(enumKey);
+        if (seen?.has(enumKey)) return null;
+        const localSeen = seen || new Set();
+        localSeen.add(enumKey);
 
         let maxEnd = null;
         for (const memberDecl of enumDecl.enumMembers || []) {
             const start = evaluatePawnNumericExpr(
                 String(memberDecl?.value ?? '').trim(),
                 decls,
-                seen,
+                localSeen,
                 analysisCache
             );
             if (start == null || start < 0) continue;
 
             let span = 1;
             for (const part of getEffectiveDeclDimParts(memberDecl)) {
-                const spec = parseDimSpec(part, decls, seen, analysisCache);
+                const spec = parseDimSpec(part, decls, localSeen, analysisCache);
                 if (spec?.capacity == null) {
                     span = null;
                     break;
@@ -1266,7 +1271,7 @@ function createValidationCore(deps) {
             maxEnd = Math.max(maxEnd ?? 0, start + Math.max(1, span));
         }
 
-        seen.delete(enumKey);
+        localSeen.delete(enumKey);
         return maxEnd;
     }
 
@@ -1282,7 +1287,7 @@ function createValidationCore(deps) {
             const source = String(expr || '').trim();
             if (!source) return false;
 
-            if (evaluatePawnNumericExpr(source, allDecls, new Set(), analysisCache) != null) {
+            if (evaluatePawnNumericExpr(source, allDecls, null, analysisCache) != null) {
                 return true;
             }
 
@@ -1367,7 +1372,7 @@ function createValidationCore(deps) {
             );
             if (!memberDecl?.dims) return null;
 
-            const offset = evaluatePawnNumericExpr(memberName, allDecls, new Set(), analysisCache);
+            const offset = evaluatePawnNumericExpr(memberName, allDecls, null, analysisCache);
             const span = getEnumItemCellSpan(memberDecl, allDecls, analysisCache);
             if (offset == null || span == null || offset < 0) return null;
             if (offset + span > dimSpec.capacity) return null;
@@ -1379,7 +1384,7 @@ function createValidationCore(deps) {
             const actualExpr = String(accessText || '').trim();
             const expectedDimPart = currentDimParts.length ? currentDimParts[0] : null;
             const dimSpec = expectedDimPart != null
-                ? (analysisCache?.getDimSpec(expectedDimPart) || parseDimSpec(expectedDimPart, allDecls, new Set(), analysisCache))
+                ? (analysisCache?.getDimSpec(expectedDimPart) || parseDimSpec(expectedDimPart, allDecls, null, analysisCache))
                 : null;
             const enumName = dimSpec?.enumName || '';
             const selectedSourceDimParts = [...currentDimParts];
@@ -1570,9 +1575,9 @@ function createValidationCore(deps) {
         return expected === actual;
     }
 
-    function resolveTagSpecAlias(tagSpec, decls = [], analysisCache = null, seen = new Set()) {
+    function resolveTagSpecAlias(tagSpec, decls = [], analysisCache = null, seen = null) {
         const raw = normalizeTagName(tagSpec);
-        if (!raw || raw === '_' || raw.startsWith('{') || seen.has(raw)) return raw;
+        if (!raw || raw === '_' || raw.startsWith('{') || seen?.has(raw)) return raw;
         const defineDecl = findAnyDeclByNameFromSources(
             decls,
             raw,
@@ -1584,9 +1589,10 @@ function createValidationCore(deps) {
         if (value.startsWith('{') && value.endsWith('}')) return value;
         const aliasName = getPawnIdentifierName(value);
         if (!aliasName) return raw;
-        seen.add(raw);
-        const resolved = resolveTagSpecAlias(aliasName, decls, analysisCache, seen);
-        seen.delete(raw);
+        const localSeen = seen || new Set();
+        localSeen.add(raw);
+        const resolved = resolveTagSpecAlias(aliasName, decls, analysisCache, localSeen);
+        localSeen.delete(raw);
         return resolved || raw;
     }
 

@@ -57,14 +57,12 @@ function createLineIndexCore() {
 
     function hasPotentialAssignmentOperator(source) {
         const text = String(source || '');
-        for (let index = 0; index < text.length; index++) {
-            const char = text[index];
-            if (char !== '=') continue;
-            const prev = text[index - 1] || '';
-            const next = text[index + 1] || '';
-            if (next === '=') continue;
-            if (prev === '=' || prev === '!' || prev === '<' || prev === '>') {
-                if (!((prev === '<' || prev === '>') && text[index - 2] === prev)) {
+        for (let index = text.indexOf('='); index >= 0; index = text.indexOf('=', index + 1)) {
+            const prevCode = index > 0 ? text.charCodeAt(index - 1) : 0;
+            const nextCode = index + 1 < text.length ? text.charCodeAt(index + 1) : 0;
+            if (nextCode === 61) continue;
+            if (prevCode === 61 || prevCode === 33 || prevCode === 60 || prevCode === 62) {
+                if (!((prevCode === 60 || prevCode === 62) && index > 1 && text.charCodeAt(index - 2) === prevCode)) {
                     continue;
                 }
             }
@@ -118,9 +116,10 @@ function createLineIndexCore() {
                 backslashContinuationLines[lineNo] = 1;
             }
 
-            const lineCommentIndex = source.indexOf('//');
-            const blockCommentStartIndex = source.indexOf('/*');
-            const blockCommentEndIndex = source.indexOf('*/');
+            const firstSlashIndex = source.indexOf('/');
+            const lineCommentIndex = firstSlashIndex >= 0 ? source.indexOf('//', firstSlashIndex) : -1;
+            const blockCommentStartIndex = firstSlashIndex >= 0 ? source.indexOf('/*', firstSlashIndex) : -1;
+            const blockCommentEndIndex = firstSlashIndex >= 0 ? source.indexOf('*/', Math.max(0, firstSlashIndex - 1)) : -1;
             if (lineCommentIndex >= 0) flags |= LINE_FLAG_HAS_LINE_COMMENT_SIG;
             if (blockCommentStartIndex >= 0 || blockCommentEndIndex >= 0) flags |= LINE_FLAG_HAS_BLOCK_COMMENT_SIG;
             if (flags & (LINE_FLAG_HAS_LINE_COMMENT_SIG | LINE_FLAG_HAS_BLOCK_COMMENT_SIG)) {

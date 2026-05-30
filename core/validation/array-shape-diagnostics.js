@@ -24,26 +24,28 @@ function createArrayShapeDiagnosticsCore(deps) {
         return String(value || '').trim();
     }
 
-    function resolveStringArrayValueExpression(source, decls, analysisCache, seen = new Set()) {
+    function resolveStringArrayValueExpression(source, decls, analysisCache, seen = null) {
         const expr = stripTagsForArrayShape(source);
         if (!expr) return '';
         if (expr.startsWith('"')) return expr;
         const name = getPawnIdentifierName(expr);
-        if (!name || seen.has(name)) return '';
+        if (!name || seen?.has(name)) return '';
         const decl = findAnyDeclByNameFromSources(decls, name, null, analysisCache);
         if (!decl) return '';
         if (decl.type === 'define' && !decl.args) {
-            seen.add(name);
-            const resolved = resolveStringArrayValueExpression(decl.value, decls, analysisCache, seen);
-            seen.delete(name);
+            const localSeen = seen || new Set();
+            localSeen.add(name);
+            const resolved = resolveStringArrayValueExpression(decl.value, decls, analysisCache, localSeen);
+            localSeen.delete(name);
             return resolved;
         }
         if (decl.type === 'variable') {
             const value = String(decl.value || '').trim();
             if (!value) return '';
-            seen.add(name);
-            const resolved = resolveStringArrayValueExpression(value, decls, analysisCache, seen);
-            seen.delete(name);
+            const localSeen = seen || new Set();
+            localSeen.add(name);
+            const resolved = resolveStringArrayValueExpression(value, decls, analysisCache, localSeen);
+            localSeen.delete(name);
             return resolved;
         }
         return '';
@@ -55,7 +57,7 @@ function createArrayShapeDiagnosticsCore(deps) {
 
     function getDimSpecForComparison(dimPart, decls, analysisCache) {
         return analysisCache?.getDimSpec?.(dimPart) ||
-            parseDimSpec(dimPart, decls, new Set(), analysisCache);
+            parseDimSpec(dimPart, decls, null, analysisCache);
     }
 
     function getArrayShapeIssue(expectedDims, actualDims, actualExpr = '', decls = [], analysisCache = null, options = {}) {

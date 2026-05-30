@@ -91,6 +91,7 @@ function createDocumentIncludeSystem(deps) {
     const ancestorIncludeHintDirsCache = new Map();
     const searchPathSignatureCache = new Map();
     const searchPathsArraySignatureCache = new Map();
+    const searchPathsArrayIdentitySignatureCache = new WeakMap();
     let includeResolutionInfoCache = null;
     let projectIncludeHintsCache = null;
     let searchPathCacheSettingsSignatureCache = null;
@@ -136,13 +137,19 @@ function createDocumentIncludeSystem(deps) {
     function getSearchPathsArraySignature(searchPaths = []) {
         const paths = Array.isArray(searchPaths) ? searchPaths : [];
         if (!paths.length) return '';
+        const identityCached = searchPathsArrayIdentitySignatureCache.get(paths);
+        if (identityCached !== undefined) return identityCached;
         const rawKey = paths.join('\0');
         const cached = searchPathsArraySignatureCache.get(rawKey);
-        if (cached !== undefined) return cached;
+        if (cached !== undefined) {
+            searchPathsArrayIdentitySignatureCache.set(paths, cached);
+            return cached;
+        }
         const signature = paths
             .map(sourcePath => normalizeFsPath(sourcePath))
             .filter(Boolean)
             .join('|');
+        searchPathsArrayIdentitySignatureCache.set(paths, signature);
         searchPathsArraySignatureCache.set(rawKey, signature);
         if (searchPathsArraySignatureCache.size > SEARCH_PATHS_ARRAY_SIGNATURE_CACHE_LIMIT) {
             const oldestKey = searchPathsArraySignatureCache.keys().next().value;
@@ -1509,15 +1516,20 @@ function createDocumentIncludeSystem(deps) {
             }
             const content  = resolvedPreprocessedState.content;
             const fileName = path.basename(filePath);
-            const contentSnapshot = getFileSnapshot(filePath, content, {
-                rawLines: resolvedPreprocessedState.rawLines,
-                ctrlCharState: getPreprocessedCtrlCharState(resolvedPreprocessedState)
-            });
+            const preprocessedCtrlCharState = getPreprocessedCtrlCharState(resolvedPreprocessedState) || {};
+            const rawLines = Array.isArray(resolvedPreprocessedState.rawLines)
+                ? resolvedPreprocessedState.rawLines
+                : splitPawnLines(content);
+            const strippedLines = Array.isArray(preprocessedCtrlCharState.strippedLines)
+                ? preprocessedCtrlCharState.strippedLines
+                : rawLines;
+            const lineCtrlChars = Array.isArray(preprocessedCtrlCharState.lineCtrlChars)
+                ? preprocessedCtrlCharState.lineCtrlChars
+                : [];
+            const depths = resolvedPreprocessedState.lineDepths ||
+                computeLineDepths(strippedLines, lineCtrlChars);
+            resolvedPreprocessedState.lineDepths = depths;
             const decls = withCtrlCharForContent(content, () => {
-                const rawLines = contentSnapshot.rawLines;
-                const strippedLines = contentSnapshot.strippedLines;
-                const lineCtrlChars = contentSnapshot.lineCtrlChars;
-                const depths = contentSnapshot.lineDepths;
                 const decls = [];
                 let activeDefineDecls = null;
                 let pendingDeprecatedMessage = null;
@@ -1628,7 +1640,7 @@ function createDocumentIncludeSystem(deps) {
                     defineDecls
                 );
                 return decls;
-            }, filePath, contentSnapshot.finalCtrlChar);
+            }, filePath, preprocessedCtrlCharState.finalCtrlChar);
             return decls;
         } catch (err) { console.error('parseIncludeFile:', err); }
         return [];

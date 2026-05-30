@@ -1181,9 +1181,6 @@ function createPreprocessorSyntaxCore(deps) {
                     const includeKey = normalizeFsPath(includePath);
                     if (includeKey && !activeFiles.has(includeKey)) {
                         const nestedIncludeDepth = includeDepth + 1;
-                        const nestedSearchPaths = typeof getNestedSearchPaths === 'function'
-                            ? getNestedSearchPaths(includePath, searchPaths)
-                            : getSearchPaths(includePath);
                         let nestedState = !rationalState
                             ? readCachedIncludePreprocessedState(includePath, activeDefineStateKey, {
                                 activeFiles,
@@ -1197,6 +1194,9 @@ function createPreprocessorSyntaxCore(deps) {
                                 appendDirectiveRange(lineNumber, nextDirectiveLine, true);
                                 return nextDirectiveLine;
                             }
+                            const nestedSearchPaths = typeof getNestedSearchPaths === 'function'
+                                ? getNestedSearchPaths(includePath, searchPaths)
+                                : getSearchPaths(includePath);
                             const includeCtrlCharState = typeof getCtrlCharStateForContent === 'function'
                                 ? getCtrlCharStateForContent(includeContent, includePath)
                                 : null;
@@ -1363,7 +1363,7 @@ function createPreprocessorSyntaxCore(deps) {
 
     function applyEnumStep(currentValue, stepSpec, decls = [], analysisCache = null) {
         if (!stepSpec) return currentValue + 1;
-        const stepValue = evaluatePawnNumericExpr(stepSpec.expr, decls, new Set(), analysisCache);
+        const stepValue = evaluatePawnNumericExpr(stepSpec.expr, decls, null, analysisCache);
         if (stepValue == null) return null;
         switch (stepSpec.op) {
             case '+': return currentValue + stepValue;

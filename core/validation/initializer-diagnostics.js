@@ -145,19 +145,20 @@ function createInitializerDiagnostics(deps) {
             null;
     }
 
-    function resolveConstantStringLiteralExpression(source, allDecls, analysisCache = null, seen = new Set()) {
+    function resolveConstantStringLiteralExpression(source, allDecls, analysisCache = null, seen = null) {
         const expr = unwrapExpressionForValidation(source);
         if (!expr) return '';
         if (expr.startsWith('"')) return expr;
         const identifierName = getPawnIdentifierName(expr);
-        if (!identifierName || seen.has(identifierName)) return '';
+        if (!identifierName || seen?.has(identifierName)) return '';
         const decl = findInitializerConstantDecl(identifierName, allDecls, analysisCache);
         if (decl?.type !== 'define' || decl.args) return '';
         const defineValue = String(decl.value || '').trim();
         if (!defineValue || defineValue === identifierName) return '';
-        seen.add(identifierName);
-        const resolved = resolveConstantStringLiteralExpression(defineValue, allDecls, analysisCache, seen);
-        seen.delete(identifierName);
+        const localSeen = seen || new Set();
+        localSeen.add(identifierName);
+        const resolved = resolveConstantStringLiteralExpression(defineValue, allDecls, analysisCache, localSeen);
+        localSeen.delete(identifierName);
         return resolved;
     }
 
@@ -173,7 +174,7 @@ function createInitializerDiagnostics(deps) {
         if (expr.startsWith('"') || expr.startsWith("'")) return true;
         if (/^-?(?:\d+|\d+\.\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(expr)) return true;
         if (expr === 'true' || expr === 'false' || expr === 'cellmin' || expr === 'cellmax') return true;
-        if (evaluatePawnNumericExpr(expr, allDecls, new Set(), analysisCache) != null) return true;
+        if (evaluatePawnNumericExpr(expr, allDecls, null, analysisCache) != null) return true;
 
         const identifierName = getPawnIdentifierName(expr);
         if (identifierName) {
@@ -206,7 +207,7 @@ function createInitializerDiagnostics(deps) {
         const dimParts = parseDimsParts(decl.dims || '');
         if (!dimParts.length) return null;
         const dimSpecs = dimParts.map(part =>
-            analysisCache?.getDimSpec?.(part) || parseDimSpec(part, allDecls, new Set(), analysisCache)
+            analysisCache?.getDimSpec?.(part) || parseDimSpec(part, allDecls, null, analysisCache)
         );
         const valueText = String(decl.value || '').trim();
         if (collectInvalidPawnCodeCharacterRuns(valueText, escapeChar).length) {
@@ -269,7 +270,7 @@ function createInitializerDiagnostics(deps) {
             const fieldDims = parseDimsParts(fieldDecl?.dims || '');
             return fieldDims.map(part =>
                 analysisCache?.getDimSpec?.(part) ||
-                parseDimSpec(part, allDecls, new Set(), analysisCache)
+                parseDimSpec(part, allDecls, null, analysisCache)
             );
         };
         const validateArrayValueAgainstDimSpecs = (source, arrayDimSpecs, dimIndex = 0, rangeStart = 0) => {
@@ -437,7 +438,7 @@ function createInitializerDiagnostics(deps) {
         }
         for (let index = 0; index < dimParts.length; index++) {
             const dimSpec = analysisCache?.getDimSpec?.(dimParts[index]) ||
-                parseDimSpec(dimParts[index], allDecls, new Set(), analysisCache);
+                parseDimSpec(dimParts[index], allDecls, null, analysisCache);
             if (!dimSpec?.raw || dimSpec.capacity == null) continue;
             if (dimSpec.capacity <= 0) {
                 return {

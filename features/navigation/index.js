@@ -1,5 +1,8 @@
 const { parsePawnIncludeDirectiveTarget } = require('../../core/syntax/includes');
 const { createLinkedDefinitionCore } = require('../../core/navigation');
+const {
+    showTimedErrorMessage
+} = require('../../services/notifications');
 
 function createNavigationFeature(deps) {
     const {
@@ -167,7 +170,7 @@ function createNavigationFeature(deps) {
                         preview: false
                     });
                 } catch {
-                    vscode.window.showErrorMessage(t('common.cannotOpenFile', { filePath }));
+                    showTimedErrorMessage(vscode, t('common.cannotOpenFile', { filePath }));
                 }
             })
         );

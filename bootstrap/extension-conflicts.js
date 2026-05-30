@@ -1,3 +1,7 @@
+const {
+    showTimedWarningMessage
+} = require('../services/notifications');
+
 function getExtensionId(context) {
     return String(context?.extension?.id || '').toLowerCase();
 }
@@ -82,7 +86,7 @@ function warnAboutConflictingAmxxPawnExtensions({ vscode, context, t, outputChan
 
     const message = t('extension.conflict.warning', { extensions: names });
     const openExtensions = t('extension.conflict.openExtensions');
-    vscode?.window?.showWarningMessage?.(message, openExtensions).then(selection => {
+    showTimedWarningMessage(vscode, message, openExtensions).then(selection => {
         if (selection !== openExtensions) return;
         vscode?.commands?.executeCommand?.('workbench.extensions.search', '@installed amxx pawn');
     });

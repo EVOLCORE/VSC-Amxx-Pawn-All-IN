@@ -282,11 +282,12 @@ function createStructuralDiagnostics(deps) {
             isDoWhileClosingLine
         });
         const hasInlineContextBefore = controlContextTracker.hasInlineContextBefore;
-        const getMacroProvidedControlType = (decl, seen = new Set()) => {
+        const getMacroProvidedControlType = (decl, seen = null) => {
             if (!decl?.name) return '';
             if (macroControlTypeCache.has(decl.name)) return macroControlTypeCache.get(decl.name);
-            if (seen.has(decl.name)) return '';
-            seen.add(decl.name);
+            if (seen?.has(decl.name)) return '';
+            const localSeen = seen || new Set();
+            localSeen.add(decl.name);
             const expandedStatement = classifyPawnStatementLine(String(decl.value || ''));
             let type = '';
             if ((expandedStatement.controlStarts || []).some(control => control.keyword === 'for')) {
@@ -302,11 +303,11 @@ function createStructuralDiagnostics(deps) {
                 for (const match of String(decl.value || '').matchAll(PAWN_IDENTIFIER_WORD_RE)) {
                     const nestedDecl = functionLikeDefineDeclsByName.get(match[0]);
                     if (!nestedDecl || nestedDecl === decl) continue;
-                    type = getMacroProvidedControlType(nestedDecl, seen);
+                    type = getMacroProvidedControlType(nestedDecl, localSeen);
                     if (type) break;
                 }
             }
-            seen.delete(decl.name);
+            localSeen.delete(decl.name);
             macroControlTypeCache.set(decl.name, type);
             return type;
         };
@@ -363,7 +364,7 @@ function createStructuralDiagnostics(deps) {
             const lineCtx = getReturnLineContext(lineNumber);
             const analysisCache = getReturnAnalysisCache(lineNumber, lineCtx);
             const decls = getTypeAnalysisSourceDecls(lineCtx, analysisCache, rootCtx);
-            const value = evaluatePawnNumericExpr(expr, decls, new Set(), analysisCache);
+            const value = evaluatePawnNumericExpr(expr, decls, null, analysisCache);
             if (value == null) return null;
             return getConstantControlTestWarningIssue(value);
         };

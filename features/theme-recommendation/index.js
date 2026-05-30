@@ -1,3 +1,7 @@
+const {
+    showTimedInformationMessage
+} = require('../../services/notifications');
+
 const AMXX_RECOMMENDED_THEME_OPTIONS = Object.freeze([
     {
         label: 'AmxxPawnAllIn Olive',
@@ -51,7 +55,7 @@ function createThemeRecommendationFeature(deps) {
         themeRecommendationMessageVisible = true;
         themeRecommendationCooldownUntil = Date.now() + THEME_RECOMMENDATION_COOLDOWN_MS;
         try {
-            const action = await vscode.window.showInformationMessage(
+            const action = await showTimedInformationMessage(vscode,
                 t('theme.recommendation.message'),
                 t('theme.recommendation.chooseTheme'),
                 t('theme.recommendation.disableHint')

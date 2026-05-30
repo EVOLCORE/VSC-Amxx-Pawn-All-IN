@@ -479,7 +479,7 @@ function createIndexedAccessCore(deps) {
             return result;
         };
         const expectedPart = analysisCache?.getDimSpec(expectedDimPart) ||
-            parseDimSpec(expectedDimPart, allDecls, new Set(), analysisCache);
+            parseDimSpec(expectedDimPart, allDecls, null, analysisCache);
         const ternaryExpr = parseTopLevelTernaryExpression(actual);
         if (ternaryExpr) {
             const whenTrueResult = explainIndexedAccessDimCompat(
@@ -510,7 +510,7 @@ function createIndexedAccessCore(deps) {
                     : whenFalseResult
             );
         }
-        const actualNumericValue = evaluatePawnNumericExpr(actual, allDecls, new Set(), analysisCache);
+        const actualNumericValue = evaluatePawnNumericExpr(actual, allDecls, null, analysisCache);
         const actualBareName = getPawnIdentifierName(actual);
         const findActualEnumItemDecl = () => actualBareName
             ? (

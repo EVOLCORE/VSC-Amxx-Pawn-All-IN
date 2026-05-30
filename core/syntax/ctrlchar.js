@@ -168,7 +168,7 @@ function createCtrlCharSyntaxCore(deps) {
         fromFilePath = '',
         strippedLines = null,
         searchPaths = [],
-        visited = new Set(),
+        visited = null,
         precomputedDirectiveCandidateLines = null
     ) => {
         const text = String(content || '');
@@ -190,9 +190,11 @@ function createCtrlCharSyntaxCore(deps) {
         const currentPath = fromFilePath ? normalizeFsPath(fromFilePath) : '';
         const cached = getCachedCtrlCharGraphPresence(currentPath, text);
         if (cached != null) return cached;
+        let localVisited = visited;
         if (currentPath) {
-            if (visited.has(currentPath)) return false;
-            visited.add(currentPath);
+            if (localVisited?.has(currentPath)) return false;
+            if (!localVisited) localVisited = new Set();
+            localVisited.add(currentPath);
         }
 
         const lines = Array.isArray(strippedLines)
@@ -212,7 +214,7 @@ function createCtrlCharSyntaxCore(deps) {
                 delimiter: includeTarget?.delimiter || ''
             });
             const normalizedIncludePath = normalizeFsPath(includePath);
-            if (!includePath || visited.has(normalizedIncludePath)) continue;
+            if (!includePath || localVisited?.has(normalizedIncludePath)) continue;
             const includeContent = readNormalizedFileContent(includePath);
             if (includeContent == null) continue;
             const nestedSearchPaths = typeof getNestedSearchPaths === 'function'
@@ -223,13 +225,13 @@ function createCtrlCharSyntaxCore(deps) {
                 includePath,
                 null,
                 nestedSearchPaths,
-                visited
+                localVisited
             )) {
                 maySetCtrlChar = true;
                 break;
             }
         }
-        if (currentPath) visited.delete(currentPath);
+        if (currentPath) localVisited?.delete(currentPath);
         setCachedCtrlCharGraphPresence(currentPath, text, maySetCtrlChar);
         if (!maySetCtrlChar) {
             cacheDefaultCtrlCharState(
@@ -252,7 +254,7 @@ function createCtrlCharSyntaxCore(deps) {
     const getCtrlCharStateForContent = (
         content,
         fromFilePath = '',
-        visited = new Set(),
+        visited = null,
         precomputedRawLines = null,
         inheritedSearchPaths = [],
         precomputedLineIndex = null
@@ -264,7 +266,7 @@ function createCtrlCharSyntaxCore(deps) {
             return cachedState;
         }
         if (currentPath) {
-            if (visited.has(currentPath)) {
+            if (visited?.has(currentPath)) {
                 const rawLines = splitPawnLines(content);
                 const analysis = content.includes('/*') || content.includes('//')
                     ? buildCommentAnalysis(rawLines)
@@ -280,6 +282,7 @@ function createCtrlCharSyntaxCore(deps) {
                     finalCtrlChar: ctrlChar
                 };
             }
+            if (!visited) visited = new Set();
             visited.add(currentPath);
         }
 
@@ -313,7 +316,7 @@ function createCtrlCharSyntaxCore(deps) {
                     fromFilePath,
                     strippedLines,
                     searchPaths,
-                    new Set(visited),
+                    visited ? new Set(visited) : null,
                     precomputedDirectiveCandidateLines
                 )
             )
@@ -356,7 +359,7 @@ function createCtrlCharSyntaxCore(deps) {
                 delimiter: includeTarget?.delimiter || ''
             });
             const normalizedIncludePath = normalizeFsPath(includePath);
-            if (!includePath || visited.has(normalizedIncludePath)) continue;
+            if (!includePath || visited?.has(normalizedIncludePath)) continue;
 
             const includeContent = readNormalizedFileContent(includePath);
             if (includeContent == null) continue;

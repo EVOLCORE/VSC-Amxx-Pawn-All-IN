@@ -332,7 +332,7 @@ function createDeclarationDiagnostics(deps) {
                         return evaluatePawnNumericExpr(
                             value,
                             getTypeAnalysisSourceDecls(ctx, analysisCache),
-                            new Set(),
+                            null,
                             analysisCache
                         );
                     }

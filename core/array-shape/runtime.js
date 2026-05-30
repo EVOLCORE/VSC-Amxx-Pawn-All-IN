@@ -114,7 +114,7 @@ function createArrayShapeCore(deps = {}) {
         const constValue = getDeclSize(constDecl);
         if (constValue != null) return constValue;
 
-        const dimSpec = parseDimSpec(source, allDecls, new Set(), opts.analysisCache || null);
+        const dimSpec = parseDimSpec(source, allDecls, null, opts.analysisCache || null);
         if (dimSpec?.capacity != null) return dimSpec.capacity;
 
         return null;

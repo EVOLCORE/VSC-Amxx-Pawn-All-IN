@@ -34,6 +34,9 @@ const {
 const {
     normalizeCompletionCallArgumentMode
 } = require('../../core/completion/call-argument-mode');
+const {
+    isDeclarationLikeFunctionDefineDecl
+} = require('../../core/completion/declaration-macros');
 const { isNumericObjectLikeDefineDecl } = require('../../core/syntax/numeric-defines');
 const { createPrefixedDebugLogger } = require('../../core/utils/debug-logger');
 
@@ -567,6 +570,11 @@ function createCompletionFeature(deps) {
             isFunctionLikeDefineDecl(candidate.d);
     }
 
+    function isDeclarationLikeDefineCompletionCandidate(candidate) {
+        return isFunctionLikeDefineCompletionCandidate(candidate) &&
+            isDeclarationLikeFunctionDefineDecl(candidate.d);
+    }
+
     function isArrayDimensionBuiltinDecl(decl) {
         return ARRAY_DIMENSION_BUILTIN_NAMES.has(String(decl?.name || '')) &&
             (
@@ -596,7 +604,7 @@ function createCompletionFeature(deps) {
         if (completionIntent === 'variable-declaration') {
             filtered = [];
             for (const candidate of candidates) {
-                if (isFunctionLikeDefineCompletionCandidate(candidate)) filtered.push(candidate);
+                if (isDeclarationLikeDefineCompletionCandidate(candidate)) filtered.push(candidate);
             }
             return filtered;
         }
@@ -610,7 +618,7 @@ function createCompletionFeature(deps) {
                     filtered.push(candidate);
                     continue;
                 }
-                if (isFunctionLikeDefineCompletionCandidate(candidate)) filtered.push(candidate);
+                if (isDeclarationLikeDefineCompletionCandidate(candidate)) filtered.push(candidate);
             }
             return filtered;
         }
@@ -709,25 +717,30 @@ function createCompletionFeature(deps) {
         }
     }
 
-    function collectFunctionLikeDefineCompletionCandidates(target, decls, sortPrefix, getSourceMeta = null) {
+    function collectFunctionLikeDefineCompletionCandidates(target, decls, sortPrefix, getSourceMeta = null, predicate = null) {
         for (const d of decls || []) {
             if (d?.type !== 'define' || !isFunctionLikeDefineDecl(d)) continue;
+            if (typeof predicate === 'function' && !predicate(d)) continue;
             target.push(makeCompletionCandidate(d, sortPrefix, getSourceMeta?.(d) || null));
         }
     }
 
-    function getFunctionLikeDefineCompletionCandidates(ctx) {
+    function getFunctionLikeDefineCompletionCandidates(ctx, options = {}) {
         const { parsedDecls, incDecls } = ctx;
+        const predicate = options.declarationLikeOnly
+            ? isDeclarationLikeFunctionDefineDecl
+            : null;
         const candidates = [];
-        collectFunctionLikeDefineCompletionCandidates(candidates, BUILTIN_DECLS, '006');
+        collectFunctionLikeDefineCompletionCandidates(candidates, BUILTIN_DECLS, '006', null, predicate);
         collectFunctionLikeDefineCompletionCandidates(
             candidates,
             incDecls,
             '005',
-            decl => getIncludeDeclSourceMeta(ctx, decl)
+            decl => getIncludeDeclSourceMeta(ctx, decl),
+            predicate
         );
-        collectFunctionLikeDefineCompletionCandidates(candidates, parsedDecls?.globals || [], '004');
-        collectFunctionLikeDefineCompletionCandidates(candidates, parsedDecls?.functions || [], '010');
+        collectFunctionLikeDefineCompletionCandidates(candidates, parsedDecls?.globals || [], '004', null, predicate);
+        collectFunctionLikeDefineCompletionCandidates(candidates, parsedDecls?.functions || [], '010', null, predicate);
         return candidates;
     }
 
@@ -770,7 +783,7 @@ function createCompletionFeature(deps) {
 
     function getTopLevelDeclarationCompletionCandidates(ctx) {
         const { parsedDecls, incDecls } = ctx;
-        const candidates = getFunctionLikeDefineCompletionCandidates(ctx).slice();
+        const candidates = getFunctionLikeDefineCompletionCandidates(ctx, { declarationLikeOnly: true }).slice();
         for (const d of parsedDecls?.functions || []) {
             if (d?.type === 'forward' && isFunctionLikeDecl(d)) {
                 candidates.push(makeCompletionCandidate(d, '010'));
@@ -803,7 +816,7 @@ function createCompletionFeature(deps) {
             return topLevelCandidates;
         }
         if (completionIntent === 'variable-declaration') {
-            const macroDeclarationCandidates = getFunctionLikeDefineCompletionCandidates(ctx);
+            const macroDeclarationCandidates = getFunctionLikeDefineCompletionCandidates(ctx, { declarationLikeOnly: true });
             perLineCache.set(cacheKey, macroDeclarationCandidates);
             return macroDeclarationCandidates;
         }
@@ -1028,6 +1041,17 @@ function createCompletionFeature(deps) {
             const definition = item?._pawnServiceKeywordDefinition;
             if (!definition?.preferOverSymbolFallback) return false;
             const name = String(definition.name || '').toLowerCase();
+            return name.startsWith(normalizedPrefix);
+        });
+    }
+
+    function shouldUseDominantServiceKeywordItems(dominantItems, prefix = '') {
+        if (!Array.isArray(dominantItems) || !dominantItems.length) return false;
+        const normalizedPrefix = String(prefix || '').trim().toLowerCase();
+        if (normalizedPrefix.length < 3) return false;
+        return dominantItems.some(item => {
+            const definition = item?._pawnServiceKeywordDefinition;
+            const name = String(definition?.name || '').toLowerCase();
             return name.startsWith(normalizedPrefix);
         });
     }
@@ -1454,7 +1478,8 @@ function createCompletionFeature(deps) {
                     );
                     const serviceItems = serviceCompletion.items || [];
                     const dominantServiceItems = serviceCompletion.dominantItems || [];
-                    items = dominantServiceItems.length && filteredCandidates.startsWithCount === 0
+                    items = shouldUseDominantServiceKeywordItems(dominantServiceItems, prefix) ||
+                        (dominantServiceItems.length && filteredCandidates.startsWithCount === 0)
                         ? serviceItems
                         : getMergedCompletionItems(baseItems, serviceItems);
                 }

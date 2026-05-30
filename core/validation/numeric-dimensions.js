@@ -26,6 +26,7 @@ function createNumericDimensionValidationCore(deps) {
     const PARSED_NUMERIC_EXPR_CACHE_LIMIT = 4096;
     const PARSED_NUMERIC_EXPR_CACHE_MAX_CHARS = 512;
     const PAWN_CHARS_PER_CELL = 4;
+    const EMPTY_SEEN_NAMES = new Set();
     const SIMPLE_NUMERIC_LITERAL_RE = /^[+-]?(?:0[xX][0-9a-fA-F]+|\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)$/;
     const dimensionSyntaxCore = createDimensionSyntaxCore();
     const parseDimsParts = dimensionSyntaxCore.parseDimsParts;
@@ -139,9 +140,11 @@ function createNumericDimensionValidationCore(deps) {
         return cacheParsedNumericExprResult(Number.isFinite(result) ? result : null);
     }
 
-    function evaluatePawnNumericExpr(expr, decls = [], seen = new Set(), analysisCache = null) {
+    function evaluatePawnNumericExpr(expr, decls = [], seen = null, analysisCache = null) {
         const cacheKey = String(expr || '').trim();
-        const canUseCache = !!(analysisCache?.numericExprByText && seen?.size === 0);
+        let localSeen = seen instanceof Set ? seen : null;
+        const isTopLevelSeen = !localSeen || localSeen.size === 0;
+        const canUseCache = !!(analysisCache?.numericExprByText && isTopLevelSeen);
         if (canUseCache && analysisCache.numericExprByText.has(cacheKey)) {
             return analysisCache.numericExprByText.get(cacheKey);
         }
@@ -159,11 +162,16 @@ function createNumericDimensionValidationCore(deps) {
             return cacheNumericExprResult(evaluateParsedPawnNumericExpr(cacheKey));
         }
 
+        const hasSeenName = name => !!(localSeen && localSeen.has(name));
+        const getMutableSeen = () => {
+            if (!localSeen) localSeen = new Set();
+            return localSeen;
+        };
         let source = semanticSyntaxCore.stripRootTagCasts(expr, { escapeChar: getActiveCtrlChar() });
         if (!source) return cacheNumericExprResult(null);
         const expanded = macroExpansionCore.expandMacros(source, decls, {
             escapeChar: getActiveCtrlChar(),
-            disabledNames: seen,
+            disabledNames: localSeen || EMPTY_SEEN_NAMES,
             getDefine: name => analysisCache?.findDefineByName
                 ? analysisCache.findDefineByName(name)
                 : findAnyDeclByNameFromSources(
@@ -190,7 +198,7 @@ function createNumericDimensionValidationCore(deps) {
                         : parseDimsParts(decl.dims);
                     const level = (String(emptyAccesses || '').match(/\[/g) || []).length;
                     const dimPart = effectiveDimParts[level];
-                    const dimSpec = parseDimSpec(dimPart, decls, seen, analysisCache);
+                    const dimSpec = parseDimSpec(dimPart, decls, getMutableSeen(), analysisCache);
                     return dimSpec.capacity != null ? String(dimSpec.capacity) : 'NaN';
                 }
                 return 'NaN';
@@ -198,7 +206,7 @@ function createNumericDimensionValidationCore(deps) {
 
             source = source.replace(PAWN_IDENTIFIER_WORD_RE, (full, name) => {
                 if (FORBIDDEN.has(name)) return full;
-                if (seen.has(name)) return 'NaN';
+                if (hasSeenName(name)) return 'NaN';
 
                 const decl = findAnyDeclByNameFromSources(decls, name, null, analysisCache);
                 if (!decl) return full;
@@ -213,9 +221,10 @@ function createNumericDimensionValidationCore(deps) {
                     const defineValue = String(decl.value || '').trim();
                     if (decl.args) return full;
                     if (/^-?\d+$/.test(defineValue)) return defineValue;
-                    seen.add(name);
-                    const nested = evaluatePawnNumericExpr(defineValue, decls, seen, analysisCache);
-                    seen.delete(name);
+                    const mutableSeen = getMutableSeen();
+                    mutableSeen.add(name);
+                    const nested = evaluatePawnNumericExpr(defineValue, decls, mutableSeen, analysisCache);
+                    mutableSeen.delete(name);
                     return nested == null ? 'NaN' : String(nested);
                 }
                 if (
@@ -225,10 +234,11 @@ function createNumericDimensionValidationCore(deps) {
                     hasDeclModifier(decl, 'const')
                 ) {
                     const constValue = String(decl.value || '').trim();
-                    if (!constValue || seen.has(name)) return 'NaN';
-                    seen.add(name);
-                    const nested = evaluatePawnNumericExpr(constValue, decls, seen, analysisCache);
-                    seen.delete(name);
+                    if (!constValue || hasSeenName(name)) return 'NaN';
+                    const mutableSeen = getMutableSeen();
+                    mutableSeen.add(name);
+                    const nested = evaluatePawnNumericExpr(constValue, decls, mutableSeen, analysisCache);
+                    mutableSeen.delete(name);
                     return nested == null ? 'NaN' : String(nested);
                 }
 
@@ -252,7 +262,12 @@ function createNumericDimensionValidationCore(deps) {
         return cacheNumericExprResult(evaluateParsedPawnNumericExpr(source));
     }
 
-    function parseDimSpec(dimPart, decls = [], seen = new Set(), analysisCache = null) {
+    function parseDimSpec(dimPart, decls = [], seen = null, analysisCache = null) {
+        let localSeen = seen instanceof Set ? seen : null;
+        const getMutableSeen = () => {
+            if (!localSeen) localSeen = new Set();
+            return localSeen;
+        };
         const raw = String(dimPart || '').trim();
         const isChar = /\bchar\b/.test(raw);
         const expr = raw.replace(/\bchar\b/g, '').trim();
@@ -264,13 +279,14 @@ function createNumericDimensionValidationCore(deps) {
             })()
             : null;
         const enumName = enumDecl ? enumCandidate : '';
-        let capacity = expr ? evaluatePawnNumericExpr(expr, decls, seen, analysisCache) : null;
+        let capacity = expr ? evaluatePawnNumericExpr(expr, decls, localSeen, analysisCache) : null;
         if (enumDecl && /^[A-Za-z_@]\w*$/.test(expr || '')) {
-            const enumRootCapacity = getEnumDeclResolvedCapacity(enumDecl, decls, seen, analysisCache) ??
+            const mutableSeen = getMutableSeen();
+            const enumRootCapacity = getEnumDeclResolvedCapacity(enumDecl, decls, mutableSeen, analysisCache) ??
                 evaluatePawnNumericExpr(
                     String(enumDecl.value ?? '').trim(),
                     decls,
-                    seen,
+                    mutableSeen,
                     analysisCache
                 );
             if (enumRootCapacity != null) {

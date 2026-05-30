@@ -460,7 +460,7 @@ function createStatementClassifier(deps) {
             if (/^true$/i.test(text)) return 1;
             if (/^false$/i.test(text)) return 0;
             if (/^[+\-]?(?:\d+\.\d*|\.\d+)(?:[eE][+\-]?\d+)?$/.test(text)) return Number(text);
-            return evaluatePawnNumericExpr(text, allDecls, new Set(), options.analysisCache || null);
+            return evaluatePawnNumericExpr(text, allDecls, null, options.analysisCache || null);
         };
 
         for (const piece of pieces) {

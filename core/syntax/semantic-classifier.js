@@ -980,10 +980,12 @@ function createSemanticSyntaxCore(deps = {}) {
     function parseTopLevelTernaryExpression(source, options = {}) {
         const text = String(source || '').trim();
         if (!text.includes('?')) return null;
+        const topLevelParts = findTopLevelTernaryParts(text, options);
+        if (topLevelParts) return topLevelParts;
         const parsed = parsePawnExpression(text, { ...options, buildAst: true, allowAssignment: false });
         const ast = unwrapSemanticRoot(parsed.ast);
         if (!parsed.ok || ast?.kind !== 'ternary') {
-            return findTopLevelTernaryParts(text, options);
+            return null;
         }
         return {
             condition: getNodeSource(text, ast.condition),

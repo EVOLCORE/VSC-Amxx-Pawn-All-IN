@@ -2,7 +2,7 @@
   "name": "amxx-pawn-all-in",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.11.2",
+  "version": "1.12.0",
   "publisher": "Faktor",
   "icon": "resources/icon.png",
   "repository": {
@@ -43,6 +43,9 @@
     "onStartupFinished",
     "onLanguage:amxxpawn",
     "onCommand:amxxPawnAllIn.compileCurrentFile",
+    "onCommand:amxxPawnAllIn.amxxBuilderBuild",
+    "onCommand:amxxPawnAllIn.amxxBuilderInit",
+    "onCommand:amxxPawnAllIn.amxxBuilderInstallOrUpdate",
     "onCommand:amxxPawnAllIn.generatePawnDoc",
     "onCommand:amxxPawnAllIn.generatePawnDocHere"
   ],
@@ -63,6 +66,22 @@
         }
       },
       {
+        "command": "amxxPawnAllIn.amxxBuilderBuild",
+        "title": "%commands.amxxBuilderBuild.title%",
+        "icon": {
+          "light": "resources/light/amxx-builder.svg",
+          "dark": "resources/dark/amxx-builder.svg"
+        }
+      },
+      {
+        "command": "amxxPawnAllIn.amxxBuilderInit",
+        "title": "%commands.amxxBuilderInit.title%"
+      },
+      {
+        "command": "amxxPawnAllIn.amxxBuilderInstallOrUpdate",
+        "title": "%commands.amxxBuilderInstallOrUpdate.title%"
+      },
+      {
         "command": "amxxPawnAllIn.generatePawnDoc",
         "title": "%commands.generatePawnDoc.title%",
         "icon": {
@@ -81,6 +100,26 @@
           "command": "amxxPawnAllIn.compileCurrentFile",
           "when": "editorLangId == amxxpawn",
           "group": "navigation"
+        },
+        {
+          "command": "amxxPawnAllIn.amxxBuilderBuild",
+          "when": "editorLangId == amxxpawn && amxxPawnAllIn.amxxBuilderAvailable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "amxxPawnAllIn.amxxBuilderInit",
+          "when": "editorLangId == amxxpawn && !amxxPawnAllIn.amxxBuilderManifestAvailable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "amxxPawnAllIn.amxxBuilderBuild",
+          "when": "resourceFilename =~ /^amxbuild\\.ya?ml$/ || resourceFilename =~ /^ambuild\\..+\\.ya?ml$/",
+          "group": "navigation@1"
+        },
+        {
+          "command": "amxxPawnAllIn.amxxBuilderInstallOrUpdate",
+          "when": "editorLangId == amxxpawn && amxxPawnAllIn.amxxBuilderManifestAvailable && !amxxPawnAllIn.amxxBuilderAvailable",
+          "group": "navigation@1"
         },
         {
           "command": "amxxPawnAllIn.generatePawnDoc",

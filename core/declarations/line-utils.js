@@ -5,6 +5,7 @@ const {
     isPawnIdentifierStartCode,
     isPotentialDeclarationStartLine,
     isPotentialEnumDeclarationLine,
+    isVariableDeclarationContinuationLine,
     readLeadingDeclarationWord
 } = require('../syntax/declaration-start');
 const { countLineBreaks } = require('../syntax/lines');
@@ -39,6 +40,7 @@ module.exports = {
     isPreprocessorDirectiveLine,
     isPotentialDeclarationStartLine,
     isPotentialEnumDeclarationLine,
+    isVariableDeclarationContinuationLine,
     isWhitespaceCharCode,
     readLeadingWord
 };

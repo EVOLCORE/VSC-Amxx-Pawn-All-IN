@@ -1,6 +1,7 @@
 function splitPawnLines(source = '') {
     const text = String(source || '');
     if (text.indexOf('\n') < 0) return [text];
+    if (text.indexOf('\r') < 0) return text.split('\n');
     const lines = [];
     let lineStart = 0;
     let lineBreak = text.indexOf('\n', lineStart);

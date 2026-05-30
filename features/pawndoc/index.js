@@ -2,6 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const { createIncludeDocumentMatcher } = require('../../core/include-documents');
 const {
+    showTimedErrorMessage,
+    showTimedInformationMessage
+} = require('../../services/notifications');
+const {
     buildPawnDocInsertionPlan,
     buildPawnDocSingleInsertionPlan
 } = require('../../core/pawndoc/generator');
@@ -66,7 +70,7 @@ function createPawnDocFeature(deps) {
         const yes = t('pawndoc.backupPrompt.yes');
         const no = t('pawndoc.backupPrompt.no');
         const cancel = t('pawndoc.backupPrompt.cancel');
-        const choice = await vscode.window.showInformationMessage(
+        const choice = await showTimedInformationMessage(vscode,
             t('pawndoc.backupPrompt.message'),
             { modal: true },
             yes,
@@ -80,7 +84,7 @@ function createPawnDocFeature(deps) {
 
     async function applyPawnDocPlan(document, plan, options = {}) {
         if (!plan?.insertions?.length) {
-            vscode.window.showInformationMessage(t(options.emptyMessageKey || 'pawndoc.noDeclarations'));
+            showTimedInformationMessage(vscode, t(options.emptyMessageKey || 'pawndoc.noDeclarations'));
             return { changed: false, count: 0, backupPath: '' };
         }
 
@@ -91,7 +95,7 @@ function createPawnDocFeature(deps) {
 
         let backupPath = '';
         if (shouldCreateBackup && document.uri?.scheme !== 'file') {
-            vscode.window.showErrorMessage(t('pawndoc.fileDocumentRequired'));
+            showTimedErrorMessage(vscode, t('pawndoc.fileDocumentRequired'));
             return null;
         }
         if (shouldCreateBackup) {
@@ -99,7 +103,7 @@ function createPawnDocFeature(deps) {
             try {
                 fs.writeFileSync(backupPath, document.getText(), 'utf8');
             } catch (error) {
-                vscode.window.showErrorMessage(t('pawndoc.backupFailed', { message: error?.message || String(error) }));
+                showTimedErrorMessage(vscode, t('pawndoc.backupFailed', { message: error?.message || String(error) }));
                 return null;
             }
         }
@@ -111,12 +115,12 @@ function createPawnDocFeature(deps) {
 
         const applied = await vscode.workspace.applyEdit(edit);
         if (!applied) {
-            vscode.window.showErrorMessage(t('pawndoc.editFailed'));
+            showTimedErrorMessage(vscode, t('pawndoc.editFailed'));
             return null;
         }
 
         const messageKey = backupPath ? 'pawndoc.generated' : 'pawndoc.generatedNoBackup';
-        vscode.window.showInformationMessage(t(messageKey, {
+        showTimedInformationMessage(vscode, t(messageKey, {
             count: plan.insertions.length,
             backupFile: backupPath ? path.basename(backupPath) : ''
         }));
@@ -139,11 +143,11 @@ function createPawnDocFeature(deps) {
     async function generatePawnDocForEditor(editor = vscode.window.activeTextEditor) {
         const document = editor?.document || null;
         if (!isPawnDocIncludeDocument(document)) {
-            vscode.window.showInformationMessage(t('pawndoc.invalidDocument'));
+            showTimedInformationMessage(vscode, t('pawndoc.invalidDocument'));
             return null;
         }
         if (document.uri?.scheme !== 'file') {
-            vscode.window.showErrorMessage(t('pawndoc.fileDocumentRequired'));
+            showTimedErrorMessage(vscode, t('pawndoc.fileDocumentRequired'));
             return null;
         }
 
@@ -194,7 +198,7 @@ function createPawnDocFeature(deps) {
         const editor = getEditorForPawnDocTarget(target);
         const document = editor?.document || null;
         if (!isPawnDocDocument(document)) {
-            vscode.window.showInformationMessage(t('pawndoc.invalidPawnDocument'));
+            showTimedInformationMessage(vscode, t('pawndoc.invalidPawnDocument'));
             return null;
         }
 

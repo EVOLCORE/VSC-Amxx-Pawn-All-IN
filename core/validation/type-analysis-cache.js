@@ -78,7 +78,7 @@ function createTypeAnalysisCacheFactory(deps) {
         getDimSpec(dimText) {
             const key = String(dimText || '');
             if (!this.dimSpecByText.has(key)) {
-                this.dimSpecByText.set(key, parseDimSpec(key, this.sourceDecls, new Set(), this));
+                this.dimSpecByText.set(key, parseDimSpec(key, this.sourceDecls, null, this));
             }
             return this.dimSpecByText.get(key);
         }

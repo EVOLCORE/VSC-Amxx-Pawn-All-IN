@@ -1,7 +1,8 @@
 const {
     isBareDeclarationKeywordLine,
     isExplicitDeclarationStartLine,
-    isPreprocessorDirectiveLine
+    isPreprocessorDirectiveLine,
+    isVariableDeclarationContinuationLine
 } = require('./line-utils');
 const {
     hasOddTrailingBackslashContinuation,
@@ -467,6 +468,16 @@ function createDeclarationScopeCore(deps) {
         }
         let parenDepth = 0;
         let braceDepth = 0;
+        if (source.indexOf('"') < 0 && source.indexOf("'") < 0) {
+            for (let i = 0; i < source.length; i++) {
+                const code = source.charCodeAt(i);
+                if (code === 40) parenDepth++;
+                else if (code === 41) parenDepth--;
+                else if (code === 123) braceDepth++;
+                else if (code === 125) braceDepth--;
+            }
+            return { parenDepth, braceDepth };
+        }
         let inStr = false;
         let strCh = 0;
         for (let i = 0; i < source.length; i++) {
@@ -571,7 +582,11 @@ function createDeclarationScopeCore(deps) {
                 i++;
                 continue;
             }
-            if (isPreprocessorDirectiveLine(trimmedCont) || isExplicitDeclarationStartLine(trimmedCont)) {
+            if (
+                isPreprocessorDirectiveLine(trimmedCont) ||
+                isExplicitDeclarationStartLine(trimmedCont) ||
+                !isVariableDeclarationContinuationLine(trimmedCont)
+            ) {
                 break;
             }
             joined += ' ' + cont.trim();

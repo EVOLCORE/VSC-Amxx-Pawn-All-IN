@@ -9,6 +9,11 @@ const {
     collectCompilerIncludeDirectories,
     defaultNormalizeFsPath
 } = require('../core/include-search-paths');
+const {
+    showTimedErrorMessage,
+    showTimedInformationMessage,
+    showTimedWarningMessage
+} = require('./notifications');
 
 const EXTENSION_CONFIG_NS = 'amxxPawnAllIn';
 const COMPILE_COMMAND_ID = 'amxxPawnAllIn.compileCurrentFile';
@@ -456,17 +461,17 @@ async function showCompileResultToast({
     const showOutputLabel = t('compiler.showOutput');
     let selection;
     if (isErrorResult) {
-        selection = await vscode.window.showErrorMessage(
+        selection = await showTimedErrorMessage(vscode,
             t('compiler.failure.toast'),
             showOutputLabel
         );
     } else if (isWarningResult) {
-        selection = await vscode.window.showWarningMessage(
+        selection = await showTimedWarningMessage(vscode,
             t('compiler.warning.toast'),
             showOutputLabel
         );
     } else {
-        selection = await vscode.window.showInformationMessage(
+        selection = await showTimedInformationMessage(vscode,
             t('compiler.success.toast'),
             showOutputLabel
         );
@@ -526,7 +531,7 @@ function runPostCompileUi({ outputChannel, hasCompiledOutput, hasErrors, hasWarn
 }
 
 async function promptConfigureCompilerPath() {
-    const selection = await vscode.window.showErrorMessage(
+    const selection = await showTimedErrorMessage(vscode,
         t('compiler.notFound.message'),
         t('common.openSettings')
     );
@@ -770,7 +775,7 @@ function registerCompilerIntegration(context) {
         const document = editor?.document || null;
 
         if (!isCompilablePawnDocument(document)) {
-            vscode.window.showErrorMessage(t('compiler.invalidDocument.message'));
+            showTimedErrorMessage(vscode, t('compiler.invalidDocument.message'));
             return;
         }
 
@@ -793,7 +798,7 @@ function registerCompilerIntegration(context) {
             }
 
             if (shouldShowCompileStartToast()) {
-                vscode.window.showInformationMessage(
+                showTimedInformationMessage(vscode,
                     t('compiler.startNotification', {
                         fileName: path.basename(document.fileName)
                     })
@@ -841,7 +846,7 @@ function registerCompilerIntegration(context) {
                         if (closeFallbackTimer) clearTimeout(closeFallbackTimer);
                         outputChannel.appendLine('');
                         outputChannel.appendLine(t('compiler.spawnFailed.output', { message: error.message }));
-                        vscode.window.showErrorMessage(t('compiler.spawnFailed.toast'));
+                        showTimedErrorMessage(vscode, t('compiler.spawnFailed.toast'));
                         resolve();
                     };
 

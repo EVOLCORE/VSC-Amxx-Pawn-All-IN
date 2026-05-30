@@ -37,8 +37,10 @@ function createIncludePersistentCache(deps) {
     const PERSISTENT_INCLUDE_DECL_CACHE_MAX_FILES = 512;
     const PERSISTENT_INCLUDE_DECL_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
     const PERSISTENT_INCLUDE_DECL_CACHE_PRUNE_INTERVAL_MS = 10 * 60 * 1000;
+    const INCLUDE_PREPROCESSED_MEMORY_CACHE_LIMIT = 256;
     let lastPersistentIncludeDeclCachePruneAt = 0;
     let persistentIncludeDeclCachePruneScheduled = false;
+    const includePreprocessedMemoryCache = new Map();
 
     function getPersistentIncludeDeclCacheMaxBytes() {
         const rawValue = typeof persistentIncludeDeclCacheMaxBytes === 'function'
@@ -94,6 +96,67 @@ function createIncludePersistentCache(deps) {
             String(activeFilesSignature || ''),
             String(Number.isInteger(includeDepth) ? includeDepth : 0)
         ]);
+    }
+
+    function getIncludePreprocessedCacheKey(filePath, defineStateKey, searchPathSignature, activeFilesSignature, includeDepth, defineDecls = []) {
+        return [
+            normalizeFsPath(filePath),
+            getDefineStateSignature(defineDecls, defineStateKey),
+            String(searchPathSignature || ''),
+            String(activeFilesSignature || ''),
+            String(Number.isInteger(includeDepth) ? includeDepth : 0)
+        ].join('\0');
+    }
+
+    function readIncludePreprocessedMemoryCache(cacheKey, fileStamp) {
+        const cached = cacheKey ? includePreprocessedMemoryCache.get(cacheKey) : null;
+        if (!cached) return null;
+        if (!isSameFileStamp(cached.fileStamp, fileStamp) || !areDependencyStampsFresh(cached.dependencyStamps)) {
+            includePreprocessedMemoryCache.delete(cacheKey);
+            return null;
+        }
+        includePreprocessedMemoryCache.delete(cacheKey);
+        includePreprocessedMemoryCache.set(cacheKey, cached);
+        return cached.state || null;
+    }
+
+    function compactPreprocessedStateForMemory(state) {
+        if (!state || typeof state !== 'object') return null;
+        return {
+            content: state.content,
+            rawLines: state.rawLines,
+            strippedLines: state.strippedLines,
+            lineCtrlChars: state.lineCtrlChars,
+            finalCtrlChar: state.finalCtrlChar,
+            defineDecls: state.defineDecls,
+            defineStateKey: state.defineStateKey,
+            rationalState: state.rationalState || null,
+            directiveCandidateLines: state.directiveCandidateLines,
+            includeEntries: state.includeEntries || [],
+            unresolvedIncludeEntries: state.unresolvedIncludeEntries || []
+        };
+    }
+
+    function writeIncludePreprocessedMemoryCache(cacheKey, fileStamp, state, dependencyStamps) {
+        if (!cacheKey || !fileStamp || !state || !(dependencyStamps instanceof Map)) return;
+        const compactState = compactPreprocessedStateForMemory(state);
+        if (!compactState) return;
+        includePreprocessedMemoryCache.delete(cacheKey);
+        includePreprocessedMemoryCache.set(cacheKey, {
+            fileStamp,
+            dependencyStamps,
+            state: compactState
+        });
+        while (includePreprocessedMemoryCache.size > INCLUDE_PREPROCESSED_MEMORY_CACHE_LIMIT) {
+            const oldestKey = includePreprocessedMemoryCache.keys().next().value;
+            includePreprocessedMemoryCache.delete(oldestKey);
+        }
+    }
+
+    function getIncludeEntryDependencyFilePath(entry) {
+        return entry && typeof entry === 'object'
+            ? entry.filePath
+            : getSerializedIncludeEntryFilePath(entry);
     }
 
     function getActiveIncludeEntriesSignatureHash(includeEntries = []) {
@@ -247,10 +310,21 @@ function createIncludePersistentCache(deps) {
 
     function readPersistentIncludePreprocessedState(filePath, defineStateKey, options = {}) {
         const fileStamp = getFileStamp(filePath);
-        if (!canUsePersistentIncludeDeclCache(fileStamp)) return null;
+        if (!fileStamp) return null;
         const searchPathSignature = getSearchPathSignature(filePath);
         const activeFilesSignature = getActiveFilesSignature(options.activeFiles);
         const includeDepth = Number.isInteger(options.includeDepth) ? options.includeDepth : 0;
+        const memoryCacheKey = getIncludePreprocessedCacheKey(
+            filePath,
+            defineStateKey,
+            searchPathSignature,
+            activeFilesSignature,
+            includeDepth,
+            options.baseDefineDecls || []
+        );
+        const memoryState = readIncludePreprocessedMemoryCache(memoryCacheKey, fileStamp);
+        if (memoryState) return memoryState;
+        if (!canUsePersistentIncludeDeclCache(fileStamp)) return null;
         const cacheFilePath = getPersistentIncludePreprocessedCacheFilePath(
             filePath,
             defineStateKey,
@@ -271,7 +345,9 @@ function createIncludePersistentCache(deps) {
             if (!isSameFileStamp(payload.m, fileStamp)) return null;
             const dependencyStamps = deserializeDependencyStamps(payload.x);
             if (!dependencyStamps || !areDependencyStampsFresh(dependencyStamps)) return null;
-            return revivePreprocessedState(payload.r, options.baseDefineDecls);
+            const state = revivePreprocessedState(payload.r, options.baseDefineDecls);
+            writeIncludePreprocessedMemoryCache(memoryCacheKey, fileStamp, state, dependencyStamps);
+            return state;
         } catch {
             return null;
         }
@@ -279,10 +355,27 @@ function createIncludePersistentCache(deps) {
 
     function writePersistentIncludePreprocessedState(filePath, defineStateKey, state, options = {}) {
         const fileStamp = getFileStamp(filePath);
-        if (!canUsePersistentIncludeDeclCache(fileStamp)) return;
         const searchPathSignature = getSearchPathSignature(filePath);
         const activeFilesSignature = getActiveFilesSignature(options.activeFiles);
         const includeDepth = Number.isInteger(options.includeDepth) ? options.includeDepth : 0;
+        const memoryCacheKey = getIncludePreprocessedCacheKey(
+            filePath,
+            defineStateKey,
+            searchPathSignature,
+            activeFilesSignature,
+            includeDepth,
+            options.baseDefineDecls || []
+        );
+        const dependencyStamps = buildDependencyStampMap([
+            filePath,
+            ...(state.includeEntries || [])
+                .map(getIncludeEntryDependencyFilePath)
+                .filter(Boolean)
+        ]);
+        writeIncludePreprocessedMemoryCache(memoryCacheKey, fileStamp, state, dependencyStamps);
+        if (!canUsePersistentIncludeDeclCache(fileStamp)) return;
+        const serializedState = serializePreprocessedState(state, options.baseDefineDecls);
+        if (!serializedState) return;
         const cacheFilePath = getPersistentIncludePreprocessedCacheFilePath(
             filePath,
             defineStateKey,
@@ -292,14 +385,6 @@ function createIncludePersistentCache(deps) {
             options.baseDefineDecls || []
         );
         if (!cacheFilePath) return;
-        const serializedState = serializePreprocessedState(state, options.baseDefineDecls);
-        if (!serializedState) return;
-        const dependencyStamps = buildDependencyStampMap([
-            filePath,
-            ...(serializedState.i || [])
-                .map(getSerializedIncludeEntryFilePath)
-                .filter(Boolean)
-        ]);
         const payload = {
             s: INCLUDE_PREPROCESSED_PERSISTENT_CACHE_SCHEMA,
             p: normalizeFsPath(filePath),

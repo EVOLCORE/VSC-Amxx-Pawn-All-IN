@@ -15,6 +15,7 @@ const {
     isPreprocessorDirectiveLine,
     isPotentialDeclarationStartLine,
     isPotentialEnumDeclarationLine,
+    isVariableDeclarationContinuationLine,
     isWhitespaceCharCode
 } = require('./line-utils');
 const { createDefineDeclarationEventCore } = require('./define-events');
@@ -354,7 +355,7 @@ function createDeclarationParsingCore(deps) {
         };
     }
 
-    function nextMeaningfulLineStartsDeclarationBoundary(options = {}) {
+    function nextMeaningfulLineCannotContinueVariableDeclaration(options = {}) {
         const lineNumber = Number.isInteger(options?.lineNumber) ? options.lineNumber : -1;
         const sourceLines = Array.isArray(options?.strippedLines)
             ? options.strippedLines
@@ -364,13 +365,15 @@ function createDeclarationParsingCore(deps) {
         for (let probeLine = lineNumber + 1; probeLine < sourceLines.length; probeLine++) {
             const trimmed = String(sourceLines[probeLine] || '').trim();
             if (!trimmed) continue;
-            return isPreprocessorDirectiveLine(trimmed) || isExplicitDeclarationStartLine(trimmed);
+            return isPreprocessorDirectiveLine(trimmed) ||
+                isExplicitDeclarationStartLine(trimmed) ||
+                !isVariableDeclarationContinuationLine(trimmed);
         }
-        return false;
+        return true;
     }
 
     function readUnexpectedTrailingDeclarationComma(source, decls = [], options = {}) {
-        if (!nextMeaningfulLineStartsDeclarationBoundary(options)) return null;
+        if (!nextMeaningfulLineCannotContinueVariableDeclaration(options)) return null;
         const lineNumber = Number.isInteger(options?.lineNumber) ? options.lineNumber : -1;
         const lineDecls = (decls || []).filter(decl =>
             decl?.type === 'variable' &&
@@ -626,7 +629,7 @@ function createDeclarationParsingCore(deps) {
                 explicitInt = evaluatePawnNumericExpr(
                     value,
                     getCurrentEnumEvalDecls(),
-                    new Set(),
+                    null,
                     getEnumEvalAnalysisCache()
                 );
                 if (explicitInt != null) {
@@ -685,7 +688,7 @@ function createDeclarationParsingCore(deps) {
             let step = 1;
             const dimsParts = parseDimsParts(dims);
             const dimsSpecs = dimsParts.length
-                ? dimsParts.map(part => parseDimSpec(part, getEnumEvalDecls(), new Set(), getEnumEvalAnalysisCache()))
+                ? dimsParts.map(part => parseDimSpec(part, getEnumEvalDecls(), null, getEnumEvalAnalysisCache()))
                 : [];
             if (dimsSpecs.length && dimsSpecs.every(spec => spec.capacity != null)) {
                 const product = dimsSpecs.reduce((acc, spec) => acc * Math.max(1, spec.capacity), 1);

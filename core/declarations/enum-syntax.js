@@ -93,6 +93,24 @@ function createEnumSyntaxDiagnosticsCore(deps) {
             return parts;
         }
 
+        if (text.indexOf('"') < 0 && text.indexOf("'") < 0) {
+            let depth = 0;
+            for (let index = 0; index < text.length; index++) {
+                const code = text.charCodeAt(index);
+                if (code === 10) {
+                    lineOffset++;
+                    continue;
+                }
+                if (code === 91 || code === 40 || code === 123) depth++;
+                else if (code === 93 || code === 41 || code === 125) depth--;
+                else if (code === 44 && depth === 0) {
+                    pushPart(index);
+                }
+            }
+            pushPart(text.length);
+            return parts;
+        }
+
         const escapeChar = getActiveCtrlChar();
         let depth = 0;
         let inStr = false;

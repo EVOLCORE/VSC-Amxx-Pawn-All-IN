@@ -654,7 +654,7 @@ function createSymbolUsageDiagnostics(deps = {}) {
             }
             return false;
         };
-        const objectLikeDefineMayReferenceTrackedVariable = (decl, visited = new Set()) => {
+        const objectLikeDefineMayReferenceTrackedVariable = (decl, visited = null) => {
             if (!decl || decl.type !== 'define' || decl.args || decl.macroStyle) return false;
             if (objectLikeDefineUsageRelevanceCache.has(decl)) {
                 return objectLikeDefineUsageRelevanceCache.get(decl);
@@ -664,7 +664,8 @@ function createSymbolUsageDiagnostics(deps = {}) {
                 if (objectLikeDefineNameUsageRelevanceCache.has(name)) {
                     return objectLikeDefineNameUsageRelevanceCache.get(name);
                 }
-                if (visited.has(name)) return false;
+                if (visited?.has(name)) return false;
+                if (!visited) visited = new Set();
                 visited.add(name);
             }
             const value = String(decl.value || '');

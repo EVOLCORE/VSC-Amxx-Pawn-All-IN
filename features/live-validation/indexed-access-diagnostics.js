@@ -35,7 +35,7 @@ function createIndexedAccessDiagnostics(deps) {
                 if (cache.has(cacheKey)) return cache.get(cacheKey);
                 const hasUnresolvedDim = parseDimsParts(variableDecl.dims || '').some(part => {
                     const dimSpec = analysisCache?.getDimSpec?.(part) ||
-                        parseDimSpec(part, analysisDecls, new Set(), analysisCache);
+                        parseDimSpec(part, analysisDecls, null, analysisCache);
                     return !!dimSpec?.raw && dimSpec.capacity == null;
                 });
                 cache.set(cacheKey, hasUnresolvedDim);

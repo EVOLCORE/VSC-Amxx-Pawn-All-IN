@@ -27,7 +27,7 @@ function createDynamicUsageDiagnostics(deps = {}) {
             if (pragma?.name !== 'dynamic') continue;
             const expr = String(pragma.value || '').trim();
             if (!expr) continue;
-            const value = evaluatePawnNumericExpr(expr, getDecls(), new Set(), analysisCache);
+            const value = evaluatePawnNumericExpr(expr, getDecls(), null, analysisCache);
             if (Number.isFinite(value) && value >= 0) {
                 limit = Math.floor(value);
             }
@@ -52,7 +52,7 @@ function createDynamicUsageDiagnostics(deps = {}) {
         let cells = 1;
         for (const part of dimParts) {
             const spec = analysisCache?.getDimSpec?.(part) ||
-                parseDimSpec(part, getDecls(), new Set(), analysisCache);
+                parseDimSpec(part, getDecls(), null, analysisCache);
             const capacity = spec?.capacity;
             if (!Number.isFinite(capacity) || capacity <= 0) return null;
             cells *= Math.floor(capacity);

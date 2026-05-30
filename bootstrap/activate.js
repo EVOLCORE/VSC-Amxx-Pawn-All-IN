@@ -1,6 +1,7 @@
 const vscode = require('vscode');
 const path = require('path');
 const { registerLazyCompilerIntegration } = require('../services/compiler-lazy');
+const { registerAmxxBuilderIntegration } = require('../services/amxx-builder');
 const { createDebugOutputChannel } = require('../services/debug-output');
 const { createLazyRuntimeTranslator } = require('../services/localization-lazy');
 const { createSettingsService } = require('../services/settings');
@@ -16,6 +17,7 @@ function activate(context) {
     const state = createActivationState();
 
     registerLazyCompilerIntegration(context);
+    registerAmxxBuilderIntegration(context);
 
     const settingsService = createSettingsService(vscode);
     settingsService.refresh();

@@ -43,6 +43,27 @@ function findBalancedGroupEnd(source = '', openIndex = 0, openChar = '(', closeC
                 return firstCloseIndex;
             }
         }
+        if (
+            openText.length === 1 &&
+            closeText.length === 1 &&
+            openText !== closeText &&
+            text.indexOf('"', start + 1) < 0 &&
+            text.indexOf("'", start + 1) < 0
+        ) {
+            for (let index = start; index < text.length; index++) {
+                const code = text.charCodeAt(index);
+                if (code === openCode) {
+                    depth++;
+                    continue;
+                }
+                if (code === closeCode) {
+                    depth--;
+                    if (depth === 0) return index;
+                    if (depth < 0) return -1;
+                }
+            }
+            return -1;
+        }
         for (let index = start; index < text.length; index++) {
             const code = text.charCodeAt(index);
             if (inString) {

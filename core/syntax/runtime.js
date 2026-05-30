@@ -21,7 +21,7 @@ function createSyntaxCore(deps) {
 
     function stripLineComment(line, escapeChar = getActiveCtrlChar()) {
         const source = String(line || '');
-        if (source.indexOf('//') < 0 && source.indexOf('/*') < 0) return line;
+        if (source.indexOf('//') < 0) return line;
         let inStr = false, strCh = '';
         for (let i = 0; i < line.length; i++) {
             const c = line[i];
@@ -150,8 +150,6 @@ function createSyntaxCore(deps) {
         if (source.indexOf('/') < 0) {
             const parts = [];
             let depth = 0;
-            let inStr = false;
-            let strCh = '';
             let start = 0;
             const pushSlice = end => {
                 const rawPiece = source.slice(start, end);
@@ -181,6 +179,26 @@ function createSyntaxCore(deps) {
                 }
                 start = end + 1;
             };
+            if (source.indexOf('"') < 0 && source.indexOf("'") < 0) {
+                for (let index = 0; index < source.length; index++) {
+                    const code = source.charCodeAt(index);
+                    if (code === 91 || code === 40 || code === 123) {
+                        depth++;
+                        continue;
+                    }
+                    if (code === 93 || code === 41 || code === 125) {
+                        depth--;
+                        continue;
+                    }
+                    if (code === 44 && depth === 0) {
+                        pushSlice(index);
+                    }
+                }
+                pushSlice(source.length);
+                return parts;
+            }
+            let inStr = false;
+            let strCh = '';
             for (let index = 0; index < source.length; index++) {
                 const char = source[index];
                 if (inStr) {

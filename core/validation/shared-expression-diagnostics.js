@@ -286,7 +286,7 @@ function createSharedExpressionDiagnostics(deps) {
         if (!raw) return true;
         const decls = getTypeAnalysisSourceDecls(ctx, analysisCache);
         const spec = analysisCache?.getDimSpec?.(raw) ||
-            parseDimSpec(raw, decls, new Set(), analysisCache);
+            parseDimSpec(raw, decls, null, analysisCache);
         return !!spec?.raw && spec.capacity == null;
     }
 

@@ -22,9 +22,27 @@ function createDeclarationGuardsCore(deps) {
         getCtrlCharStateForContent,
         parseOperatorOverloadToken
     } = deps;
+    const variableDeclarationExtentCache = new WeakMap();
     const variableDeclarationSpanCache = new WeakMap();
     const variableDeclarationLineCoverageCache = new WeakMap();
     const variableDeclarationNameBucketCache = new WeakMap();
+
+    function getCachedVariableDeclarationExtent(decl, rawLines, lineCtrlChars, preparedLines = null) {
+        if (!decl || decl.type !== 'variable') return null;
+        let extentCacheByLines = variableDeclarationExtentCache.get(decl);
+        if (!extentCacheByLines) {
+            extentCacheByLines = new WeakMap();
+            variableDeclarationExtentCache.set(decl, extentCacheByLines);
+        }
+        const sourceKey = preparedLines || rawLines;
+        const cached = extentCacheByLines.get(sourceKey);
+        if (cached) return cached;
+
+        const { text: declarationText, nextLine } = collectDeclarationText(rawLines, decl.lineNumber, lineCtrlChars, preparedLines);
+        const extent = { declarationText, nextLine };
+        extentCacheByLines.set(sourceKey, extent);
+        return extent;
+    }
 
     function getCachedVariableDeclarationSpan(document, decl, rawLines, lineCtrlChars, preparedLines = null, lineStartOffsets = null) {
         if (!decl || decl.type !== 'variable') return null;
@@ -34,10 +52,14 @@ function createDeclarationGuardsCore(deps) {
             variableDeclarationSpanCache.set(decl, spanCacheByLines);
         }
         const sourceKey = preparedLines || rawLines;
-        const cached = spanCacheByLines.get(sourceKey);
-        if (cached) return cached;
+        if (spanCacheByLines.has(sourceKey)) return spanCacheByLines.get(sourceKey);
 
-        const { text: declarationText, nextLine } = collectDeclarationText(rawLines, decl.lineNumber, lineCtrlChars, preparedLines);
+        const extent = getCachedVariableDeclarationExtent(decl, rawLines, lineCtrlChars, preparedLines);
+        if (!extent) {
+            spanCacheByLines.set(sourceKey, null);
+            return null;
+        }
+        const { declarationText, nextLine } = extent;
         const dimsPattern = decl.dims ? `(?:\\s*${escapeRegExp(decl.dims)})?` : '';
         const declPattern = new RegExp(`\\b${escapeRegExp(decl.name)}\\b${dimsPattern}`);
         const getLineStartOffset = lineNumber =>
@@ -115,9 +137,9 @@ function createDeclarationGuardsCore(deps) {
             coverageByLine = new Map();
             for (const decl of decls) {
                 if (!decl || decl.type !== 'variable') continue;
-                const declarationSpan = getCachedVariableDeclarationSpan(document, decl, rawLines, lineCtrlChars, preparedLines);
-                if (!declarationSpan) continue;
-                for (let coveredLine = decl.lineNumber; coveredLine < declarationSpan.nextLine; coveredLine++) {
+                const declarationExtent = getCachedVariableDeclarationExtent(decl, rawLines, lineCtrlChars, preparedLines);
+                if (!declarationExtent) continue;
+                for (let coveredLine = decl.lineNumber; coveredLine < declarationExtent.nextLine; coveredLine++) {
                     let coveredDecls = coverageByLine.get(coveredLine);
                     if (!coveredDecls) {
                         coveredDecls = [];
