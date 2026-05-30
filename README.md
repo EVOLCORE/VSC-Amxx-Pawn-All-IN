@@ -73,7 +73,7 @@ Recommended AMX Mod X version: 1.9.0 or newer.
 
 1. AMXX compiler integration with a toolbar command, configurable compiler path, output directory, compiler options, result toasts, output reveal behavior, and diagnostic reveal priority.
 2. Compiler include paths are passed in the same project/global priority order used by the extension, with duplicate `-i` options filtered out.
-3. [AMXX Builder](https://github.com/AmxxModularEcosystem/amxx-builder) integration: when `amxb` is installed and an `amxbuild.yml`, `amxbuild.yaml`, or suffixed `ambuild.*.yml`/`.yaml` manifest is present in the project root, the editor title can run `amxb build`. Command palette helpers can also initialize a manifest or open the installer command in a terminal.
+3. [AMXX Builder](https://github.com/AmxxModularEcosystem/amxx-builder) integration: when `amxb` is installed and an `amxbuild.yml`, `amxbuild.yaml`, or suffixed `ambuild.*.yml`/`.yaml` manifest is present in the project root, the editor title can run `amxb build`. Command palette helpers can initialize a manifest with selectable `amxb init` options or open the installer command in a terminal.
 
 ### Performance & Caching
 
@@ -163,6 +163,7 @@ Then use the `AMXX Pawn All-In: Compile Current File` command or the editor titl
 If your project uses [AMXX Builder](https://github.com/AmxxModularEcosystem/amxx-builder), put an `amxbuild.yml`, `amxbuild.yaml`, or suffixed `ambuild.*.yml`/`.yaml` manifest in the workspace root and install `amxb`.
 When the builder is available, `AMXX Pawn All-In: Build with AMXX Builder` appears in the editor title for AMXX Pawn files and runs `amxb build` from the project root.
 If several builder manifests are present, the command asks which one to use.
+For new projects, use `AMXX Pawn All-In: Initialize AMXX Builder Manifest` from the command palette; it lets you select `amxb init` options such as package name, plugin file, workflow, `.gitignore`, and deploy `.env` stubs.
 
 For include API files, use `AMXX Pawn All-In: Generate PawnDoc Stubs` from the editor title button or command palette to add basic PawnDoc blocks above undocumented `native` and `forward` declarations. For a single declaration or selected code block in any AMXX Pawn file, use `AMXX Pawn All-In: Generate PawnDoc Here` from the command palette or VS Code code actions.
 

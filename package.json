@@ -2,7 +2,7 @@
   "name": "amxx-pawn-all-in",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.12.1",
+  "version": "1.12.2",
   "publisher": "Faktor",
   "icon": "resources/icon.png",
   "repository": {
@@ -75,11 +75,19 @@
       },
       {
         "command": "amxxPawnAllIn.amxxBuilderInit",
-        "title": "%commands.amxxBuilderInit.title%"
+        "title": "%commands.amxxBuilderInit.title%",
+        "icon": {
+          "light": "resources/light/amxx-builder-init.svg",
+          "dark": "resources/dark/amxx-builder-init.svg"
+        }
       },
       {
         "command": "amxxPawnAllIn.amxxBuilderInstallOrUpdate",
-        "title": "%commands.amxxBuilderInstallOrUpdate.title%"
+        "title": "%commands.amxxBuilderInstallOrUpdate.title%",
+        "icon": {
+          "light": "resources/light/amxx-builder-install.svg",
+          "dark": "resources/dark/amxx-builder-install.svg"
+        }
       },
       {
         "command": "amxxPawnAllIn.generatePawnDoc",
@@ -99,32 +107,27 @@
         {
           "command": "amxxPawnAllIn.compileCurrentFile",
           "when": "editorLangId == amxxpawn",
-          "group": "navigation"
+          "group": "navigation@50"
         },
         {
           "command": "amxxPawnAllIn.amxxBuilderBuild",
           "when": "editorLangId == amxxpawn && amxxPawnAllIn.amxxBuilderAvailable",
-          "group": "navigation@1"
-        },
-        {
-          "command": "amxxPawnAllIn.amxxBuilderInit",
-          "when": "editorLangId == amxxpawn && !amxxPawnAllIn.amxxBuilderManifestAvailable",
-          "group": "navigation@1"
+          "group": "navigation@51"
         },
         {
           "command": "amxxPawnAllIn.amxxBuilderBuild",
           "when": "resourceFilename =~ /^amxbuild\\.ya?ml$/ || resourceFilename =~ /^ambuild\\..+\\.ya?ml$/",
-          "group": "navigation@1"
+          "group": "navigation@51"
         },
         {
           "command": "amxxPawnAllIn.amxxBuilderInstallOrUpdate",
           "when": "editorLangId == amxxpawn && amxxPawnAllIn.amxxBuilderManifestAvailable && !amxxPawnAllIn.amxxBuilderAvailable",
-          "group": "navigation@1"
+          "group": "navigation@51"
         },
         {
           "command": "amxxPawnAllIn.generatePawnDoc",
           "when": "editorLangId == amxxpawn && amxxPawnAllIn.activeIncludeFile",
-          "group": "navigation@2"
+          "group": "navigation@52"
         }
       ]
     },
