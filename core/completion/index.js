@@ -27,6 +27,9 @@ const {
     INCLUDE_COMPLETION_TRIGGER_CHARACTERS
 } = require('./triggers');
 const {
+    isNumericLiteralCompletionPosition
+} = require('./context-guards');
+const {
     SERVICE_KEYWORD_COMPLETIONS,
     createServiceKeywordCandidateSelector
 } = require('./service-keywords');
@@ -41,6 +44,7 @@ module.exports = {
     COMPLETION_CALL_ARGUMENT_MODE_REQUIRED_BEFORE_DEFAULT,
     DEFAULT_MIN_FUZZY_PREFIX_LENGTH,
     INCLUDE_COMPLETION_TRIGGER_CHARACTERS,
+    isNumericLiteralCompletionPosition,
     compareCompletionCandidatePriority,
     compareCompletionMatches,
     dedupeCompletionCandidates,

@@ -2,6 +2,7 @@ const {
     isPawnIdentifierContinueCode,
     isBareDeclarationKeywordLine,
     isExplicitDeclarationStartLine,
+    getPotentialDeclarationStartLineKind,
     isPawnIdentifierStartCode,
     isPotentialDeclarationStartLine,
     isPotentialEnumDeclarationLine,
@@ -32,6 +33,7 @@ function createPawnFunctionCallRegex(name, escapeRegExp = defaultEscapeRegExp) {
 module.exports = {
     countLineBreaks,
     createPawnFunctionCallRegex,
+    getPotentialDeclarationStartLineKind,
     getPawnFunctionNameRegexSource,
     isBareDeclarationKeywordLine,
     isExplicitDeclarationStartLine,

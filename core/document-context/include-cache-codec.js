@@ -339,14 +339,70 @@ function createIncludeCacheCodec({ normalizeFsPath, getDefineStateKey, getDefine
             : '';
     }
 
+    function serializeLineOverrides(lines = [], fallbackLines = []) {
+        if (!Array.isArray(lines) || !Array.isArray(fallbackLines) || lines === fallbackLines) return [];
+        const overrides = [];
+        const limit = Math.min(lines.length, fallbackLines.length);
+        for (let index = 0; index < limit; index++) {
+            const value = String(lines[index] ?? '');
+            if (value !== String(fallbackLines[index] ?? '')) {
+                overrides.push([index, value]);
+            }
+        }
+        return overrides;
+    }
+
+    function reviveLineOverrides(fallbackLines = [], overrides = []) {
+        if (!Array.isArray(fallbackLines)) return [];
+        if (!Array.isArray(overrides) || overrides.length === 0) return fallbackLines;
+        let revived = null;
+        for (const item of overrides) {
+            if (!Array.isArray(item) || !Number.isInteger(item[0])) continue;
+            const index = item[0];
+            if (index < 0 || index >= fallbackLines.length) continue;
+            if (!revived) revived = fallbackLines.slice();
+            revived[index] = String(item[1] ?? '');
+        }
+        return revived || fallbackLines;
+    }
+
+    function serializeLineCtrlChars(lineCtrlChars = []) {
+        if (!Array.isArray(lineCtrlChars) || lineCtrlChars.length === 0) return [];
+        const overrides = [];
+        for (let index = 0; index < lineCtrlChars.length; index++) {
+            const value = lineCtrlChars[index];
+            if (value) overrides.push([index, String(value)]);
+        }
+        return overrides;
+    }
+
+    function reviveLineCtrlChars(lineCount, overrides = []) {
+        if (!Array.isArray(overrides) || overrides.length === 0) return [];
+        const lineCtrlChars = [];
+        for (const item of overrides) {
+            if (!Array.isArray(item) || !Number.isInteger(item[0])) continue;
+            const index = item[0];
+            if (index < 0 || index >= lineCount) continue;
+            const value = String(item[1] || '');
+            if (value) lineCtrlChars[index] = value;
+        }
+        return lineCtrlChars;
+    }
+
     function serializePreprocessedState(state, baseDefineDecls = null) {
         if (!state || typeof state !== 'object') return null;
         const defineRefs = createDefineStateRefTable();
         const serializedBaseDefineDecls = Array.isArray(baseDefineDecls)
             ? serializeDefineDecls(baseDefineDecls)
             : null;
+        const content = String(state.content || '');
+        const rawLines = Array.isArray(state.rawLines)
+            ? state.rawLines
+            : splitPawnLines(content);
+        const strippedOverrides = serializeLineOverrides(state.strippedLines, rawLines);
+        const lineCtrlCharOverrides = serializeLineCtrlChars(state.lineCtrlChars);
         const serialized = {
-            c: String(state.content || ''),
+            c: content,
             q: state.rationalState?.tagName
                 ? [
                     String(state.rationalState.tagName || ''),
@@ -359,6 +415,9 @@ function createIncludeCacheCodec({ normalizeFsPath, getDefineStateKey, getDefine
             i: serializeIncludeEntries(state.includeEntries || [], defineRefs.getRef),
             m: serializeUnresolvedIncludeEntries(state.unresolvedIncludeEntries || [])
         };
+        if (strippedOverrides.length) serialized.s = strippedOverrides;
+        if (lineCtrlCharOverrides.length) serialized.e = lineCtrlCharOverrides;
+        if (state.finalCtrlChar && state.finalCtrlChar !== '^') serialized.f = String(state.finalCtrlChar || '^');
         const ownDefineRef = defineRefs.getRef(state.defineDecls || [], state.defineStateKey || '');
         if (defineRefs.rows.length) {
             serialized.u = serializeDefineStateDeltaTable(defineRefs.rows, serializedBaseDefineDecls);
@@ -371,6 +430,7 @@ function createIncludeCacheCodec({ normalizeFsPath, getDefineStateKey, getDefine
     function revivePreprocessedState(serializedState, baseDefineDecls = null) {
         if (!serializedState || typeof serializedState !== 'object') return null;
         const content = String(serializedState.c ?? '');
+        const rawLines = splitPawnLines(content);
         if (serializedState.b && !Array.isArray(baseDefineDecls)) return null;
         const defineRefTable = Array.isArray(serializedState.u)
             ? reviveDefineStateDeltaTable(serializedState.u, serializedState.b ? baseDefineDecls : null)
@@ -386,7 +446,10 @@ function createIncludeCacheCodec({ normalizeFsPath, getDefineStateKey, getDefine
             : '';
         const revivedState = {
             content,
-            rawLines: splitPawnLines(content),
+            rawLines,
+            strippedLines: reviveLineOverrides(rawLines, serializedState.s),
+            lineCtrlChars: reviveLineCtrlChars(rawLines.length, serializedState.e),
+            finalCtrlChar: serializedState.f ? String(serializedState.f || '^') : '^',
             rationalState: reviveRationalState(serializedState.q),
             directiveCandidateLines: Array.isArray(serializedState.d)
                 ? serializedState.d.filter(Number.isInteger)

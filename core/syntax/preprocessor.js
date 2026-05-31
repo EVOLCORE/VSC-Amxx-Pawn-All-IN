@@ -5,6 +5,7 @@ const {
     PREPROCESSOR_DIRECTIVE_NAMES
 } = require('./preprocessor-directive-names');
 const {
+    normalizePreprocessorDirectiveName,
     readPreprocessorDirectiveNameContext,
     readPreprocessorIdentifierToken
 } = require('./preprocessor-directive-context');
@@ -101,22 +102,33 @@ function createPreprocessorSyntaxCore(deps) {
             options.escapeChar,
             options.stripLineComment !== false
         );
-        const directiveNameContext = readPreprocessorDirectiveNameContext(directiveLine);
-        if (!directiveNameContext) return null;
+        const hashIndex = skipDirectiveSpaces(directiveLine, 0);
+        if (hashIndex >= directiveLine.length || directiveLine.charCodeAt(hashIndex) !== 35) return null;
 
-        const hashIndex = directiveNameContext.hashStart;
-        const keywordStart = directiveNameContext.tokenStart;
-        const keywordEnd = directiveNameContext.tokenEnd;
+        const keywordStart = skipDirectiveSpaces(directiveLine, hashIndex + 1);
+        let keywordEnd = keywordStart;
+        if (
+            keywordStart < directiveLine.length &&
+            isPawnIdentifierStartCode(directiveLine.charCodeAt(keywordStart))
+        ) {
+            keywordEnd = keywordStart + 1;
+            while (
+                keywordEnd < directiveLine.length &&
+                isPawnIdentifierContinueCode(directiveLine.charCodeAt(keywordEnd))
+            ) {
+                keywordEnd++;
+            }
+        }
         let cursor = keywordEnd;
 
         let payloadStart = skipDirectiveSpaces(directiveLine, cursor);
         let payloadEnd = directiveLine.length;
         while (payloadEnd > payloadStart && isPawnHorizontalWhitespaceCode(directiveLine.charCodeAt(payloadEnd - 1))) payloadEnd--;
 
-        const keywordRaw = directiveNameContext.directiveNameRaw || '';
-        const keyword = directiveNameContext.directiveName || '';
+        const keywordRaw = keywordEnd > keywordStart ? directiveLine.slice(keywordStart, keywordEnd) : '';
+        const keyword = normalizePreprocessorDirectiveName(keywordRaw);
         const payload = directiveLine.slice(payloadStart, payloadEnd);
-        return {
+        const directive = {
             sourceLine,
             directiveLine,
             hashIndex,
@@ -127,9 +139,12 @@ function createPreprocessorSyntaxCore(deps) {
             payloadStart,
             payloadEnd,
             payload,
-            trimmed: directiveLine.slice(hashIndex, payloadEnd),
             rest: payload
         };
+        if (options.includeTrimmed !== false) {
+            directive.trimmed = directiveLine.slice(hashIndex, payloadEnd);
+        }
+        return directive;
     }
 
     function collectPreprocessorDirectiveText(rawLines, startLine, preparedLines = null, includeRangeMap = true) {
@@ -140,6 +155,36 @@ function createPreprocessorSyntaxCore(deps) {
         let text = '';
         let joinedCursor = 0;
         const segments = includeRangeMap ? [] : null;
+        if (firstLine < sourceRawLines.length) {
+            const firstRawLine = String(sourceRawLines[firstLine] || '');
+            if (!hasTrailingBackslashContinuation(firstRawLine)) {
+                const firstPreparedLine = String(sourcePreparedLines[firstLine] || '');
+                const mapRange = (start, length = 1) => {
+                    const rangeStart = Math.max(0, start | 0);
+                    const rangeEnd = Math.max(rangeStart + 1, rangeStart + Math.max(1, length | 0));
+                    return {
+                        lineNumber: firstLine,
+                        start: rangeStart,
+                        length: Math.max(1, Math.min(firstPreparedLine.length, rangeEnd) - rangeStart)
+                    };
+                };
+                return {
+                    text: firstPreparedLine,
+                    nextLine: firstLine + 1,
+                    continued: false,
+                    segments: includeRangeMap
+                        ? [{
+                            lineNumber: firstLine,
+                            sourceStart: 0,
+                            sourceEnd: firstPreparedLine.length,
+                            joinedStart: 0,
+                            joinedEnd: firstPreparedLine.length
+                        }]
+                        : [],
+                    mapRange
+                };
+            }
+        }
 
         while (lineNumber < sourceRawLines.length) {
             const rawLine = String(sourceRawLines[lineNumber] || '');
@@ -698,6 +743,14 @@ function createPreprocessorSyntaxCore(deps) {
         const includePreprocessedStates = options.includePreprocessedStates instanceof Map
             ? options.includePreprocessedStates
             : (options.captureIncludePreprocessedStates ? new Map() : null);
+        const getReusableLineDepths = lineCount => {
+            const lineDepths = Array.isArray(options.lineDepths) || ArrayBuffer.isView(options.lineDepths)
+                ? options.lineDepths
+                : typeof options.getLineDepths === 'function'
+                ? options.getLineDepths()
+                : null;
+            return lineDepths && lineDepths.length === lineCount ? lineDepths : null;
+        };
         const ensureDefineStateKey = () => {
             if (defineStateKeyDirty) {
                 defineStateKey = getDefineStateKey(defineDecls);
@@ -713,6 +766,7 @@ function createPreprocessorSyntaxCore(deps) {
                     rawLines,
                     strippedLines: Array.isArray(options.strippedLines) ? options.strippedLines : rawLines,
                     lineCtrlChars: Array.isArray(options.lineCtrlChars) ? options.lineCtrlChars : [],
+                    lineDepths: getReusableLineDepths(rawLines.length),
                     finalCtrlChar: options.finalCtrlChar || '^',
                     defineDecls,
                     rationalState,
@@ -777,11 +831,15 @@ function createPreprocessorSyntaxCore(deps) {
             let returnedDefineDeclMap = null;
             let returnedDefineDeclIndexMap = null;
             const returnedRawLines = Array.isArray(processedRawLinesValue) ? processedRawLinesValue : rawLines;
+            const reusableLineDepths = !contentChanged
+                ? getReusableLineDepths(returnedRawLines.length)
+                : null;
             const state = {
                 content: contentValue,
                 rawLines: returnedRawLines,
                 strippedLines: Array.isArray(outStrippedLines) ? outStrippedLines : strippedLines,
                 lineCtrlChars: Array.isArray(options.lineCtrlChars) ? options.lineCtrlChars : [],
+                lineDepths: reusableLineDepths,
                 finalCtrlChar: options.finalCtrlChar || '^',
                 defineDecls,
                 rationalState,
@@ -973,6 +1031,11 @@ function createPreprocessorSyntaxCore(deps) {
             }
         };
 
+        const noCommentDirectiveParseOptions = {
+            stripLineComment: false,
+            includeTrimmed: false
+        };
+
         const processDirectiveLine = lineNumber => {
             const rawLine = rawLines[lineNumber];
             const preparedLine = String(strippedLines[lineNumber] ?? '');
@@ -983,8 +1046,7 @@ function createPreprocessorSyntaxCore(deps) {
             const directiveText = directiveSource
                 ? directiveSource.text
                 : preparedLine;
-            const directive = parsePreprocessorDirectiveLine(directiveText, { stripLineComment: false });
-            const trimmed = directive?.trimmed || '';
+            const directive = parsePreprocessorDirectiveLine(directiveText, noCommentDirectiveParseOptions);
             const keyword = directive?.keyword || '';
             const rest = directive?.rest || '';
             const nextDirectiveLine = directiveSource?.nextLine ?? (lineNumber + 1);
@@ -1255,6 +1317,7 @@ function createPreprocessorSyntaxCore(deps) {
                                         rawLines: nestedState.rawLines,
                                         strippedLines: nestedState.strippedLines,
                                         lineCtrlChars: nestedState.lineCtrlChars,
+                                        lineDepths: nestedState.lineDepths,
                                         finalCtrlChar: nestedState.finalCtrlChar,
                                         rationalState: nestedState.rationalState || null,
                                         directiveCandidateLines: nestedState.directiveCandidateLines,

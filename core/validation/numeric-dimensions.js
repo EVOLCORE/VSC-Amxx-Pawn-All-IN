@@ -27,30 +27,71 @@ function createNumericDimensionValidationCore(deps) {
     const PARSED_NUMERIC_EXPR_CACHE_MAX_CHARS = 512;
     const PAWN_CHARS_PER_CELL = 4;
     const EMPTY_SEEN_NAMES = new Set();
-    const SIMPLE_NUMERIC_LITERAL_RE = /^[+-]?(?:0[xX][0-9a-fA-F]+|\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)$/;
     const dimensionSyntaxCore = createDimensionSyntaxCore();
     const parseDimsParts = dimensionSyntaxCore.parseDimsParts;
 
-    function evaluateSimpleNumericLiteral(source) {
-        const text = String(source || '').trim();
-        if (!SIMPLE_NUMERIC_LITERAL_RE.test(text)) return null;
-        if (/^[+-]?0[xX]/.test(text)) {
+    function isHexDigitCode(code) {
+        return (code >= 48 && code <= 57) ||
+            (code >= 65 && code <= 70) ||
+            (code >= 97 && code <= 102);
+    }
+
+    function scanDecimalNumericLiteral(text, index) {
+        const length = text.length;
+        let cursor = index;
+        while (cursor < length) {
+            const code = text.charCodeAt(cursor);
+            if (code < 48 || code > 57) break;
+            cursor++;
+        }
+        if (cursor === index) return -1;
+        if (text.charCodeAt(cursor) === 46) {
+            cursor++;
+            while (cursor < length) {
+                const code = text.charCodeAt(cursor);
+                if (code < 48 || code > 57) break;
+                cursor++;
+            }
+        }
+        const exponentCode = text.charCodeAt(cursor);
+        if (exponentCode === 69 || exponentCode === 101) {
+            cursor++;
+            const signCode = text.charCodeAt(cursor);
+            if (signCode === 43 || signCode === 45) cursor++;
+            const exponentStart = cursor;
+            while (cursor < length) {
+                const code = text.charCodeAt(cursor);
+                if (code < 48 || code > 57) break;
+                cursor++;
+            }
+            if (cursor === exponentStart) return -1;
+        }
+        return cursor;
+    }
+
+    function evaluateSimpleNumericLiteral(text) {
+        const firstIndex = text.charCodeAt(0) === 43 || text.charCodeAt(0) === 45 ? 1 : 0;
+        const firstCode = text.charCodeAt(firstIndex);
+        if (firstCode < 48 || firstCode > 57) return null;
+        if (firstCode === 48 && (text.charCodeAt(firstIndex + 1) === 120 || text.charCodeAt(firstIndex + 1) === 88)) {
+            let cursor = firstIndex + 2;
+            const hexStart = cursor;
+            while (cursor < text.length && isHexDigitCode(text.charCodeAt(cursor))) cursor++;
+            if (cursor !== text.length || cursor === hexStart) return null;
             const sign = text.charCodeAt(0) === 45 ? -1 : 1;
-            const start = text.charCodeAt(0) === 43 || text.charCodeAt(0) === 45 ? 1 : 0;
-            const value = Number.parseInt(text.slice(start), 16);
+            const value = Number.parseInt(text.slice(firstIndex), 16);
             return Number.isFinite(value) ? sign * value : null;
         }
+        if (scanDecimalNumericLiteral(text, firstIndex) !== text.length) return null;
         const value = Number(text);
         return Number.isFinite(value) ? value : null;
     }
 
     function evaluateParsedPawnNumericExpr(source) {
         const input = String(source || '');
-        if (input.length <= PARSED_NUMERIC_EXPR_CACHE_MAX_CHARS && parsedNumericExprCache.has(input)) {
+        if (input.length <= PARSED_NUMERIC_EXPR_CACHE_MAX_CHARS) {
             const cached = parsedNumericExprCache.get(input);
-            parsedNumericExprCache.delete(input);
-            parsedNumericExprCache.set(input, cached);
-            return cached;
+            if (cached !== undefined) return cached;
         }
         const cacheParsedNumericExprResult = result => {
             if (input.length <= PARSED_NUMERIC_EXPR_CACHE_MAX_CHARS) {
@@ -145,8 +186,9 @@ function createNumericDimensionValidationCore(deps) {
         let localSeen = seen instanceof Set ? seen : null;
         const isTopLevelSeen = !localSeen || localSeen.size === 0;
         const canUseCache = !!(analysisCache?.numericExprByText && isTopLevelSeen);
-        if (canUseCache && analysisCache.numericExprByText.has(cacheKey)) {
-            return analysisCache.numericExprByText.get(cacheKey);
+        if (canUseCache) {
+            const cached = analysisCache.numericExprByText.get(cacheKey);
+            if (cached !== undefined) return cached;
         }
         const cacheNumericExprResult = result => {
             if (canUseCache) {
@@ -162,15 +204,16 @@ function createNumericDimensionValidationCore(deps) {
             return cacheNumericExprResult(evaluateParsedPawnNumericExpr(cacheKey));
         }
 
+        const escapeChar = getActiveCtrlChar();
         const hasSeenName = name => !!(localSeen && localSeen.has(name));
         const getMutableSeen = () => {
             if (!localSeen) localSeen = new Set();
             return localSeen;
         };
-        let source = semanticSyntaxCore.stripRootTagCasts(expr, { escapeChar: getActiveCtrlChar() });
+        let source = semanticSyntaxCore.stripRootTagCasts(cacheKey, { escapeChar });
         if (!source) return cacheNumericExprResult(null);
         const expanded = macroExpansionCore.expandMacros(source, decls, {
-            escapeChar: getActiveCtrlChar(),
+            escapeChar,
             disabledNames: localSeen || EMPTY_SEEN_NAMES,
             getDefine: name => analysisCache?.findDefineByName
                 ? analysisCache.findDefineByName(name)
@@ -247,7 +290,7 @@ function createNumericDimensionValidationCore(deps) {
         }
 
         const validationSource = source.indexOf('\'') >= 0
-            ? replaceNumericCharacterLiteralsForValidation(source, getActiveCtrlChar())
+            ? replaceNumericCharacterLiteralsForValidation(source, escapeChar)
             : source;
         const sanitized = source.replace(/\s+/g, '');
         const validationForTokenGuard = validationSource.replace(/\b(?:char|cellmin|cellmax)\b/g, '');
@@ -263,12 +306,23 @@ function createNumericDimensionValidationCore(deps) {
     }
 
     function parseDimSpec(dimPart, decls = [], seen = null, analysisCache = null) {
+        const raw = String(dimPart || '').trim();
         let localSeen = seen instanceof Set ? seen : null;
+        const isTopLevelSeen = !localSeen || localSeen.size === 0;
+        const canUseCache = !!(analysisCache?.dimSpecByText && isTopLevelSeen);
+        if (canUseCache && analysisCache.dimSpecByText.has(raw)) {
+            return analysisCache.dimSpecByText.get(raw);
+        }
+        const cacheDimSpecResult = result => {
+            if (canUseCache) {
+                analysisCache.dimSpecByText.set(raw, result);
+            }
+            return result;
+        };
         const getMutableSeen = () => {
             if (!localSeen) localSeen = new Set();
             return localSeen;
         };
-        const raw = String(dimPart || '').trim();
         const isChar = /\bchar\b/.test(raw);
         const expr = raw.replace(/\bchar\b/g, '').trim();
         const enumCandidate = extractEnumSymbolName(dimPart);
@@ -300,7 +354,7 @@ function createNumericDimensionValidationCore(deps) {
                 }
             }
         }
-        return { raw, expr, isChar, capacity, enumName };
+        return cacheDimSpecResult({ raw, expr, isChar, capacity, enumName });
     }
 
     function isResolvedDimSpec(dimSpec) {

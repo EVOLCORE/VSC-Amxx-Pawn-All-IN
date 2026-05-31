@@ -25,13 +25,8 @@ function createTypeCompatCore(deps) {
     function explainTypeCompat(paramStr, actualTag, actualDims, actualExpr = '', decls = [], options = {}) {
         const { paramMeta = null, analysisCache = null, allowArrayToScalar = false } = options;
         const compatCacheKey = analysisCache
-            ? [
-                String(paramStr || ''),
-                String(actualTag || ''),
-                String(actualDims || ''),
-                String(actualExpr || ''),
-                allowArrayToScalar ? 'array-ok' : ''
-            ].join('\u0000')
+            ? `${String(paramStr || '')}\u0000${String(actualTag || '')}\u0000${String(actualDims || '')}` +
+                `\u0000${String(actualExpr || '')}\u0000${allowArrayToScalar ? 'array-ok' : ''}`
             : '';
         if (compatCacheKey && analysisCache.typeCompatByKey.has(compatCacheKey)) {
             return analysisCache.typeCompatByKey.get(compatCacheKey);

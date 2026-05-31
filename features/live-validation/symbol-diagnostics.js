@@ -17,6 +17,7 @@ const { getTypeAnalysisSourceDecls } = require('../../core/validation/type-analy
 const DELIMITER_PREFIXED_IDENTIFIER_TAIL_RE = new RegExp(`^([)\\]}]+)((?:${PAWN_IDENTIFIER_SOURCE})|(?:[^\\x00-\\x7F]+))$`);
 const PREFIXED_INCREMENT_IDENTIFIER_RE = new RegExp(`^(?:\\+\\+|--)${PAWN_IDENTIFIER_SOURCE}$`);
 const SUFFIXED_INCREMENT_IDENTIFIER_RE = new RegExp(`^${PAWN_IDENTIFIER_SOURCE}(?:\\+\\+|--)$`);
+const EMPTY_DIAGNOSTICS = Object.freeze([]);
 
 function createSymbolDiagnostics(deps) {
     const {
@@ -58,28 +59,55 @@ function createSymbolDiagnostics(deps) {
         !isIdentifierContinueChar('-')
     );
     function collectUnknownSymbolLiveDiagnosticsForLine(document, lineNumber, ctx, analysisCacheOrFactory, lineText, strippedLineText, lineStartOffset, docLength, declarationSourceState = null, lookupState = null) {
-        const diagnostics = [];
+        let diagnostics = null;
         const includeDocument = isIncludeDocument(document);
-        if (includeDocument && !isStrictIncludeValidationEnabled()) return diagnostics;
+        if (includeDocument && !isStrictIncludeValidationEnabled()) return EMPTY_DIAGNOSTICS;
         const getAnalysisCache = () => (
             typeof analysisCacheOrFactory === 'function'
                 ? analysisCacheOrFactory()
                 : analysisCacheOrFactory
         );
+        const pushDiagnostic = diagnostic => {
+            if (!diagnostic) return;
+            if (!diagnostics) diagnostics = [];
+            diagnostics.push(diagnostic);
+        };
+        const finishDiagnostics = () => diagnostics || EMPTY_DIAGNOSTICS;
 
         const rawLineText = String(lineText || '');
         const strippedScanText = String(strippedLineText || rawLineText);
         const trimmedLine = strippedScanText.trim();
-        if (!trimmedLine || isPreprocessorDirectiveLine(trimmedLine)) return diagnostics;
-        if (!containsPawnIdentifierStartChar(strippedScanText) && !nonAsciiCharRe.test(strippedScanText)) return diagnostics;
+        if (!trimmedLine || isPreprocessorDirectiveLine(trimmedLine)) return EMPTY_DIAGNOSTICS;
+        if (!containsPawnIdentifierStartChar(strippedScanText) && !nonAsciiCharRe.test(strippedScanText)) return EMPTY_DIAGNOSTICS;
         const multilineStringLineFlags = getMultilineStringLineFlags(ctx);
-        if (multilineStringLineFlags[lineNumber]) return diagnostics;
+        if (multilineStringLineFlags[lineNumber]) return EMPTY_DIAGNOSTICS;
 
-        if (isFunctionHeaderLine(ctx, lineNumber)) return diagnostics;
-        if (isEnumMemberDeclarationLine(ctx, lineNumber)) return diagnostics;
+        if (isFunctionHeaderLine(ctx, lineNumber)) return EMPTY_DIAGNOSTICS;
+        if (isEnumMemberDeclarationLine(ctx, lineNumber)) return EMPTY_DIAGNOSTICS;
 
-        const findAnyDeclByName = name => ctx.lookup.findAnyDeclByName(name) || null;
-        const seen = new Set();
+        let lookupNameCache = null;
+        if (lookupState?.byLookup instanceof WeakMap && ctx.lookup) {
+            lookupNameCache = lookupState.byLookup.get(ctx.lookup);
+            if (!lookupNameCache) {
+                lookupNameCache = new Map();
+                lookupState.byLookup.set(ctx.lookup, lookupNameCache);
+            }
+        }
+        const findAnyDeclByName = name => {
+            if (lookupNameCache) {
+                if (lookupNameCache.has(name)) return lookupNameCache.get(name);
+                const decl = ctx.lookup.findAnyDeclByName(name) || null;
+                lookupNameCache.set(name, decl);
+                return decl;
+            }
+            return ctx.lookup.findAnyDeclByName(name) || null;
+        };
+        let seen = null;
+        const hasSeen = key => !!(seen && seen.has(key));
+        const markSeen = key => {
+            if (!seen) seen = new Set();
+            seen.add(key);
+        };
         const escapeChar = ctx.resolver.ctrlCharAtLine(lineNumber);
         const canTrustStrippedScan = strippedScanText.length === rawLineText.length;
         const identifierScanText = canTrustStrippedScan ? strippedScanText : rawLineText;
@@ -100,9 +128,9 @@ function createSymbolDiagnostics(deps) {
             const issue = getSymbolTruncationIssue(name);
             if (!issue) return false;
             const key = `truncated:${start}:${end}:${name}`;
-            if (seen.has(key)) return true;
-            seen.add(key);
-            diagnostics.push(
+            if (hasSeen(key)) return true;
+            markSeen(key);
+            pushDiagnostic(
                 createLiveValidationDiagnostic(
                     createOffsetRange(document, lineStartOffset + start, lineStartOffset + end, docLength),
                     t(issue.messageKey, issue.params || {}),
@@ -130,10 +158,10 @@ function createSymbolDiagnostics(deps) {
                     escapeChar
                 );
                 if (!unresolved.length) {
-                    return diagnostics;
+                    return finishDiagnostics();
                 }
                 if (startIndex >= 0) {
-                    diagnostics.push(
+                    pushDiagnostic(
                         createLiveValidationDiagnostic(
                             createOffsetRange(
                                 document,
@@ -144,10 +172,10 @@ function createSymbolDiagnostics(deps) {
                             t('validation.unknownSymbol', { symbols: unresolved.length ? unresolved.join(', ') : bareIdentifierName })
                         )
                     );
-                    return diagnostics;
+                    return finishDiagnostics();
                 }
             }
-            return diagnostics;
+            return finishDiagnostics();
         }
 
         const findPreviousWordBefore = index => {
@@ -265,9 +293,9 @@ function createSymbolDiagnostics(deps) {
             if (!unresolved.length) continue;
 
             const key = `${start}:${end}:${name}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            diagnostics.push(
+            if (hasSeen(key)) continue;
+            markSeen(key);
+            pushDiagnostic(
                 createLiveValidationDiagnostic(
                     createOffsetRange(document, absoluteStart, absoluteEnd, docLength),
                     t('validation.unknownSymbol', { symbols: unresolved.length ? unresolved.join(', ') : name })
@@ -275,7 +303,7 @@ function createSymbolDiagnostics(deps) {
             );
         }
 
-        return diagnostics;
+        return finishDiagnostics();
     }
 
     function collectStrayTokenLiveDiagnosticsForLine(document, lineNumber, ctx, lineText, strippedLineText, allStrippedLines, lineStartOffset, docLength) {

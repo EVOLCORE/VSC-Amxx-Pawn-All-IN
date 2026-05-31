@@ -11,6 +11,9 @@ function createDelimiterSyntaxCore(deps) {
         const stack = [];
         const taintedLines = new Uint8Array(rawLines.length);
         const lineStartOffsets = options?.lineStartOffsets || null;
+        const getLineStartOffset = typeof options?.getLineStartOffset === 'function'
+            ? options.getLineStartOffset
+            : lineNumber => resolveLineStartOffset(lineStartOffsets, lineNumber, 0);
         const openToClose = { '(': ')', '[': ']', '{': '}' };
         const closeToOpen = { ')': '(', ']': '[', '}': '{' };
         const relevantLineRe = /[()[\]{}"'"]/;
@@ -26,7 +29,6 @@ function createDelimiterSyntaxCore(deps) {
                 taintedLines[line] = 1;
             }
         };
-        const getLineStartOffset = lineNumber => resolveLineStartOffset(lineStartOffsets, lineNumber, 0);
         const pushIssue = (lineNumber, startOffset, endOffset, messageKey, params = {}) => {
             if (!shouldIncludeLine(lineNumber)) return;
             issues.push({ lineNumber, startOffset, endOffset, messageKey, params });
@@ -61,7 +63,7 @@ function createDelimiterSyntaxCore(deps) {
                     stack.push({
                         char,
                         lineNumber,
-                        offset: currentLineStartOffset() + index
+                        index
                     });
                     continue;
                 }
@@ -112,19 +114,19 @@ function createDelimiterSyntaxCore(deps) {
                 stack.pop();
                 if (!stack.length) {
                     lastStackEmptyCloseByChar[char] = {
-                        lineNumber,
-                        offset: currentLineStartOffset() + index
+                        lineNumber
                     };
                 }
             }
         }
 
         for (const unclosed of stack) {
+            const offset = getLineStartOffset(unclosed.lineNumber) + unclosed.index;
             markTaintedRange(unclosed.lineNumber, rawLines.length - 1);
             pushIssue(
                 unclosed.lineNumber,
-                unclosed.offset,
-                unclosed.offset + 1,
+                offset,
+                offset + 1,
                 'validation.unclosedOpeningDelimiter',
                 { delimiter: unclosed.char }
             );

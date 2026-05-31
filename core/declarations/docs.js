@@ -15,38 +15,45 @@ function isDocScanWhitespaceCode(code) {
     return code === 32 || code === 9 || code === 10 || code === 13 || code === 11 || code === 12;
 }
 
-function getFirstNonWhitespaceIndex(line) {
+const DOC_SCAN_NON_EMPTY = 1 << 0;
+const DOC_SCAN_HAS_COMMENT_MARKER = 1 << 1;
+const DOC_SCAN_STARTS_ATTACHABLE_DOC = 1 << 2;
+
+function analyzeDocScanLine(line) {
     const source = typeof line === 'string' ? line : String(line || '');
-    for (let index = 0; index < source.length; index++) {
-        if (!isDocScanWhitespaceCode(source.charCodeAt(index))) return index;
+    let firstNonWhitespaceIndex = 0;
+    while (firstNonWhitespaceIndex < source.length) {
+        if (!isDocScanWhitespaceCode(source.charCodeAt(firstNonWhitespaceIndex))) {
+            break;
+        }
+        firstNonWhitespaceIndex++;
     }
-    return -1;
-}
-
-function lineHasCommentMarker(line) {
-    const source = typeof line === 'string' ? line : String(line || '');
-    if (!source) return false;
-    return source.indexOf('//') >= 0 || source.indexOf('/*') >= 0 || source.indexOf('*/') >= 0;
-}
-
-function lineStartsAttachableDoc(line, firstNonWhitespaceIndex) {
-    if (firstNonWhitespaceIndex < 0) return false;
-    const source = typeof line === 'string' ? line : String(line || '');
-    const char = source[firstNonWhitespaceIndex];
-    if (char === '*') return true;
-    if (char !== '/') return false;
-    const next = source[firstNonWhitespaceIndex + 1] || '';
-    return next === '/' || next === '*';
+    let flags = firstNonWhitespaceIndex < source.length ? DOC_SCAN_NON_EMPTY : 0;
+    const slashIndex = source.indexOf('/');
+    if (slashIndex >= 0 && (
+        source.indexOf('//', slashIndex) >= 0 ||
+        source.indexOf('/*', slashIndex) >= 0 ||
+        source.indexOf('*/', Math.max(0, slashIndex - 1)) >= 0
+    )) {
+        flags |= DOC_SCAN_HAS_COMMENT_MARKER;
+    }
+    if (flags & DOC_SCAN_NON_EMPTY) {
+        const firstChar = source[firstNonWhitespaceIndex];
+        const nextChar = source[firstNonWhitespaceIndex + 1] || '';
+        if (firstChar === '*' || (firstChar === '/' && (nextChar === '/' || nextChar === '*'))) {
+            flags |= DOC_SCAN_STARTS_ATTACHABLE_DOC;
+        }
+    }
+    return flags;
 }
 
 function scanMayHaveDocsFlags(rawLines, state, targetLine) {
     for (let lineNumber = state.computedThrough + 1; lineNumber <= targetLine; lineNumber++) {
         const line = rawLines[lineNumber] || '';
-        const firstNonWhitespaceIndex = getFirstNonWhitespaceIndex(line);
-        const ownLineHasComment = lineHasCommentMarker(line);
-        state.flags[lineNumber] = (ownLineHasComment || state.previousAttachableDoc) ? 2 : 1;
+        const scanFlags = analyzeDocScanLine(line);
+        state.flags[lineNumber] = ((scanFlags & DOC_SCAN_HAS_COMMENT_MARKER) || state.previousAttachableDoc) ? 2 : 1;
 
-        if (firstNonWhitespaceIndex < 0) {
+        if (!(scanFlags & DOC_SCAN_NON_EMPTY)) {
             if (state.previousAttachableDoc) {
                 state.blankGap++;
                 if (state.blankGap > 1) {
@@ -57,7 +64,7 @@ function scanMayHaveDocsFlags(rawLines, state, targetLine) {
             continue;
         }
 
-        if (lineStartsAttachableDoc(line, firstNonWhitespaceIndex)) {
+        if (scanFlags & DOC_SCAN_STARTS_ATTACHABLE_DOC) {
             state.previousAttachableDoc = true;
             state.blankGap = 0;
         } else {

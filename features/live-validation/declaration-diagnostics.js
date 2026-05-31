@@ -56,6 +56,65 @@ function createDeclarationDiagnostics(deps) {
     } = deps;
     const EMPTY_DECLS = [];
     const { getAssignmentRhsSourceInfo } = createDeclarationRhsSourceReader({ isEscapedQuote });
+    const variableDeclNameBucketsByList = new WeakMap();
+    const declarationContinuationLineFlagsByParsedDecls = new WeakMap();
+
+    function getVariableDeclNameBuckets(decls) {
+        if (!Array.isArray(decls) || !decls.length) return null;
+        let buckets = variableDeclNameBucketsByList.get(decls);
+        if (buckets) return buckets;
+        buckets = new Map();
+        for (const decl of decls) {
+            if (decl?.type !== 'variable' || !decl.name) continue;
+            const bucket = buckets.get(decl.name);
+            if (bucket) bucket.push(decl);
+            else buckets.set(decl.name, [decl]);
+        }
+        variableDeclNameBucketsByList.set(decls, buckets);
+        return buckets;
+    }
+
+    function findVariableDeclByName(decls, name, predicate = null) {
+        if (!name) return null;
+        const bucket = getVariableDeclNameBuckets(decls)?.get(name);
+        if (!bucket?.length) return null;
+        if (typeof predicate !== 'function') return bucket[0] || null;
+        return bucket.find(predicate) || null;
+    }
+
+    function getDeclarationContinuationLineFlags(ctx) {
+        const parsedDecls = ctx?.parsedDecls || null;
+        if (!parsedDecls) return null;
+        const cached = declarationContinuationLineFlagsByParsedDecls.get(parsedDecls);
+        if (cached) return cached;
+
+        const lineCount = ctx.rawLines?.length || ctx.strippedLines?.length || 0;
+        const flags = new Uint8Array(Math.max(0, lineCount));
+        const markDecls = decls => {
+            for (const decl of decls || EMPTY_DECLS) {
+                if (decl?.type !== 'variable') continue;
+                const startLine = Number.isInteger(decl.declarationStartLine)
+                    ? decl.declarationStartLine
+                    : decl.lineNumber;
+                const nextLine = Number.isInteger(decl.declarationNextLine)
+                    ? decl.declarationNextLine
+                    : (startLine + 1);
+                if (!Number.isInteger(startLine) || !Number.isInteger(nextLine)) continue;
+                for (let line = startLine + 1; line < nextLine && line < flags.length; line++) {
+                    if (line >= 0) flags[line] = 1;
+                }
+            }
+        };
+        markDecls(parsedDecls.funcArgs);
+        markDecls(parsedDecls.locals);
+        markDecls(parsedDecls.globals);
+        declarationContinuationLineFlagsByParsedDecls.set(parsedDecls, flags);
+        return flags;
+    }
+
+    function isDeclarationContinuationLine(ctx, lineNumber) {
+        return !!getDeclarationContinuationLineFlags(ctx)?.[lineNumber];
+    }
 
     function collectDeclarationLiveDiagnosticsForLine(document, lineNumber, ctx, lineText, strippedLineText, lineStartOffset, docLength, analysisCacheOrFactory = null) {
         const diagnostics = [];
@@ -298,20 +357,21 @@ function createDeclarationDiagnostics(deps) {
                     sameNameOccurrenceIndex
                 );
             }
+            const declIsArg = currentArgs.includes(decl);
+            const declIsLocal = !declIsArg && currentLocals.includes(decl);
             const priorSameName = (() => {
                 if (earlierSameLineDecl) return earlierSameLineDecl;
                 if (isSingleStatementForInitLine(lineText, decl.name)) return null;
-                if (currentArgs.includes(decl)) {
+                if (declIsArg) {
                     return currentArgs.find(item => item.lineNumber < lineNumber && item.name === decl.name) || null;
                 }
-                if (currentLocals.includes(decl)) {
+                if (declIsLocal) {
                     if (decl.isForVar) {
                         return currentArgs.find(item => item.name === decl.name) || null;
                     }
                     return currentArgs.find(item => item.name === decl.name) ||
-                        ctx.parsedDecls.locals.find(item =>
+                        findVariableDeclByName(ctx.parsedDecls.locals, decl.name, item =>
                             item !== decl &&
-                            item.name === decl.name &&
                             (item.declDepth ?? 0) === (decl.declDepth ?? 0) &&
                             (item.scopeEndLine ?? item.lineNumber) >= lineNumber &&
                             item.lineNumber < lineNumber &&
@@ -319,9 +379,8 @@ function createDeclarationDiagnostics(deps) {
                         ) ||
                         null;
                 }
-                return ctx.parsedDecls.globals.find(item =>
+                return findVariableDeclByName(ctx.parsedDecls.globals, decl.name, item =>
                     item !== decl &&
-                    item.name === decl.name &&
                     item.lineNumber < lineNumber
                 ) || null;
             })();
@@ -357,28 +416,25 @@ function createDeclarationDiagnostics(deps) {
                 );
                 if (diagnostic) diagnostics.push(diagnostic);
             } else if (warningsEnabled && decl?.type === 'variable' && decl.name) {
-                const shadowDeclarationKind = currentArgs.includes(decl)
+                const shadowDeclarationKind = declIsArg
                     ? 'argument'
-                    : (currentLocals.includes(decl) ? 'local' : '');
+                    : (declIsLocal ? 'local' : '');
                 const shadowedDecl = (() => {
                     if (shadowDeclarationKind === 'argument') {
-                        return (ctx.parsedDecls.globals || []).find(item =>
+                        return findVariableDeclByName(ctx.parsedDecls.globals, decl.name, item =>
                             item !== decl &&
-                            item.name === decl.name &&
                             item.lineNumber < lineNumber
                         ) || null;
                     }
                     if (shadowDeclarationKind !== 'local') return null;
                     return currentArgs.find(item => item.name === decl.name) ||
-                        (ctx.parsedDecls.locals || []).find(item =>
+                        findVariableDeclByName(ctx.parsedDecls.locals, decl.name, item =>
                             item !== decl &&
-                            item.name === decl.name &&
                             (item.declDepth ?? -1) !== (decl.declDepth ?? -1) &&
                             item.lineNumber < lineNumber
                         ) ||
-                        (ctx.parsedDecls.globals || []).find(item =>
+                        findVariableDeclByName(ctx.parsedDecls.globals, decl.name, item =>
                             item !== decl &&
-                            item.name === decl.name &&
                             item.lineNumber < lineNumber
                         ) ||
                         null;
@@ -428,6 +484,7 @@ function createDeclarationDiagnostics(deps) {
         if (
             assignmentIndex >= 0 &&
             !startsWithDeclarationKeyword(trimmedLine) &&
+            !isDeclarationContinuationLine(ctx, lineNumber) &&
             !/^\.\s*[A-Za-z_@]\w*\s*=/.test(trimmedLine)
         ) {
             const lhs = normalizedAssignmentLine.text.slice(0, assignmentIndex).trim();

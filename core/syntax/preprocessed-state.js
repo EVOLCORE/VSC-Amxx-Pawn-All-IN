@@ -5,7 +5,7 @@ function getPreprocessedCtrlCharState(preprocessedState) {
     if (!Array.isArray(preprocessedState.rawLines)) return null;
     if (!Array.isArray(preprocessedState.strippedLines)) return null;
     if (!Array.isArray(preprocessedState.lineCtrlChars)) return null;
-    return {
+    const state = {
         rawLines: preprocessedState.rawLines,
         strippedLines: preprocessedState.strippedLines,
         lineCtrlChars: preprocessedState.lineCtrlChars,
@@ -14,6 +14,10 @@ function getPreprocessedCtrlCharState(preprocessedState) {
             : [],
         finalCtrlChar: preprocessedState.finalCtrlChar || '^'
     };
+    if (preprocessedState.lineDepths) {
+        state.lineDepths = preprocessedState.lineDepths;
+    }
+    return state;
 }
 
 function getSemanticScanLines(sourceState, options = {}) {

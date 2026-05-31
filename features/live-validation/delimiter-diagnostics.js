@@ -1,5 +1,8 @@
 const { createDelimiterSyntaxCore } = require('../../core/syntax/delimiters');
-const { buildLineStartOffsets } = require('../../core/syntax/lines');
+const {
+    buildLineStartOffsets,
+    resolveLineStartOffset
+} = require('../../core/syntax/lines');
 
 function createDelimiterDiagnostics(deps) {
     const {
@@ -27,12 +30,20 @@ function createDelimiterDiagnostics(deps) {
     }
 
     function collectDelimiterBalanceState(document, rawLines, lineCtrlChars, docLength, targetLineNumbers = null, options = {}) {
-        const lineStartOffsets = getLineStartOffsets(document, rawLines, options);
+        let lineStartOffsets = options?.lineStartOffsets || null;
+        const getLineStartOffset = typeof options?.getLineStartOffset === 'function'
+            ? options.getLineStartOffset
+            : lineNumber => {
+                if (!lineStartOffsets) {
+                    lineStartOffsets = getLineStartOffsets(document, rawLines, options);
+                }
+                return resolveLineStartOffset(lineStartOffsets, lineNumber, 0);
+            };
         const state = collectDelimiterBalanceIssues(
             rawLines,
             lineCtrlChars,
             targetLineNumbers,
-            { lineStartOffsets }
+            { lineStartOffsets, getLineStartOffset }
         );
         const diagnostics = (state.issues || []).map(issue =>
             createLiveValidationDiagnostic(

@@ -149,21 +149,14 @@ function createEnumSyntaxDiagnosticsCore(deps) {
         return count;
     }
 
-    function skipWhitespaceWithLineOffset(source, cursor, lineOffset) {
-        let nextCursor = cursor;
-        let nextLineOffset = lineOffset;
-        while (nextCursor < source.length && isWhitespaceCharCode(source.charCodeAt(nextCursor))) {
-            if (source.charCodeAt(nextCursor) === 10) nextLineOffset++;
-            nextCursor++;
-        }
-        return { cursor: nextCursor, lineOffset: nextLineOffset };
-    }
-
     function parseEnumMemberPrefixFrom(source, startOffset = 0, baseOffset = 0, baseLineOffset = 0) {
         const piece = String(source || '');
         let cursor = Math.max(0, startOffset | 0);
         let lineOffset = Math.max(0, baseLineOffset | 0);
-        ({ cursor, lineOffset } = skipWhitespaceWithLineOffset(piece, cursor, lineOffset));
+        while (cursor < piece.length && isWhitespaceCharCode(piece.charCodeAt(cursor))) {
+            if (piece.charCodeAt(cursor) === 10) lineOffset++;
+            cursor++;
+        }
         if (cursor >= piece.length) return null;
 
         let typeTag = '';
@@ -175,9 +168,10 @@ function createEnumSyntaxDiagnosticsCore(deps) {
             if (closeBrace > cursor) {
                 let colonProbe = closeBrace + 1;
                 let colonLineOffset = tagStartLineOffset + countLineBreaksInSpan(piece, tagStart, colonProbe);
-                const colonWhitespace = skipWhitespaceWithLineOffset(piece, colonProbe, colonLineOffset);
-                colonProbe = colonWhitespace.cursor;
-                colonLineOffset = colonWhitespace.lineOffset;
+                while (colonProbe < piece.length && isWhitespaceCharCode(piece.charCodeAt(colonProbe))) {
+                    if (piece.charCodeAt(colonProbe) === 10) colonLineOffset++;
+                    colonProbe++;
+                }
                 if (piece.charCodeAt(colonProbe) === 58) {
                     typeTag = piece.slice(cursor, closeBrace + 1);
                     cursor = colonProbe + 1;
@@ -189,9 +183,10 @@ function createEnumSyntaxDiagnosticsCore(deps) {
             while (tagEnd < piece.length && isPawnIdentifierContinueCode(piece.charCodeAt(tagEnd))) tagEnd++;
             let colonProbe = tagEnd;
             let colonLineOffset = tagStartLineOffset + countLineBreaksInSpan(piece, tagStart, colonProbe);
-            const colonWhitespace = skipWhitespaceWithLineOffset(piece, colonProbe, colonLineOffset);
-            colonProbe = colonWhitespace.cursor;
-            colonLineOffset = colonWhitespace.lineOffset;
+            while (colonProbe < piece.length && isWhitespaceCharCode(piece.charCodeAt(colonProbe))) {
+                if (piece.charCodeAt(colonProbe) === 10) colonLineOffset++;
+                colonProbe++;
+            }
             if (piece.charCodeAt(colonProbe) === 58) {
                 typeTag = piece.slice(tagStart, tagEnd);
                 cursor = colonProbe + 1;
@@ -199,7 +194,10 @@ function createEnumSyntaxDiagnosticsCore(deps) {
             }
         }
 
-        ({ cursor, lineOffset } = skipWhitespaceWithLineOffset(piece, cursor, lineOffset));
+        while (cursor < piece.length && isWhitespaceCharCode(piece.charCodeAt(cursor))) {
+            if (piece.charCodeAt(cursor) === 10) lineOffset++;
+            cursor++;
+        }
         if (!isPawnIdentifierStartCode(piece.charCodeAt(cursor))) return null;
         const nameStart = cursor;
         cursor++;

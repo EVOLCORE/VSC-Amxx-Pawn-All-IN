@@ -18,6 +18,26 @@ function createFilledLineMap(lineCount, value) {
     return map;
 }
 
+function filterExcludedDiagnosticLines(lineNumbers = [], inactivePreprocessorLineFlags = null, excludedLineSet = null) {
+    if (
+        !Array.isArray(lineNumbers) ||
+        !lineNumbers.length ||
+        (!inactivePreprocessorLineFlags && !excludedLineSet?.size)
+    ) {
+        return Array.isArray(lineNumbers) ? lineNumbers : [];
+    }
+    let filtered = null;
+    for (let index = 0; index < lineNumbers.length; index++) {
+        const line = lineNumbers[index];
+        if (inactivePreprocessorLineFlags?.[line] || excludedLineSet?.has(line)) {
+            if (!filtered) filtered = lineNumbers.slice(0, index);
+            continue;
+        }
+        if (filtered) filtered.push(line);
+    }
+    return filtered || lineNumbers;
+}
+
 function createDocumentScanPlanBuilder(deps = {}) {
     const {
         getCtrlCharStateForContent,
@@ -35,16 +55,6 @@ function createDocumentScanPlanBuilder(deps = {}) {
         const unusedStockValidationMode = settingsService?.getUnusedStockValidationMode?.() || 'reachable-only';
         const rawLines = rootCtx.rawLines || splitPawnLines(rootCtx.text);
         const lineIndex = rootCtx.lineIndex;
-        const inactivePreprocessorLineFlags = buildInactivePreprocessorLineFlags(
-            rawLines,
-            rootCtx.preprocessedState?.rawLines,
-            document.lineCount,
-            {
-                isPreprocessorDirectiveLineNumber: line =>
-                    typeof lineIndex?.isPreprocessorDirectiveLine === 'function' &&
-                    lineIndex.isPreprocessorDirectiveLine(line)
-            }
-        );
         const lineCtrlChars = rootCtx.lineCtrlChars ||
             rootCtx.resolver.lineCtrlChars ||
             getCtrlCharStateForContent(rootCtx.text, document.fileName).lineCtrlChars;
@@ -71,6 +81,8 @@ function createDocumentScanPlanBuilder(deps = {}) {
                     inactiveStockLines,
                     inactivePreprocessorLineFlags: structuralPlan.inactivePreprocessorLineFlags,
                     enumMemberLines: structuralPlan.enumMemberLines,
+                    expressionCandidateLines: structuralPlan.expressionCandidateLines,
+                    expressionCandidateLineFlags: structuralPlan.expressionCandidateLineFlags,
                     generalDiagnosticCandidateFlags: structuralPlan.generalDiagnosticCandidateFlags,
                     generalDiagnosticCandidateLines: structuralPlan.generalDiagnosticCandidateLines,
                     indexedExpressionsByLine: structuralPlan.indexedExpressionsByLine,
@@ -102,6 +114,16 @@ function createDocumentScanPlanBuilder(deps = {}) {
             }
         }
 
+        const inactivePreprocessorLineFlags = buildInactivePreprocessorLineFlags(
+            rawLines,
+            rootCtx.preprocessedState?.rawLines,
+            document.lineCount,
+            {
+                isPreprocessorDirectiveLineNumber: line =>
+                    typeof lineIndex?.isPreprocessorDirectiveLine === 'function' &&
+                    lineIndex.isPreprocessorDirectiveLine(line)
+            }
+        );
         const isIndexedBraceOnlyLine = line => lineIndex.isBraceOnlyLine(line);
         const nextTopLevelContextChangeLine = createFilledLineMap(document.lineCount, document.lineCount);
         const nextBodyContextChangeLine = createFilledLineMap(document.lineCount, document.lineCount);
@@ -226,6 +248,10 @@ function createDocumentScanPlanBuilder(deps = {}) {
             const collectReachabilityCallsForLine = lineNumber => {
                 const cachedInlineCalls = structuralPlan.inlineCallsByLine[lineNumber];
                 if (cachedInlineCalls !== undefined) return cachedInlineCalls;
+                if (lineIndex.hasParenLine && !lineIndex.hasParenLine(lineNumber)) {
+                    structuralPlan.inlineCallsByLine[lineNumber] = EMPTY_INLINE_CALLS;
+                    return EMPTY_INLINE_CALLS;
+                }
                 const lineText = String(rootCtx.strippedLines?.[lineNumber] || structuralPlan.rawLines[lineNumber] || '');
                 if (lineText.indexOf('(') < 0) {
                     structuralPlan.inlineCallsByLine[lineNumber] = EMPTY_INLINE_CALLS;
@@ -270,6 +296,8 @@ function createDocumentScanPlanBuilder(deps = {}) {
         const generalDiagnosticCandidateLines = [];
         for (const line of lineIndex.generalDiagnosticCandidateLines || []) {
             if (line < 0 || line >= document.lineCount) continue;
+            if (inactivePreprocessorLineFlags?.[line]) continue;
+            if (functionHeaderLines.has(line)) continue;
             if (
                 !lineIndex.unknownSymbolCandidateLineFlags?.[line] &&
                 !lineIndex.declarationDiagnosticCandidateLineFlags?.[line] &&
@@ -281,6 +309,15 @@ function createDocumentScanPlanBuilder(deps = {}) {
             }
             generalDiagnosticCandidateFlags[line] = 1;
             generalDiagnosticCandidateLines.push(line);
+        }
+        const expressionCandidateLines = filterExcludedDiagnosticLines(
+            lineIndex.expressionCandidateLines || [],
+            inactivePreprocessorLineFlags,
+            functionHeaderLines
+        );
+        const expressionCandidateLineFlags = new Uint8Array(document.lineCount);
+        for (const line of expressionCandidateLines) {
+            if (line >= 0 && line < document.lineCount) expressionCandidateLineFlags[line] = 1;
         }
         const structuralPlan = {
             rawLines,
@@ -297,6 +334,8 @@ function createDocumentScanPlanBuilder(deps = {}) {
             functionBodyRangeByFunction,
             functionByName,
             enumMemberLines,
+            expressionCandidateLines,
+            expressionCandidateLineFlags,
             lineStringStartQuoteCodes: null,
             generalDiagnosticCandidateFlags,
             generalDiagnosticCandidateLines,

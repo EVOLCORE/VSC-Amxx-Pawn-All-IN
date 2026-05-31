@@ -69,8 +69,7 @@ function createDocumentIncludeSystem(deps) {
         computeLineDepths,
         extractDocs,
         parseEnumBlock,
-        isPotentialEnumDeclarationLine,
-        isPotentialDeclarationStartLine,
+        getPotentialDeclarationStartLineKind,
         collectDeclarationText,
         collectDefineDeclarationText,
         parseDeclLine,
@@ -1509,6 +1508,7 @@ function createDocumentIncludeSystem(deps) {
                     rawLines: sourceSnapshot.rawLines,
                     strippedLines: sourceCtrlCharState.strippedLines || sourceSnapshot.rawLines,
                     lineCtrlChars: sourceCtrlCharState.lineCtrlChars || [],
+                    getLineDepths: () => sourceSnapshot.lineDepths,
                     finalCtrlChar: sourceCtrlCharState.finalCtrlChar,
                     directiveCandidateLines: sourceCtrlCharState.directiveCandidateLines || null,
                     returnState: true
@@ -1529,15 +1529,31 @@ function createDocumentIncludeSystem(deps) {
             const depths = resolvedPreprocessedState.lineDepths ||
                 computeLineDepths(strippedLines, lineCtrlChars);
             resolvedPreprocessedState.lineDepths = depths;
+            const directiveCandidateLines = Array.isArray(resolvedPreprocessedState.directiveCandidateLines)
+                ? resolvedPreprocessedState.directiveCandidateLines
+                : null;
             const decls = withCtrlCharForContent(content, () => {
                 const decls = [];
                 let activeDefineDecls = null;
                 let pendingDeprecatedMessage = null;
+                let directiveCandidateIndex = 0;
+                const isDirectiveCandidateLine = lineNumber => {
+                    if (!directiveCandidateLines) {
+                        return String(strippedLines[lineNumber] || '').indexOf('#') >= 0;
+                    }
+                    while (
+                        directiveCandidateIndex < directiveCandidateLines.length &&
+                        directiveCandidateLines[directiveCandidateIndex] < lineNumber
+                    ) {
+                        directiveCandidateIndex++;
+                    }
+                    return directiveCandidateLines[directiveCandidateIndex] === lineNumber;
+                };
                 let i = 0;
                 while (i < rawLines.length) {
                     if (depths[i] !== 0) { i++; continue; }
                     const strippedLine = strippedLines[i];
-                    if (String(strippedLine || '').indexOf('#') >= 0) {
+                    if (isDirectiveCandidateLine(i)) {
                         const trimmedDirectiveLine = String(strippedLine || '').trim();
                         const deprecatedMessage = parseDeprecatedPragmaMessage(trimmedDirectiveLine);
                         if (deprecatedMessage != null) {
@@ -1588,8 +1604,9 @@ function createDocumentIncludeSystem(deps) {
                             }
                         }
                     }
-                    if (!isPotentialDeclarationStartLine(strippedLine)) { i++; continue; }
-                    if (isPotentialEnumDeclarationLine(strippedLine)) {
+                    const declarationStartKind = getPotentialDeclarationStartLineKind(strippedLine);
+                    if (!declarationStartKind) { i++; continue; }
+                    if (declarationStartKind === 'enum') {
                         const enumBlock = parseEnumBlock(rawLines, i, filePath, fileName, lineCtrlChars, strippedLines, decls);
                         if (enumBlock) {
                             if (
@@ -1607,6 +1624,12 @@ function createDocumentIncludeSystem(deps) {
                     const { text: joined, nextLine } = collectDeclarationText(rawLines, i, lineCtrlChars, strippedLines);
                     i = nextLine;
                     const parsedDecls = parseDeclLine({ text: joined, startLine: startI }, rawLines, filePath, fileName, 'include');
+                    for (const decl of parsedDecls) {
+                        if (decl && decl.type === 'variable') {
+                            decl.declarationStartLine = startI;
+                            decl.declarationNextLine = nextLine;
+                        }
+                    }
                     if (
                         pendingDeprecatedMessage != null &&
                         applyDeprecatedPragmaToNextDecl(parsedDecls, pendingDeprecatedMessage)

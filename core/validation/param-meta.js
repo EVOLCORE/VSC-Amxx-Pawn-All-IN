@@ -21,15 +21,17 @@ function createParamMetaCore(deps) {
         const hasDefault = defaultIndex >= 0;
         const p = hasDefault ? raw.slice(0, defaultIndex).trim() : raw;
         let expectedTag = '';
-        const dimMatches = p.match(/\[[^\]]*\]/g) || [];
+        const dimMatches = p.indexOf('[') >= 0
+            ? (p.match(/\[[^\]]*\]/g) || [])
+            : [];
         const expectedDims = dimMatches.join('');
         const expectedDimParts = dimMatches.map(dim => dim.slice(1, -1).trim());
         let name = '';
         let source = p;
         const isConst = /^const\b/.test(source);
-        if (isConst) source = source.replace(/^const\b\s*/, '');
-        const isByRef = /^&\s*/.test(source);
-        if (isByRef) source = source.replace(/^&\s*/, '');
+        if (isConst) source = source.slice(5).trimStart();
+        const isByRef = source.charCodeAt(0) === 38; // &
+        if (isByRef) source = source.slice(1).trimStart();
         source = source.trim();
         const tagM = source.match(TAG_RE);
         if (tagM) {

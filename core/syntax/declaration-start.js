@@ -19,14 +19,14 @@ function skipDeclarationHorizontalWhitespace(source, index = 0) {
 }
 
 function isPotentialEnumDeclarationLine(line) {
-    const source = String(line || '');
+    const source = typeof line === 'string' ? line : String(line || '');
     const cursor = skipDeclarationHorizontalWhitespace(source, 0);
     if (!source.startsWith('enum', cursor)) return false;
     return !isPawnIdentifierContinueCode(source.charCodeAt(cursor + 4));
 }
 
 function isPotentialDeclarationStartLine(line) {
-    const source = String(line || '');
+    const source = typeof line === 'string' ? line : String(line || '');
     const cursor = skipDeclarationHorizontalWhitespace(source, 0);
     if (cursor >= source.length) return false;
 
@@ -46,6 +46,33 @@ function isPotentialDeclarationStartLine(line) {
         code === 123 || // {tag}:
         isPawnIdentifierStartCode(code)
     );
+}
+
+function getPotentialDeclarationStartLineKind(line) {
+    const source = typeof line === 'string' ? line : String(line || '');
+    const cursor = skipDeclarationHorizontalWhitespace(source, 0);
+    if (cursor >= source.length) return '';
+
+    const code = source.charCodeAt(cursor);
+    if (
+        code === 35 ||  // #
+        code === 41 ||  // )
+        code === 44 ||  // ,
+        code === 59 ||  // ;
+        code === 93 ||  // ]
+        code === 125    // }
+    ) {
+        return '';
+    }
+    if (code === 47 || code === 42) return ''; // / or * comment leftovers
+    if (
+        code === 101 && // e
+        source.startsWith('enum', cursor) &&
+        !isPawnIdentifierContinueCode(source.charCodeAt(cursor + 4))
+    ) {
+        return 'enum';
+    }
+    return code === 123 || isPawnIdentifierStartCode(code) ? 'declaration' : '';
 }
 
 function skipOptionalDeclarationTypeTag(source, cursor) {
@@ -70,7 +97,7 @@ function skipOptionalDeclarationTypeTag(source, cursor) {
 }
 
 function isVariableDeclarationContinuationLine(line) {
-    const source = String(line || '');
+    const source = typeof line === 'string' ? line : String(line || '');
     let cursor = skipDeclarationHorizontalWhitespace(source, 0);
     if (cursor >= source.length) return false;
 
@@ -174,6 +201,7 @@ module.exports = {
     isAtPublicFunctionStartLine,
     isBareDeclarationKeywordLine,
     isExplicitDeclarationStartLine,
+    getPotentialDeclarationStartLineKind,
     isPawnIdentifierContinueCode,
     isPawnIdentifierStartCode,
     isPotentialDeclarationStartLine,

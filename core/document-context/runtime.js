@@ -600,6 +600,7 @@ function createDocumentContextCore(deps) {
 
         const defaultCursorCache = options.cursorCache !== false;
         const defaultPreparseLocals = options.preparseLocals === true;
+        const contextByParsedDecls = new WeakMap();
         return {
             semanticSession: sharedContext.semanticSession,
             getContext(cursorLine, lineOptions = {}) {
@@ -607,7 +608,12 @@ function createDocumentContextCore(deps) {
                     cursorCache: lineOptions.cursorCache !== false && defaultCursorCache,
                     preparseLocals: lineOptions.preparseLocals === true || defaultPreparseLocals
                 });
-                return buildContextFromParsedDecls(sharedContext, parsedDecls);
+                if (parsedDecls && contextByParsedDecls.has(parsedDecls)) {
+                    return contextByParsedDecls.get(parsedDecls);
+                }
+                const context = buildContextFromParsedDecls(sharedContext, parsedDecls);
+                if (parsedDecls) contextByParsedDecls.set(parsedDecls, context);
+                return context;
             }
         };
     }

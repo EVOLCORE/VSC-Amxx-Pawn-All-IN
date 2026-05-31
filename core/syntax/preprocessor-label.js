@@ -75,11 +75,12 @@ function createPreprocessorLabelSyntaxCore(deps) {
                 }
             }
         }
-        const activeDefinesByName = new Map(
-            (rootCtx.incDecls || [])
-                .filter(decl => decl?.type === 'define' && decl.name)
-                .map(decl => [decl.name, decl])
-        );
+        const activeDefinesByName = new Map();
+        for (const decl of rootCtx.incDecls || []) {
+            if (decl?.type === 'define' && decl.name) {
+                activeDefinesByName.set(decl.name, decl);
+            }
+        }
         const labelDeclarationIssueCache = new Map();
 
         const pushIssue = (lineNumber, startIndex, length, messageKey, params = {}, severity = '') => {
@@ -403,7 +404,7 @@ function createPreprocessorLabelSyntaxCore(deps) {
                 return;
             }
 
-            const directiveSource = collectPreprocessorDirectiveText(rawLines, lineNumber, strippedLines);
+            const directiveSource = collectPreprocessorDirectiveText(rawLines, lineNumber, strippedLines, false);
             const directive = parsePreprocessorDirectiveLine(directiveSource.text, {
                 escapeChar,
                 stripLineComment: true
@@ -425,8 +426,18 @@ function createPreprocessorLabelSyntaxCore(deps) {
                     activeBranch
                 }
             );
+            let mappedDirectiveSource = null;
+            const mapDirectiveRange = range => {
+                if (!directiveSource.continued) {
+                    return directiveSource.mapRange(range.start, range.length);
+                }
+                if (!mappedDirectiveSource) {
+                    mappedDirectiveSource = collectPreprocessorDirectiveText(rawLines, lineNumber, strippedLines, true);
+                }
+                return mappedDirectiveSource.mapRange(range.start, range.length);
+            };
             for (const issue of directiveIssues) {
-                const mappedRange = directiveSource.mapRange(issue.range.start, issue.range.length);
+                const mappedRange = mapDirectiveRange(issue.range);
                 pushIssue(
                     mappedRange.lineNumber,
                     mappedRange.start,

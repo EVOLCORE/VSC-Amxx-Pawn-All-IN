@@ -5,6 +5,13 @@ function isPreprocessorDirectiveLine(line = '') {
     return getPreprocessorDirectiveStartIndex(line) >= 0;
 }
 
+function getInactivePreprocessorMaskedLineCandidate(rawLine, preprocessedRawLine) {
+    const sourceLine = String(rawLine || '');
+    if (!sourceLine.trim()) return '';
+    if (String(preprocessedRawLine || '').trim()) return '';
+    return sourceLine;
+}
+
 function collectPreprocessorDirectiveLineNumbers(lines = []) {
     if (!Array.isArray(lines) || !lines.length) return [];
     const directiveLines = [];
@@ -63,13 +70,16 @@ function isInactivePreprocessorMaskedLine(rawLines = [], preprocessedRawLines = 
         return false;
     }
 
-    const rawLine = String(rawLines[lineNumber] || '');
+    const rawLine = getInactivePreprocessorMaskedLineCandidate(
+        rawLines[lineNumber],
+        preprocessedRawLines[lineNumber]
+    );
+    if (!rawLine) return false;
+
     const isDirectiveLine = typeof options.isPreprocessorDirectiveLineNumber === 'function'
         ? !!options.isPreprocessorDirectiveLineNumber(lineNumber)
         : isPreprocessorDirectiveLine(rawLine);
-    if (!rawLine.trim() || isDirectiveLine) return false;
-
-    return !String(preprocessedRawLines[lineNumber] || '').trim();
+    return !isDirectiveLine;
 }
 
 function buildInactivePreprocessorLineFlags(rawLines = [], preprocessedRawLines = [], lineCount = 0, options = {}) {
@@ -81,7 +91,15 @@ function buildInactivePreprocessorLineFlags(rawLines = [], preprocessedRawLines 
     let hasInactiveLine = false;
     const limit = Math.min(flags.length, rawLines.length, preprocessedRawLines.length);
     for (let line = 0; line < limit; line++) {
-        if (!isInactivePreprocessorMaskedLine(rawLines, preprocessedRawLines, line, options)) continue;
+        const rawLine = getInactivePreprocessorMaskedLineCandidate(
+            rawLines[line],
+            preprocessedRawLines[line]
+        );
+        if (!rawLine) continue;
+        const isDirectiveLine = typeof options.isPreprocessorDirectiveLineNumber === 'function'
+            ? !!options.isPreprocessorDirectiveLineNumber(line)
+            : isPreprocessorDirectiveLine(rawLine);
+        if (isDirectiveLine) continue;
         flags[line] = 1;
         hasInactiveLine = true;
     }

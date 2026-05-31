@@ -44,6 +44,13 @@ function createDeclarationGuardsCore(deps) {
         return extent;
     }
 
+    function getKnownVariableDeclarationNextLine(decl) {
+        if (!decl || decl.type !== 'variable') return -1;
+        const lineNumber = decl.lineNumber ?? -1;
+        const nextLine = decl.declarationNextLine;
+        return Number.isInteger(nextLine) && nextLine > lineNumber ? nextLine : -1;
+    }
+
     function getCachedVariableDeclarationSpan(document, decl, rawLines, lineCtrlChars, preparedLines = null, lineStartOffsets = null) {
         if (!decl || decl.type !== 'variable') return null;
         let spanCacheByLines = variableDeclarationSpanCache.get(decl);
@@ -137,9 +144,13 @@ function createDeclarationGuardsCore(deps) {
             coverageByLine = new Map();
             for (const decl of decls) {
                 if (!decl || decl.type !== 'variable') continue;
-                const declarationExtent = getCachedVariableDeclarationExtent(decl, rawLines, lineCtrlChars, preparedLines);
-                if (!declarationExtent) continue;
-                for (let coveredLine = decl.lineNumber; coveredLine < declarationExtent.nextLine; coveredLine++) {
+                let nextLine = getKnownVariableDeclarationNextLine(decl);
+                if (nextLine < 0) {
+                    const declarationExtent = getCachedVariableDeclarationExtent(decl, rawLines, lineCtrlChars, preparedLines);
+                    if (!declarationExtent) continue;
+                    nextLine = declarationExtent.nextLine;
+                }
+                for (let coveredLine = decl.lineNumber; coveredLine < nextLine; coveredLine++) {
                     let coveredDecls = coverageByLine.get(coveredLine);
                     if (!coveredDecls) {
                         coveredDecls = [];

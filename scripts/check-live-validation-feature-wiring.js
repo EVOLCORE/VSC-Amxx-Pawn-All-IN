@@ -618,6 +618,114 @@ public main()
         !declarationGapDiagnostics.some(diagnostic => /unknown symbol|statement has no effect|invalid expression/i.test(diagnostic.message)),
         `blank/comment declaration gaps should not create false diagnostics, got: ${declarationGapDiagnostics.map(diagnostic => `${diagnostic.message} @ ${declarationGapDocument.getText(diagnostic.range)}`).join(' | ')}`
     );
+    const declarationContinuationInitializerDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-declaration-continuation-initializer.sma'),
+        `
+#define MAX_FLAGS_STRING_LENGTH 32
+#define MAX_AUTH_FLAGS_STRING_LENGTH 32
+native get_systime()
+
+main()
+{
+    new szText[256], szAccessFlags[MAX_FLAGS_STRING_LENGTH], szAuthFlags[MAX_AUTH_FLAGS_STRING_LENGTH],
+        szExpired[32], iExpired, iCurrentTime = get_systime();
+    return iCurrentTime
+}
+`.trimStart()
+    );
+    const declarationContinuationInitializerDiagnostics = liveValidation.collectLiveValidationDiagnostics(declarationContinuationInitializerDocument);
+    assert(
+        !declarationContinuationInitializerDiagnostics.some(diagnostic => /must be lvalue|должен быть lvalue/i.test(diagnostic.message)),
+        `multi-line declaration initializer should not be treated as a normal assignment, got: ${declarationContinuationInitializerDiagnostics.map(diagnostic => `${diagnostic.message} @ ${declarationContinuationInitializerDocument.getText(diagnostic.range)}`).join(' | ')}`
+    );
+    const declarationContinuationInitializerLineOnlyDiagnostics = liveValidation.collectLiveValidationDiagnostics(
+        declarationContinuationInitializerDocument,
+        { lines: [7], focusLines: [7] }
+    );
+    assert(
+        !declarationContinuationInitializerLineOnlyDiagnostics.some(diagnostic => /must be lvalue|должен быть lvalue/i.test(diagnostic.message)),
+        `line-only multi-line declaration initializer should not be treated as a normal assignment, got: ${declarationContinuationInitializerLineOnlyDiagnostics.map(diagnostic => `${diagnostic.message} @ ${declarationContinuationInitializerDocument.getText(diagnostic.range)}`).join(' | ')}`
+    );
+    const logicalOperatorContinuationDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-logical-operator-continuation.sma'),
+        `
+#define FLAG_AUTHID 1
+#define ACCOUNT_DATA__AUTHID 0
+native equal(const a[], const b[])
+
+public test(bitAuthFlags, szAuthID[12], g_eUserData[1][12])
+{
+    if(bitAuthFlags & FLAG_AUTHID) {
+        if(
+            szAuthID[11] != g_eUserData[ACCOUNT_DATA__AUTHID][11] // STEAM_X:X:X[X] or STEAM_XX:X:[X]
+            ||
+            !equal(szAuthID, g_eUserData[ACCOUNT_DATA__AUTHID])
+        ) {
+            return 1
+        }
+    }
+    return 0
+}
+
+public testInline(bitAuthFlags, szAuthID[12], g_eUserData[1][12])
+{
+    if(bitAuthFlags & FLAG_AUTHID) {
+        if(
+            szAuthID[11] != g_eUserData[ACCOUNT_DATA__AUTHID][11] // STEAM_X:X:X[X] or STEAM_XX:X:[X]
+            || !equal(szAuthID, g_eUserData[ACCOUNT_DATA__AUTHID])
+        ) {
+            return 1
+        }
+    }
+    return 0
+}
+`.trimStart()
+    );
+    const logicalOperatorContinuationDiagnostics = liveValidation.collectLiveValidationDiagnostics(logicalOperatorContinuationDocument);
+    assert(
+        logicalOperatorContinuationDiagnostics.length === 0,
+        `logical operator continuations after comments should stay clean, got: ${logicalOperatorContinuationDiagnostics.map(diagnostic => `${diagnostic.message} @ ${logicalOperatorContinuationDocument.getText(diagnostic.range)}`).join(' | ')}`
+    );
+    const newlineBraceWhileContinueDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-newline-brace-while-continue.sma'),
+        `
+native bool:feof(file)
+native fgets(file, buffer[], maxlen)
+native trim(buffer[])
+#define charsmax(%0) (sizeof(%0)-1)
+
+main()
+{
+    new iFilePointer
+    new szBuffer[64]
+    new iLine
+    while(!feof(iFilePointer))
+    {
+        fgets(iFilePointer, szBuffer, charsmax(szBuffer));
+        trim(szBuffer);
+
+        if(!szBuffer[0] || szBuffer[0] == ';' || szBuffer[0] == '#')
+        {
+            iLine++;
+            continue;
+        }
+    }
+}
+`.trimStart()
+    );
+    const newlineBraceWhileContinueDiagnostics = liveValidation.collectLiveValidationDiagnostics(newlineBraceWhileContinueDocument);
+    assert(
+        newlineBraceWhileContinueDiagnostics.length === 0,
+        `while body with next-line brace should allow continue, got: ${newlineBraceWhileContinueDiagnostics.map(diagnostic => `${diagnostic.message} @ ${newlineBraceWhileContinueDocument.getText(diagnostic.range)}`).join(' | ')}`
+    );
+    const newlineBraceWhileContinueLineOnlyDiagnostics = liveValidation.collectLiveValidationDiagnostics(
+        newlineBraceWhileContinueDocument,
+        { lines: [18], focusLines: [18] }
+    );
+    assert(
+        newlineBraceWhileContinueLineOnlyDiagnostics.length === 0,
+        `line-only scan should keep while context with next-line brace, got: ${newlineBraceWhileContinueLineOnlyDiagnostics.map(diagnostic => `${diagnostic.message} @ ${newlineBraceWhileContinueDocument.getText(diagnostic.range)}`).join(' | ')}`
+    );
     const createLiveValidationWithConfig = configurationOverrides => {
         const configuredVscode = createMockVscode(workspaceRoot, {
             projectLocalIncludePaths: [tempIncludeRoot],
@@ -1823,6 +1931,19 @@ const MAX_LIGHTSTYLE_LEN = 64;
 
 native Float:bio_api_get_attributes_config(const ZombieAttributesData:key);
 
+enum any:HUD_INFO_STRUCT {
+    HUDINFO_COLOR_R,
+    HUDINFO_COLOR_G,
+    HUDINFO_COLOR_B,
+    Float:HUDINFO_POS_X,
+    Float:HUDINFO_POS_Y,
+    Float:HUDINFO_TIME,
+    HUDINFO_TYPE
+}; new g_hud_info[HUD_INFO_STRUCT];
+
+enum _:TAIL_MULTI_ENUM { TAIL_MULTI_A, TAIL_MULTI_B }; new gTailOne[TAIL_MULTI_ENUM]; new gTailTwo[TAIL_MULTI_ENUM];
+enum _:TAIL_STATIC_ENUM { TAIL_STATIC_A, TAIL_STATIC_B }; static gTailStatic[TAIL_STATIC_ENUM]; const gTailConst = TAIL_STATIC_B;
+
 new gBuffer[2][MAX_LIGHTSTYLE_LEN];
 new Float:gAttrs[ZombieAttributesData];
 new ZombieAttributesData:gKey = ZombieAttr_Health;
@@ -1831,6 +1952,10 @@ main()
 {
     gBuffer[1][0] = 0;
     gAttrs[ZombieAttr_Health] = bio_api_get_attributes_config(ZombieAttr_Health);
+    g_hud_info[HUDINFO_COLOR_R] = 255;
+    gTailOne[TAIL_MULTI_A] = 1;
+    gTailTwo[TAIL_MULTI_B] = 2;
+    gTailStatic[TAIL_STATIC_A] = gTailConst;
 }
 `.trimStart()
     );
@@ -1858,6 +1983,34 @@ main()
             /tag mismatch:\s*expected ZombieAttributesData,\s*got Float/i.test(diagnostic.message)
         ),
         `typed enum members should be accepted as their enum key tag in calls, got: ${enumTagRegressionDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+    assert(
+        !enumTagRegressionDiagnostics.some(diagnostic =>
+            /unknown symbol:\s*(?:g_hud_info|gTailOne|gTailTwo|gTailStatic|gTailConst|TAIL_MULTI_A|TAIL_MULTI_B|TAIL_STATIC_A|TAIL_STATIC_B|TAIL_MULTI_ENUM|TAIL_STATIC_ENUM)/i.test(diagnostic.message)
+        ),
+        `same-line declarations after enum close should be visible, got: ${enumTagRegressionDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+
+    const localEnumTrailingDeclarationDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-local-enum-trailing-declaration.sma'),
+        `
+main()
+{
+    enum _:LOCAL_STRUCT { LOCAL_VALUE, LOCAL_OTHER }; new localValue[LOCAL_STRUCT]; new localOther[LOCAL_STRUCT];
+    enum _:LOCAL_STATIC_STRUCT { LOCAL_STATIC_VALUE, LOCAL_STATIC_OTHER }; static localStatic[LOCAL_STATIC_STRUCT]; const localConst = LOCAL_STATIC_OTHER;
+    localValue[LOCAL_VALUE] = 1;
+    localOther[LOCAL_OTHER] = localValue[LOCAL_VALUE];
+    localStatic[LOCAL_STATIC_VALUE] = localConst;
+    return localValue[LOCAL_VALUE];
+}
+`.trimStart()
+    );
+    const localEnumTrailingDeclarationDiagnostics = liveValidation.collectLiveValidationDiagnostics(localEnumTrailingDeclarationDocument);
+    assert(
+        !localEnumTrailingDeclarationDiagnostics.some(diagnostic =>
+            /unknown symbol:\s*(?:localValue|localOther|localStatic|localConst|LOCAL_VALUE|LOCAL_OTHER|LOCAL_STATIC_VALUE|LOCAL_STATIC_OTHER|LOCAL_STRUCT|LOCAL_STATIC_STRUCT)/i.test(diagnostic.message)
+        ),
+        `local same-line declarations after enum close should be visible, got: ${localEnumTrailingDeclarationDiagnostics.map(diagnostic => `${diagnostic.message} @ ${localEnumTrailingDeclarationDocument.getText(diagnostic.range)}`).join(' | ')}`
     );
 
     fs.rmSync(tempRoot, { recursive: true, force: true });

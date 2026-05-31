@@ -6,7 +6,7 @@ const COMPLETION_TRIGGER_CHARACTERS = [
     '[',
     '_',
     '@',
-    ...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+    ...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
 ];
 
 module.exports = {

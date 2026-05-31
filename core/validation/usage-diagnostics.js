@@ -126,6 +126,14 @@ function createSymbolUsageDiagnostics(deps = {}) {
         );
     }
 
+    function hasNonWhitespaceText(value) {
+        const text = String(value || '');
+        for (let index = 0; index < text.length; index++) {
+            if (!isPawnWhitespaceChar(text[index])) return true;
+        }
+        return false;
+    }
+
     function classifyVariableOccurrence(source, start, end) {
         const next = findNextNonWhitespaceIndex(source, end);
         const nextChar = next >= 0 ? source[next] : '';
@@ -180,23 +188,23 @@ function createSymbolUsageDiagnostics(deps = {}) {
             }
 
             for (let index = 0; index < source.length;) {
-                if (!isIdentifierStartChar(source[index])) {
+                if (!isIdentifierStartCode(source.charCodeAt(index))) {
                     index++;
                     continue;
                 }
                 const start = index;
                 index++;
-                while (index < source.length && isIdentifierContinueChar(source[index])) index++;
+                while (index < source.length && isIdentifierContinueCode(source.charCodeAt(index))) index++;
                 const end = index;
                 const pending = pendingByName.get(source.slice(start, end));
                 if (!pending?.length) continue;
                 const entry = pending.shift();
-                let lineRanges = byLine.get(lineNumber);
-                if (!lineRanges) {
-                    lineRanges = [];
-                    byLine.set(lineNumber, lineRanges);
+                let lineRangeKeys = byLine.get(lineNumber);
+                if (!lineRangeKeys) {
+                    lineRangeKeys = new Set();
+                    byLine.set(lineNumber, lineRangeKeys);
                 }
-                lineRanges.push({ start, end, entry });
+                lineRangeKeys.add(getDeclarationRangeKey(start, end));
                 entry.nameStart = start;
                 entry.nameEnd = end;
             }
@@ -204,9 +212,12 @@ function createSymbolUsageDiagnostics(deps = {}) {
         return byLine;
     }
 
+    function getDeclarationRangeKey(start, end) {
+        return (start * 1048576) + end;
+    }
+
     function isDeclarationNameOccurrence(declarationNameRangesByLine, lineNumber, start, end) {
-        const ranges = declarationNameRangesByLine.get(lineNumber) || [];
-        return ranges.some(range => range.start === start && range.end === end);
+        return declarationNameRangesByLine.get(lineNumber)?.has(getDeclarationRangeKey(start, end)) || false;
     }
 
     function createEntry(decl, kind, options = {}) {
@@ -286,17 +297,24 @@ function createSymbolUsageDiagnostics(deps = {}) {
         return findIncludeForward(String(name).slice(1));
     }
 
-    function collectPragmaUnusedNames(lines) {
+    function collectPragmaUnusedNames(lines, candidateLineNumbers = null) {
         const names = new Set();
-        for (const line of lines || []) {
+        const processLine = line => {
             const text = String(line || '');
-            if (text.indexOf('#') < 0 || text.indexOf('unused') < 0) continue;
+            if (text.indexOf('#') < 0 || text.indexOf('unused') < 0) return;
             const pragma = parsePragmaDirectiveLine(text);
-            if (pragma?.name !== 'unused') continue;
+            if (pragma?.name !== 'unused') return;
             for (const piece of String(pragma.value || '').split(',')) {
                 const name = readPawnIdentifierAt(piece.trim(), 0)?.name || '';
                 if (name) names.add(name);
             }
+        };
+        if (Array.isArray(candidateLineNumbers) && candidateLineNumbers.length) {
+            for (const lineNumber of candidateLineNumbers) {
+                if (lineNumber >= 0 && lineNumber < lines.length) processLine(lines[lineNumber]);
+            }
+        } else {
+            for (const line of lines || []) processLine(line);
         }
         return names;
     }
@@ -443,9 +461,7 @@ function createSymbolUsageDiagnostics(deps = {}) {
                 parameterizedDefinesByName.set(decl.name, decl);
                 continue;
             }
-            if (
-                !String(decl.value || '').trim()
-            ) {
+            if (!hasNonWhitespaceText(decl.value)) {
                 continue;
             }
             objectLikeDefinesByName.set(decl.name, decl);
@@ -555,7 +571,7 @@ function createSymbolUsageDiagnostics(deps = {}) {
                 const isPublicVariable = hasDeclModifier(decl, 'public');
                 addEntry(createEntry(decl, 'variable', {
                     read: isPublicArg || isCompilerLikeCallbackArg || isPublicVariable,
-                    written: !!String(decl.value || '').trim() || isPublicVariable,
+                    written: hasNonWhitespaceText(decl.value) || isPublicVariable,
                     referenceArg: isReferenceArg,
                     public: isPublicVariable,
                     stock: hasDeclModifier(decl, 'stock') || isStockFunction,
@@ -572,7 +588,10 @@ function createSymbolUsageDiagnostics(deps = {}) {
         addFunctionVariableDecls(parsedDecls.locals);
 
         const declarationNameRangesByLine = collectDeclarationNameRanges(entries, rawLines);
-        const pragmaUnusedNames = collectPragmaUnusedNames(scanLines);
+        const pragmaUnusedNames = collectPragmaUnusedNames(
+            scanLines,
+            rootCtx?.lineIndex?.preprocessorAndLabelCandidateLines
+        );
         for (const name of pragmaUnusedNames) {
             for (const entry of variableEntriesByName.get(name) || []) {
                 entry.read = true;
@@ -588,7 +607,8 @@ function createSymbolUsageDiagnostics(deps = {}) {
         }
         const usageNameFirstCharCodes = new Uint8Array(128);
         const markUsageNameFirstCode = name => {
-            const firstCode = String(name || '').charCodeAt(0);
+            if (!name) return;
+            const firstCode = name.charCodeAt(0);
             if (firstCode >= 0 && firstCode < usageNameFirstCharCodes.length) {
                 usageNameFirstCharCodes[firstCode] = 1;
             }

@@ -59,23 +59,27 @@ function createCallDiagnostics(deps) {
             return diagnostics;
         }
 
+        let cachedCallNameOffsets = null;
         const findCallNameOffsets = () => {
+            if (cachedCallNameOffsets) return cachedCallNameOffsets;
             if (
                 Number.isInteger(callCtx.nameStartOffset) &&
                 Number.isInteger(callCtx.nameEndOffset) &&
                 callCtx.nameStartOffset >= 0 &&
                 callCtx.nameStartOffset < callCtx.nameEndOffset
             ) {
-                return {
+                cachedCallNameOffsets = {
                     startOffset: callCtx.nameStartOffset,
                     endOffset: callCtx.nameEndOffset
                 };
+                return cachedCallNameOffsets;
             }
             let cursor = Math.max(0, callCtx.openOffset - 1);
             while (cursor >= 0 && /\s/.test(ctx.text[cursor])) cursor--;
             const endOffset = cursor + 1;
             while (cursor >= 0 && isIdentifierContinueChar(ctx.text[cursor])) cursor--;
-            return { startOffset: cursor + 1, endOffset };
+            cachedCallNameOffsets = { startOffset: cursor + 1, endOffset };
+            return cachedCallNameOffsets;
         };
 
         const createWholeCallRange = () => {
@@ -107,11 +111,11 @@ function createCallDiagnostics(deps) {
         const collectCallResultTagOverrideDiagnostic = signatureData => {
             if (!warningsEnabled) return null;
             if (typeof explainTypeCompat !== 'function') return null;
-            const tagOverride = findCallResultTagOverride();
-            if (!tagOverride) return null;
             const expectedTag = signatureData.typeTag || '';
             const expectedDims = signatureData.dims || '';
             if (!expectedTag && !expectedDims) return null;
+            const tagOverride = findCallResultTagOverride();
+            if (!tagOverride) return null;
             const expectedParam = `${expectedTag ? `${expectedTag}:` : ''}__return${expectedDims}`;
             const syntheticTaggedValue = `${tagOverride.tag}:0`;
             const analysisDecls = getTypeAnalysisSourceDecls(ctx, analysisCache);

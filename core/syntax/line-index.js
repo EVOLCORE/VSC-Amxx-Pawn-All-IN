@@ -1,5 +1,5 @@
 const {
-    containsPawnIdentifierStartChar
+    isPawnIdentifierStartCode
 } = require('./identifiers');
 const {
     isAtPublicFunctionStartLine,
@@ -15,8 +15,26 @@ const {
     startsWithPawnKeyword
 } = require('./keywords');
 const { isPreprocessorDirectiveLine } = require('./preprocessor-lines');
-const { hasTrailingBackslashContinuation } = require('./continuation');
 const { getPawnLineTrimBounds } = require('./whitespace');
+
+function stripLeadingClosedDeclarationTail(source) {
+    const text = String(source || '');
+    let cursor = 0;
+    let consumed = false;
+    while (cursor < text.length) {
+        while (cursor < text.length) {
+            const code = text.charCodeAt(cursor);
+            if (code !== 32 && code !== 9) break;
+            cursor++;
+        }
+        const code = text.charCodeAt(cursor);
+        if (code !== 59 && code !== 125) break; // ; or }
+        consumed = true;
+        cursor++;
+    }
+    if (!consumed) return '';
+    return text.slice(cursor).trimStart();
+}
 
 function isBodyDeclarationContextChangeLine(source, knownPreprocessorLine = null) {
     const trimmed = String(source || '').trimStart();
@@ -29,8 +47,10 @@ function isBodyDeclarationContextChangeLine(source, knownPreprocessorLine = null
             startsWithPawnKeyword(trimmed, 1, 'undef');
     }
     const startsWithControl = startsWithBlockControlKeyword(trimmed);
+    const closedDeclarationTail = stripLeadingClosedDeclarationTail(trimmed);
     return startsWithLocalDeclarationKeyword(trimmed) ||
-        (startsWithControl && PAWN_LOCAL_DECLARATION_KEYWORD_RE.test(trimmed));
+        (startsWithControl && PAWN_LOCAL_DECLARATION_KEYWORD_RE.test(trimmed)) ||
+        (!!closedDeclarationTail && startsWithLocalDeclarationKeyword(closedDeclarationTail));
 }
 
 function createLineIndexCore() {
@@ -48,12 +68,63 @@ function createLineIndexCore() {
     const COMPARISON_OR_LOGICAL_CANDIDATE_RE = /&&|\|\||==|!=|<=|>=|[<>]/;
     const SIZEOF_KEYWORD_RE = /\bsizeof\b/;
     const RATIONAL_LITERAL_CANDIDATE_RE = /\b\d[\d_]*\.\d/;
-    const NON_ASCII_CONTENT_RE = /[^\x00-\x7F]/;
     const BRACE_ONLY_OPTIONAL_SEMI_RE = /^[{}]+;?$/;
     const GOTO_KEYWORD_RE = /\bgoto\b/;
     const INDEX_OR_BRACE_CHAR_RE = /[{},\[\]]/;
     const STRAY_TOKEN_ALLOWED_CONTEXT_CHAR_RE = /[=([{,:?]/;
     const DIGIT_RE = /\d/;
+
+    function resetLineCharacterSignals(signals) {
+        signals.firstSlashIndex = -1;
+        signals.hasDirectiveChar = false;
+        signals.hasBraceChar = false;
+        signals.hasParenChar = false;
+        signals.hasBracketChar = false;
+        signals.hasAsciiIdentifierContent = false;
+        signals.hasNonAsciiContent = false;
+        signals.hasInvalidAsciiCodeCharacterCandidate = false;
+        signals.hasLiteralDiagnosticCandidate = false;
+        signals.hasAssignmentChar = false;
+        signals.hasMutationOperator = false;
+        signals.hasAmpersandOrPipeChar = false;
+        signals.hasComparisonOrLogicalChar = false;
+        signals.hasDigitChar = false;
+        signals.hasDotChar = false;
+        return signals;
+    }
+
+    function scanLineCharacterSignals(source, signals) {
+        const text = String(source || '');
+        resetLineCharacterSignals(signals);
+        for (let index = 0; index < text.length; index++) {
+            const code = text.charCodeAt(index);
+            if (code === 47 && signals.firstSlashIndex < 0) signals.firstSlashIndex = index; // /
+            else if (code === 35) signals.hasDirectiveChar = true; // #
+            else if (code === 123 || code === 125) signals.hasBraceChar = true; // { }
+            else if (code === 40 || code === 41) signals.hasParenChar = true; // ( )
+            else if (code === 91 || code === 93) signals.hasBracketChar = true; // [ ]
+            else if (code === 34 || code === 39) signals.hasLiteralDiagnosticCandidate = true; // " '
+            else if (code === 36 || code === 96) signals.hasInvalidAsciiCodeCharacterCandidate = true; // $ `
+            else if (code === 61) signals.hasAssignmentChar = true; // =
+            else if (code === 38 || code === 124) signals.hasAmpersandOrPipeChar = true; // & |
+            else if (code === 33 || code === 60 || code === 62) signals.hasComparisonOrLogicalChar = true; // ! < >
+            else if (code >= 48 && code <= 57) signals.hasDigitChar = true;
+            else if (code === 46) signals.hasDotChar = true; // .
+            else if (code > 127) signals.hasNonAsciiContent = true;
+            if (!signals.hasAsciiIdentifierContent && isPawnIdentifierStartCode(code)) {
+                signals.hasAsciiIdentifierContent = true;
+            }
+            if (
+                !signals.hasMutationOperator &&
+                (code === 43 || code === 45) &&
+                index + 1 < text.length &&
+                text.charCodeAt(index + 1) === code
+            ) {
+                signals.hasMutationOperator = true;
+            }
+        }
+        return signals;
+    }
 
     function hasPotentialAssignmentOperator(source) {
         const text = String(source || '');
@@ -102,6 +173,23 @@ function createLineIndexCore() {
         const preprocessorDirectiveLineFlags = new Uint8Array(lineCount);
         const backslashContinuationLines = new Uint8Array(lineCount);
         const braceOnlyLineFlags = new Uint8Array(lineCount);
+        const charSignals = {
+            firstSlashIndex: -1,
+            hasDirectiveChar: false,
+            hasBraceChar: false,
+            hasParenChar: false,
+            hasBracketChar: false,
+            hasAsciiIdentifierContent: false,
+            hasNonAsciiContent: false,
+            hasInvalidAsciiCodeCharacterCandidate: false,
+            hasLiteralDiagnosticCandidate: false,
+            hasAssignmentChar: false,
+            hasMutationOperator: false,
+            hasAmpersandOrPipeChar: false,
+            hasComparisonOrLogicalChar: false,
+            hasDigitChar: false,
+            hasDotChar: false
+        };
         const topLevelContextChangeLines = [];
         const bodyContextChangeLines = [];
         let coarseInBlockComment = false;
@@ -112,11 +200,12 @@ function createLineIndexCore() {
             let flags = 0;
             let isDirectiveCandidate = false;
             let isCommentRelevant = coarseInBlockComment;
+            scanLineCharacterSignals(source, charSignals);
             if (previousNonEmptyLineHadTrailingBackslash) {
                 backslashContinuationLines[lineNo] = 1;
             }
 
-            const firstSlashIndex = source.indexOf('/');
+            const firstSlashIndex = charSignals.firstSlashIndex;
             const lineCommentIndex = firstSlashIndex >= 0 ? source.indexOf('//', firstSlashIndex) : -1;
             const blockCommentStartIndex = firstSlashIndex >= 0 ? source.indexOf('/*', firstSlashIndex) : -1;
             const blockCommentEndIndex = firstSlashIndex >= 0 ? source.indexOf('*/', Math.max(0, firstSlashIndex - 1)) : -1;
@@ -127,15 +216,15 @@ function createLineIndexCore() {
                 commentCandidateLines.push(lineNo);
                 isCommentRelevant = true;
             }
-            if (source.indexOf('#') >= 0) flags |= LINE_FLAG_HAS_DIRECTIVE_SIG;
-            if (source.indexOf('{') >= 0 || source.indexOf('}') >= 0) flags |= LINE_FLAG_HAS_BRACE_SIG;
+            if (charSignals.hasDirectiveChar) flags |= LINE_FLAG_HAS_DIRECTIVE_SIG;
+            if (charSignals.hasBraceChar) flags |= LINE_FLAG_HAS_BRACE_SIG;
             let hasExpressionCandidate = false;
-            if (source.indexOf('(') >= 0 || source.indexOf(')') >= 0) {
+            if (charSignals.hasParenChar) {
                 flags |= LINE_FLAG_HAS_PAREN_SIG;
                 parenCandidateLines.push(lineNo);
                 hasExpressionCandidate = true;
             }
-            if (source.indexOf('[') >= 0 || source.indexOf(']') >= 0) {
+            if (charSignals.hasBracketChar) {
                 flags |= LINE_FLAG_HAS_BRACKET_SIG;
                 bracketCandidateLines.push(lineNo);
                 hasExpressionCandidate = true;
@@ -147,7 +236,7 @@ function createLineIndexCore() {
 
             const { start, end } = getPawnLineTrimBounds(source);
             if (start < end) {
-                previousNonEmptyLineHadTrailingBackslash = hasTrailingBackslashContinuation(source);
+                previousNonEmptyLineHadTrailingBackslash = source.charCodeAt(end - 1) === 92;
                 let isBraceOnlyLine = true;
                 for (let index = start; index < end; index++) {
                     const code = source.charCodeAt(index);
@@ -182,11 +271,14 @@ function createLineIndexCore() {
                         isDirectiveCandidate = true;
                     }
                 } else {
-                    isTopLevelCandidate = isExplicitDeclarationStartLine(trimmed);
+                    const closedDeclarationTail = stripLeadingClosedDeclarationTail(trimmed);
+                    isTopLevelCandidate = isExplicitDeclarationStartLine(trimmed) ||
+                        (!!closedDeclarationTail && isExplicitDeclarationStartLine(closedDeclarationTail));
                     startsWithControlKeyword = startsWithPawnControlKeyword(trimmed);
                     isBodyCandidate = isTopLevelCandidate || startsWithControlKeyword;
                     isBodyDeclarationCandidate = startsWithLocalDeclarationKeyword(trimmed) ||
-                        (startsWithControlKeyword && PAWN_LOCAL_DECLARATION_KEYWORD_RE.test(trimmed));
+                        (startsWithControlKeyword && PAWN_LOCAL_DECLARATION_KEYWORD_RE.test(trimmed)) ||
+                        (!!closedDeclarationTail && startsWithLocalDeclarationKeyword(closedDeclarationTail));
                 }
 
                 if ((flags & LINE_FLAG_HAS_DIRECTIVE_SIG) && !isDirectiveCandidate) {
@@ -206,16 +298,16 @@ function createLineIndexCore() {
                 if (isBodyDeclarationCandidate || (flags & LINE_FLAG_HAS_BLOCK_COMMENT_SIG)) {
                     bodyDeclarationCandidateLines.push(lineNo);
                 }
-                const hasAsciiIdentifierContent = containsPawnIdentifierStartChar(source);
-                const hasNonAsciiContent = NON_ASCII_CONTENT_RE.test(source);
-                const hasInvalidAsciiCodeCharacterCandidate = /[$`]/.test(source);
+                const hasAsciiIdentifierContent = charSignals.hasAsciiIdentifierContent;
+                const hasNonAsciiContent = charSignals.hasNonAsciiContent;
+                const hasInvalidAsciiCodeCharacterCandidate = charSignals.hasInvalidAsciiCodeCharacterCandidate;
                 const hasLineTooLongCandidate = source.length > 4095;
-                const hasLiteralDiagnosticCandidate = source.indexOf('"') >= 0 || source.indexOf('\'') >= 0;
+                const hasLiteralDiagnosticCandidate = charSignals.hasLiteralDiagnosticCandidate;
                 const hasIdentifierContent = hasAsciiIdentifierContent || hasNonAsciiContent;
                 const isPunctuationOnlyLine = PUNCTUATION_ONLY_LINE_RE.test(trimmed);
-                const hasAssignmentChar = source.indexOf('=') >= 0;
+                const hasAssignmentChar = charSignals.hasAssignmentChar;
                 const hasPotentialAssignment = hasAssignmentChar && hasPotentialAssignmentOperator(source);
-                const hasMutationOperator = source.indexOf('++') >= 0 || source.indexOf('--') >= 0;
+                const hasMutationOperator = charSignals.hasMutationOperator;
                 const mayStartDeclarationValidation =
                     startsWithLocalDeclarationKeyword(trimmed) ||
                     (startsWithControlKeyword && PAWN_LOCAL_DECLARATION_KEYWORD_RE.test(trimmed));
@@ -239,13 +331,22 @@ function createLineIndexCore() {
                     declarationDiagnosticCandidateLineFlags[lineNo] = 1;
                     declarationDiagnosticCandidateLines.push(lineNo);
                 }
-                const hasBitwiseAndOrCandidate = BITWISE_AND_OR_CANDIDATE_RE.test(trimmed);
-                const hasComparisonOrLogicalCandidate = COMPARISON_OR_LOGICAL_CANDIDATE_RE.test(trimmed);
-                if (SIZEOF_KEYWORD_RE.test(trimmed) || (hasBitwiseAndOrCandidate && hasComparisonOrLogicalCandidate)) {
+                const hasBitwiseAndOrCandidate = charSignals.hasAmpersandOrPipeChar && BITWISE_AND_OR_CANDIDATE_RE.test(trimmed);
+                const hasComparisonOrLogicalCandidate = (
+                    charSignals.hasAmpersandOrPipeChar ||
+                    charSignals.hasComparisonOrLogicalChar ||
+                    hasAssignmentChar
+                ) && COMPARISON_OR_LOGICAL_CANDIDATE_RE.test(trimmed);
+                if (
+                    (trimmed.indexOf('sizeof') >= 0 && SIZEOF_KEYWORD_RE.test(trimmed)) ||
+                    (hasBitwiseAndOrCandidate && hasComparisonOrLogicalCandidate)
+                ) {
                     expressionOperatorCandidateLineFlags[lineNo] = 1;
                     expressionOperatorCandidateLines.push(lineNo);
                 }
-                const hasRationalLiteralCandidate = RATIONAL_LITERAL_CANDIDATE_RE.test(trimmed);
+                const hasRationalLiteralCandidate = charSignals.hasDigitChar &&
+                    charSignals.hasDotChar &&
+                    RATIONAL_LITERAL_CANDIDATE_RE.test(trimmed);
 
                 const startsWithKnownDeclarationOrControl =
                     isAtPublicFunctionStartLine(trimmed) ||
@@ -267,6 +368,7 @@ function createLineIndexCore() {
 
                 const hasStructuralKeyword = PAWN_STRUCTURAL_KEYWORD_RE.test(trimmed);
                 const hasNumericNoEffectCandidate = !hasAsciiIdentifierContent &&
+                    charSignals.hasDigitChar &&
                     DIGIT_RE.test(trimmed) &&
                     trimmed.indexOf('=') < 0 &&
                     !INDEX_OR_BRACE_CHAR_RE.test(trimmed);
@@ -341,6 +443,9 @@ function createLineIndexCore() {
             },
             isBraceOnlyLine(lineNo) {
                 return !!braceOnlyLineFlags[lineNo];
+            },
+            hasParenLine(lineNo) {
+                return !!(lineFlags[lineNo] & LINE_FLAG_HAS_PAREN_SIG);
             },
             isPreprocessorDirectiveLine(lineNo) {
                 return !!preprocessorDirectiveLineFlags[lineNo];

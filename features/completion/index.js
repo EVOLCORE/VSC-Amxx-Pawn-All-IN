@@ -25,6 +25,9 @@ const {
     INCLUDE_COMPLETION_TRIGGER_CHARACTERS
 } = require('../../core/completion/triggers');
 const {
+    isNumericLiteralCompletionPosition
+} = require('../../core/completion/context-guards');
+const {
     createServiceKeywordCandidateSelector,
     getServiceKeywordInsertText
 } = require('../../core/completion/service-keywords');
@@ -1409,6 +1412,14 @@ function createCompletionFeature(deps) {
                 }
                 const replaceRange = getCompletionReplaceRange(document, position);
                 const prefix = replaceRange ? document.getText(replaceRange) : '';
+                const completionLineText = String(document.lineAt?.(line)?.text ?? '');
+                if (isNumericLiteralCompletionPosition(completionLineText, character, replaceRange)) {
+                    logCompletion(() =>
+                        `skip numeric-literal prefix="${prefix}" trigger="${triggerCharacter}" ` +
+                        `file=${fileName} pos=${line}:${character} ms=${Date.now() - startedAt}`
+                    );
+                    return finalizeCompletionResult([], prefix);
+                }
                 const contextStartedAt = Date.now();
                 const ctx = getPawnDocumentContext(document, position.line);
                 const contextMs = Date.now() - contextStartedAt;
@@ -1567,5 +1578,6 @@ function createCompletionFeature(deps) {
 
 module.exports = {
     COMPLETION_TRIGGER_CHARACTERS,
+    isNumericLiteralCompletionPosition,
     createCompletionFeature
 };

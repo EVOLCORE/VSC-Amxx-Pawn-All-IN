@@ -110,7 +110,10 @@ function createStructuralDiagnostics(deps) {
                 () => document.offsetAt(new vscode.Position(lineNumber, 0))
             );
         const structuralCandidateLineNumbers = rootCtx.lineIndex.structuralDiagnosticCandidateLines || [];
-        const unreachableCandidateLineNumbers = rootCtx.lineIndex.generalDiagnosticCandidateLines || [];
+        const unreachableCandidateLineNumbers =
+            scanServices?.unreachableCandidateLineNumbers ||
+            rootCtx.lineIndex.generalDiagnosticCandidateLines ||
+            [];
         const functionBodyRangeByLine = getFunctionBodyRangeByLine(rootCtx);
         const functionHeaderEndLineFlags = (() => {
             const flags = new Uint8Array(rawLines.length);
@@ -508,8 +511,12 @@ function createStructuralDiagnostics(deps) {
                 if (!decl || (decl.type !== 'variable' && decl.type !== 'constant')) continue;
                 const declarationLine = decl.lineNumber ?? -1;
                 if (declarationLine < 0) continue;
-                const span = collectDeclarationText(rawLines, declarationLine, lineCtrlChars, strippedLines);
-                const nextLine = span?.nextLine ?? (declarationLine + 1);
+                const parsedNextLine = Number.isInteger(decl.declarationNextLine)
+                    ? decl.declarationNextLine
+                    : -1;
+                const nextLine = parsedNextLine > declarationLine
+                    ? parsedNextLine
+                    : (collectDeclarationText(rawLines, declarationLine, lineCtrlChars, strippedLines)?.nextLine ?? (declarationLine + 1));
                 for (let coveredLine = declarationLine + 1; coveredLine < nextLine; coveredLine++) {
                     lines.add(coveredLine);
                 }
@@ -951,7 +958,15 @@ function createStructuralDiagnostics(deps) {
             if (functionBodyRangeByLine[lineNumber]) {
                 const isWholeLineEmptyStatement = trimmedLine === ';';
                 let isInlineEmptyStatement = false;
-                if (!isWholeLineEmptyStatement && trimmedLine.endsWith(';') && mayHaveInlineStatementPrefix(structuralLine)) {
+                const isDoWhileClosingStatement =
+                    statement.firstKeyword === 'while' &&
+                    isDoWhileClosingLine(lineNumber);
+                if (
+                    !isWholeLineEmptyStatement &&
+                    !isDoWhileClosingStatement &&
+                    trimmedLine.endsWith(';') &&
+                    mayHaveInlineStatementPrefix(structuralLine)
+                ) {
                     const inlinePrefix = stripLeadingInlineStatementPrefix(structuralLine);
                     isInlineEmptyStatement =
                         hasControlInlinePrefix(inlinePrefix) &&

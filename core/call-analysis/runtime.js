@@ -71,8 +71,15 @@ function createCallAnalysisCore(deps) {
         const paramMetas = layout.paramMetas || [];
         const variadicIndex = layout.variadicIndex;
         const isVariadic = variadicIndex >= 0;
+        const rawArgCount = rawCallSiteArgs?.length || 0;
         const issues = [];
-        const unknownNamedArgRawIndexes = new Set();
+        let unknownNamedArgRawIndexes = null;
+        const markUnknownNamedArgRawIndex = rawIndex => {
+            if (!unknownNamedArgRawIndexes) unknownNamedArgRawIndexes = new Set();
+            unknownNamedArgRawIndexes.add(rawIndex);
+        };
+        const hasUnknownNamedArgRawIndex = rawIndex =>
+            !!(unknownNamedArgRawIndexes && unknownNamedArgRawIndexes.has(rawIndex));
         const shouldPushStatus = status => status === 'error' || (status === 'warn' && includeWarnings);
         const pushIssue = issue => {
             if (!issue?.reason || !shouldPushStatus(issue.status || 'error')) return;
@@ -85,7 +92,7 @@ function createCallAnalysisCore(deps) {
         if (!isMacroDefine) {
             for (const issue of layout.namedArgIssues || []) {
                 if (issue.kind === 'unknownNamedArgument') {
-                    unknownNamedArgRawIndexes.add(issue.rawIndex);
+                    markUnknownNamedArgRawIndex(issue.rawIndex);
                     pushIssue({
                         kind: 'unknownNamedArgument',
                         status: 'error',
@@ -179,18 +186,19 @@ function createCallAnalysisCore(deps) {
             const paramMeta = getParamMeta(index);
             const actualExpr = layout.effectiveArgs[index];
             const rawArgIndex = layout.firstRawIndexByParamIndex?.[index] ?? -1;
-            if (rawArgIndex < 0 && unknownNamedArgRawIndexes.size) continue;
+            if (rawArgIndex < 0 && unknownNamedArgRawIndexes) continue;
             const hasActualArg = actualExpr !== undefined;
             if (isMacroDefine) continue;
 
             if (!hasActualArg) {
                 if (includeMissingArguments && !paramMeta.hasDefault) {
+                    const paramDisplay = paramText.trim();
                     pushIssue({
                         kind: 'missingArgument',
                         status: 'error',
                         paramIndex: index,
                         rawArgIndex,
-                        paramText: paramText.trim(),
+                        paramText: paramDisplay,
                         actualExpr: '',
                         paramMeta,
                         reason: t('validation.missingArgument')
@@ -201,16 +209,19 @@ function createCallAnalysisCore(deps) {
 
             if (validationMode === 'declaration') {
                 const result = explainParamDeclCompat(paramText, actualExpr, allDecls, { analysisCache });
-                pushIssue({
-                    kind: 'declarationCompat',
-                    status: result.status,
-                    paramIndex: index,
-                    rawArgIndex,
-                    paramText: paramText.trim(),
-                    actualExpr,
-                    paramMeta,
-                    reason: result.reason
-                });
+                if (result.reason && shouldPushStatus(result.status)) {
+                    const paramDisplay = paramText.trim();
+                    pushIssue({
+                        kind: 'declarationCompat',
+                        status: result.status,
+                        paramIndex: index,
+                        rawArgIndex,
+                        paramText: paramDisplay,
+                        actualExpr,
+                        paramMeta,
+                        reason: result.reason
+                    });
+                }
                 continue;
             }
 
@@ -218,12 +229,13 @@ function createCallAnalysisCore(deps) {
                 ? explainByRefArgumentIssue(actualExpr, paramMeta, index)
                 : null;
             if (byRefIssue) {
+                const paramDisplay = paramText.trim();
                 pushIssue({
                     kind: 'byRefArgumentMismatch',
                     status: byRefIssue.status || 'error',
                     paramIndex: index,
                     rawArgIndex,
-                    paramText: paramText.trim(),
+                    paramText: paramDisplay,
                     actualExpr,
                     paramMeta,
                     reason: byRefIssue.reason
@@ -236,12 +248,13 @@ function createCallAnalysisCore(deps) {
                     escapeChar: callEscapeChar
                 });
                 if (arrayIssue) {
+                    const paramDisplay = paramText.trim();
                     pushIssue({
                         kind: 'arrayMustBeIndexed',
                         status: arrayIssue.status || 'error',
                         paramIndex: index,
                         rawArgIndex,
-                        paramText: paramText.trim(),
+                        paramText: paramDisplay,
                         actualExpr,
                         paramMeta,
                         reason: arrayIssue.reason || t('validation.arrayMustBeIndexed', { name: arrayIssue.name || '' })
@@ -268,12 +281,13 @@ function createCallAnalysisCore(deps) {
                     )
                 ) {
                     const reason = getCallArrayShapeIssueReason(shapeIssue);
+                    const paramDisplay = paramText.trim();
                     pushIssue({
                         kind: 'arrayShape',
                         status: shapeIssue.status || 'error',
                         paramIndex: index,
                         rawArgIndex,
-                        paramText: paramText.trim(),
+                        paramText: paramDisplay,
                         actualExpr,
                         paramMeta,
                         shapeIssue,
@@ -288,24 +302,28 @@ function createCallAnalysisCore(deps) {
                 paramMeta,
                 analysisCache
             });
-            pushCallArgumentIssue({
-                kind: 'typeCompat',
-                status: result.status,
-                paramIndex: index,
-                rawArgIndex,
-                paramText: paramText.trim(),
-                actualExpr,
-                paramMeta,
-                reason: result.reason
-            });
+            if (result.reason && shouldPushStatus(result.status)) {
+                const paramDisplay = paramText.trim();
+                pushCallArgumentIssue({
+                    kind: 'typeCompat',
+                    status: result.status,
+                    paramIndex: index,
+                    rawArgIndex,
+                    paramText: paramDisplay,
+                    actualExpr,
+                    paramMeta,
+                    reason: result.reason
+                });
+            }
         }
 
         if (!isMacroDefine && isVariadic && variadicIndex >= 0) {
             const variadicParam = params[variadicIndex] || '';
+            const variadicParamDisplay = variadicParam.trim();
             const variadicMeta = getParamMeta(variadicIndex);
-            for (let rawIndex = 0; rawIndex < (rawCallSiteArgs?.length || 0); rawIndex++) {
+            for (let rawIndex = 0; rawIndex < rawArgCount; rawIndex++) {
                 if (layout.rawToParamIndex[rawIndex] !== variadicIndex) continue;
-                if (unknownNamedArgRawIndexes.has(rawIndex)) continue;
+                if (hasUnknownNamedArgRawIndex(rawIndex)) continue;
                 const actualExpr = String(rawCallSiteArgs?.[rawIndex] || '').trim();
                 if (!actualExpr) continue;
                 const result = actualExpr === '_'
@@ -325,22 +343,24 @@ function createCallAnalysisCore(deps) {
                             }
                         );
                     })();
-                pushIssue({
-                    kind: 'variadicTypeCompat',
-                    status: result.status,
-                    paramIndex: variadicIndex,
-                    rawArgIndex: rawIndex,
-                    paramText: variadicParam.trim(),
-                    actualExpr,
-                    paramMeta: variadicMeta,
-                    reason: result.reason
-                });
+                if (result.reason && shouldPushStatus(result.status)) {
+                    pushIssue({
+                        kind: 'variadicTypeCompat',
+                        status: result.status,
+                        paramIndex: variadicIndex,
+                        rawArgIndex: rawIndex,
+                        paramText: variadicParamDisplay,
+                        actualExpr,
+                        paramMeta: variadicMeta,
+                        reason: result.reason
+                    });
+                }
             }
         }
 
         if (!isMacroDefine && !isVariadic) {
-            for (let rawIndex = 0; rawIndex < (rawCallSiteArgs?.length || 0); rawIndex++) {
-                if (unknownNamedArgRawIndexes.has(rawIndex)) continue;
+            for (let rawIndex = 0; rawIndex < rawArgCount; rawIndex++) {
+                if (hasUnknownNamedArgRawIndex(rawIndex)) continue;
                 if (layout.rawToParamIndex[rawIndex] != null) continue;
                 const actualExpr = String(rawCallSiteArgs?.[rawIndex] || 'arg').trim() || 'arg';
                 pushIssue({

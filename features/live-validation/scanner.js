@@ -268,7 +268,9 @@ function createLiveValidationScanner(deps) {
             return prefix[endLine + 1] > prefix[startLine];
         };
         const candidateLineNumbers = (() => {
-            return documentScanPlan.lineIndex.expressionCandidateLines || [];
+            return documentScanPlan.expressionCandidateLines ||
+                documentScanPlan.lineIndex.expressionCandidateLines ||
+                [];
         })();
 
         const inactiveStockLines = documentScanPlan.inactiveStockLines || null;
@@ -351,7 +353,7 @@ function createLiveValidationScanner(deps) {
         const strayTokenCandidateLineFlags = lineIndex.strayTokenCandidateLineFlags;
         const analysisLineNumbers = candidateLineNumbers.length
             ? (lineNumbers
-                ? orderedLineNumbers.filter(line => lineIndex.expressionCandidateLineFlags?.[line])
+                ? orderedLineNumbers.filter(line => documentScanPlan.expressionCandidateLineFlags?.[line])
                 : candidateLineNumbers)
             : (orderedLineNumbers || EMPTY_DIAGNOSTICS);
         const generalLineNumbers = lineNumbers
@@ -487,6 +489,10 @@ function createLiveValidationScanner(deps) {
             return validThroughLine;
         };
         const getLineContext = lineNumber => {
+            const cachedCtx = getCachedLineContext(lineNumber);
+            if (cachedCtx !== undefined) {
+                return cachedCtx;
+            }
             if (
                 sequentialScanContextState.ctx &&
                 lineNumber >= sequentialScanContextState.cursorLine &&
@@ -495,10 +501,6 @@ function createLiveValidationScanner(deps) {
             ) {
                 setCachedLineContext(lineNumber, sequentialScanContextState.ctx);
                 return sequentialScanContextState.ctx;
-            }
-            const cachedCtx = getCachedLineContext(lineNumber);
-            if (cachedCtx !== undefined) {
-                return cachedCtx;
             }
             const ctx = getDocumentContextForScan(lineNumber, {
                 ephemeral: true,
@@ -771,7 +773,7 @@ function createLiveValidationScanner(deps) {
                 documentScanPlan.lineCtrlChars,
                 docLength,
                 null,
-                { lineStartOffsets: getLineStartOffsets() }
+                { getLineStartOffset: lineNumber => getLineStartOffsets()[lineNumber] ?? 0 }
             );
             documentScanPlan.delimiterBalanceState = state;
             return state;
@@ -960,7 +962,8 @@ function createLiveValidationScanner(deps) {
                     getLineContext,
                     getAnalysisCacheForLine,
                     inactivePreprocessorLineFlags,
-                    isInactivePreprocessorLine
+                    isInactivePreprocessorLine,
+                    unreachableCandidateLineNumbers: documentScanPlan.generalDiagnosticCandidateLines || null
                 }
             );
             if (isFullScan && structuralDiagnosticsCache) {

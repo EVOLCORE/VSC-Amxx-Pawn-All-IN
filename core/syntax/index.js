@@ -87,6 +87,7 @@ const {
     isAtPublicFunctionStartLine,
     isBareDeclarationKeywordLine,
     isExplicitDeclarationStartLine,
+    getPotentialDeclarationStartLineKind,
     isPotentialDeclarationStartLine,
     isPotentialEnumDeclarationLine,
     readLeadingDeclarationWord
@@ -191,6 +192,7 @@ module.exports = {
     isAtPublicFunctionStartLine,
     isBareDeclarationKeywordLine,
     isExplicitDeclarationStartLine,
+    getPotentialDeclarationStartLineKind,
     isPotentialDeclarationStartLine,
     isPotentialEnumDeclarationLine,
     readLeadingDeclarationWord,

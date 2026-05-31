@@ -18,6 +18,7 @@ const { toSortedUniqueLineNumbers } = require('../syntax/line-number-lists');
 
 function computeFunctionRangeMaps(functions = [], depths = [], lineCount = 0, options = {}) {
     const includeHeader = options?.includeHeader === true;
+    const precomputedBodyRanges = options?.bodyRangeByFunction || null;
     const maxLine = Math.max(0, Number.isInteger(lineCount) ? lineCount : depths.length) - 1;
     const byLine = new Array(Math.max(0, maxLine + 1)).fill(null);
     const byFunction = new Map();
@@ -37,22 +38,29 @@ function computeFunctionRangeMaps(functions = [], depths = [], lineCount = 0, op
         }
     };
 
-    const sortedFunctionStartLines = toSortedUniqueLineNumbers(
-        maxLine + 1,
-        (functions || []).map(func => func?.startLine ?? func?.lineNumber)
-    );
+    let sortedFunctionStartLines = null;
+    const getSortedFunctionStartLines = () => {
+        if (!sortedFunctionStartLines) {
+            sortedFunctionStartLines = toSortedUniqueLineNumbers(
+                maxLine + 1,
+                (functions || []).map(func => func?.startLine ?? func?.lineNumber)
+            );
+        }
+        return sortedFunctionStartLines;
+    };
     const findNextFunctionStartLine = lineNumber => {
+        const startLines = getSortedFunctionStartLines();
         let low = 0;
-        let high = sortedFunctionStartLines.length;
+        let high = startLines.length;
         while (low < high) {
             const mid = (low + high) >> 1;
-            if (sortedFunctionStartLines[mid] <= lineNumber) {
+            if (startLines[mid] <= lineNumber) {
                 low = mid + 1;
             } else {
                 high = mid;
             }
         }
-        return low < sortedFunctionStartLines.length ? sortedFunctionStartLines[low] : -1;
+        return low < startLines.length ? startLines[low] : -1;
     };
 
     for (const func of functions || []) {
@@ -60,37 +68,54 @@ function computeFunctionRangeMaps(functions = [], depths = [], lineCount = 0, op
         const headerStartLine = func.startLine ?? func.lineNumber ?? 0;
         const headerEndLine = func.headerEndLine ?? headerStartLine;
         const headerDepth = depths[headerEndLine] ?? 0;
-        const nextFunctionStartLine = findNextFunctionStartLine(headerStartLine);
-        const scanMaxLine = nextFunctionStartLine >= 0
-            ? Math.min(maxLine, nextFunctionStartLine - 1)
-            : maxLine;
 
         let bodyStartLine = -1;
         let bodyEndLine = -1;
         let bodyDepth = 0;
 
-        if (Number.isInteger(func.singleStatementBodyLine)) {
-            bodyStartLine = func.singleStatementBodyLine;
-            bodyEndLine = func.singleStatementBodyLine;
-            bodyDepth = headerDepth + 1;
-        } else {
-            for (let probeLine = headerEndLine + 1; probeLine <= scanMaxLine && probeLine < depths.length; probeLine++) {
-                const probeDepth = depths[probeLine] ?? 0;
-                if (probeDepth > headerDepth) {
-                    bodyStartLine = probeLine;
-                    bodyDepth = probeDepth;
-                    break;
-                }
-            }
+        const hasPrecomputedBodyRange = precomputedBodyRanges &&
+            typeof precomputedBodyRanges.has === 'function' &&
+            precomputedBodyRanges.has(func);
+        const precomputedBodyRange = hasPrecomputedBodyRange &&
+            typeof precomputedBodyRanges.get === 'function'
+            ? precomputedBodyRanges.get(func)
+            : null;
 
-            if (bodyStartLine >= 0) {
-                bodyEndLine = bodyStartLine;
-                for (let probeLine = bodyStartLine + 1; probeLine <= scanMaxLine && probeLine < depths.length; probeLine++) {
-                    if ((depths[probeLine] ?? 0) < bodyDepth) {
-                        bodyEndLine = probeLine - 1;
+        if (hasPrecomputedBodyRange) {
+            if (precomputedBodyRange) {
+                bodyStartLine = precomputedBodyRange.startLine;
+                bodyEndLine = precomputedBodyRange.endLine;
+                bodyDepth = depths[bodyStartLine] ?? (headerDepth + 1);
+            }
+        } else {
+            const nextFunctionStartLine = findNextFunctionStartLine(headerStartLine);
+            const scanMaxLine = nextFunctionStartLine >= 0
+                ? Math.min(maxLine, nextFunctionStartLine - 1)
+                : maxLine;
+
+            if (Number.isInteger(func.singleStatementBodyLine)) {
+                bodyStartLine = func.singleStatementBodyLine;
+                bodyEndLine = func.singleStatementBodyLine;
+                bodyDepth = headerDepth + 1;
+            } else {
+                for (let probeLine = headerEndLine + 1; probeLine <= scanMaxLine && probeLine < depths.length; probeLine++) {
+                    const probeDepth = depths[probeLine] ?? 0;
+                    if (probeDepth > headerDepth) {
+                        bodyStartLine = probeLine;
+                        bodyDepth = probeDepth;
                         break;
                     }
-                    bodyEndLine = probeLine;
+                }
+
+                if (bodyStartLine >= 0) {
+                    bodyEndLine = bodyStartLine;
+                    for (let probeLine = bodyStartLine + 1; probeLine <= scanMaxLine && probeLine < depths.length; probeLine++) {
+                        if ((depths[probeLine] ?? 0) < bodyDepth) {
+                            bodyEndLine = probeLine - 1;
+                            break;
+                        }
+                        bodyEndLine = probeLine;
+                    }
                 }
             }
         }
@@ -456,7 +481,14 @@ function createDeclarationScopeCore(deps) {
         return hasOddTrailingBackslashContinuation(stripped);
     }
 
-    function netParenBraceDepth(line, escapeChar = getActiveCtrlChar()) {
+    function setParenBraceDepthResult(result, parenDepth, braceDepth) {
+        if (!result) return { parenDepth, braceDepth };
+        result.parenDepth = parenDepth;
+        result.braceDepth = braceDepth;
+        return result;
+    }
+
+    function netParenBraceDepth(line, escapeChar = getActiveCtrlChar(), result = null) {
         const source = String(line || '');
         if (
             source.indexOf('(') < 0 &&
@@ -464,7 +496,7 @@ function createDeclarationScopeCore(deps) {
             source.indexOf('{') < 0 &&
             source.indexOf('}') < 0
         ) {
-            return { parenDepth: 0, braceDepth: 0 };
+            return setParenBraceDepthResult(result, 0, 0);
         }
         let parenDepth = 0;
         let braceDepth = 0;
@@ -476,7 +508,7 @@ function createDeclarationScopeCore(deps) {
                 else if (code === 123) braceDepth++;
                 else if (code === 125) braceDepth--;
             }
-            return { parenDepth, braceDepth };
+            return setParenBraceDepthResult(result, parenDepth, braceDepth);
         }
         let inStr = false;
         let strCh = 0;
@@ -496,7 +528,7 @@ function createDeclarationScopeCore(deps) {
             else if (code === 123) braceDepth++;
             else if (code === 125) braceDepth--;
         }
-        return { parenDepth, braceDepth };
+        return setParenBraceDepthResult(result, parenDepth, braceDepth);
     }
 
     function endsWithAssignmentIgnoringTrailingWhitespace(line) {
@@ -540,7 +572,8 @@ function createDeclarationScopeCore(deps) {
         ) {
             return { text: joined, nextLine: i + 1 };
         }
-        let depths = netParenBraceDepth(joined, escapeChar);
+        const depthScratch = { parenDepth: 0, braceDepth: 0 };
+        let depths = netParenBraceDepth(joined, escapeChar, depthScratch);
         let pd = depths.parenDepth;
         let bd = depths.braceDepth;
         let hasLineContinuation = hasTrailingLineContinuation(rawLines[i] || '', escapeChar, sourceLines[i] || '');
@@ -565,7 +598,7 @@ function createDeclarationScopeCore(deps) {
                 continue;
             }
             joined += ' ' + cont.trim();
-            depths = netParenBraceDepth(cont, escapeChar);
+            depths = netParenBraceDepth(cont, escapeChar, depthScratch);
             pd += depths.parenDepth;
             bd += depths.braceDepth;
             hasLineContinuation = hasTrailingLineContinuation(rawLines[i] || '', escapeChar, sourceLines[i] || '');

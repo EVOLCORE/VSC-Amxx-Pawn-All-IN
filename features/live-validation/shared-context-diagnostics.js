@@ -12,6 +12,7 @@ const EMPTY_VARIABLE_DECLS_FOR_LINE = {
     currentLocals: EMPTY_DECLS_FOR_LINE,
     currentGlobals: EMPTY_DECLS_FOR_LINE
 };
+const VARIABLE_DECL_LINE_INDEX_PROMOTE_LOOKUPS = 4;
 
 function findSameLineVariableDecl(decls, name, lineNumber, filePath) {
     for (const decl of decls || EMPTY_DECLS_FOR_LINE) {
@@ -233,10 +234,7 @@ function createSharedContextDiagnostics(deps) {
 
 
 
-    function getVariableDeclsByLineIndex(parsedDecls) {
-        let index = variableDeclsByLineIndexByParsedDecls.get(parsedDecls);
-        if (index) return index;
-
+    function buildVariableDeclsByLineMaps(parsedDecls) {
         const argsByLine = new Map();
         const localsByLine = new Map();
         const globalsByLine = new Map();
@@ -252,15 +250,41 @@ function createSharedContextDiagnostics(deps) {
         for (const decl of parsedDecls.funcArgs || []) addDecl(argsByLine, decl);
         for (const decl of parsedDecls.locals || []) addDecl(localsByLine, decl);
         for (const decl of parsedDecls.globals || []) addDecl(globalsByLine, decl);
+        return { argsByLine, localsByLine, globalsByLine };
+    }
+
+    function getVariableDeclsByLineIndex(parsedDecls) {
+        let index = variableDeclsByLineIndexByParsedDecls.get(parsedDecls);
+        if (index) return index;
 
         index = {
-            argsByLine,
-            localsByLine,
-            globalsByLine,
-            declsByLine: new Map()
+            argsByLine: null,
+            localsByLine: null,
+            globalsByLine: null,
+            declsByLine: new Map(),
+            lookupCount: 0
         };
         variableDeclsByLineIndexByParsedDecls.set(parsedDecls, index);
         return index;
+    }
+
+    function ensureVariableDeclsByLineMaps(index, parsedDecls) {
+        if (index.argsByLine && index.localsByLine && index.globalsByLine) return index;
+        const maps = buildVariableDeclsByLineMaps(parsedDecls);
+        index.argsByLine = maps.argsByLine;
+        index.localsByLine = maps.localsByLine;
+        index.globalsByLine = maps.globalsByLine;
+        return index;
+    }
+
+    function collectVariableDeclsOnLine(decls, lineNumber) {
+        let result = null;
+        for (const decl of decls || EMPTY_DECLS_FOR_LINE) {
+            if (decl?.type !== 'variable' || decl.lineNumber !== lineNumber) continue;
+            if (!result) result = [];
+            result.push(decl);
+        }
+        return result || EMPTY_DECLS_FOR_LINE;
     }
 
 
@@ -275,10 +299,23 @@ function createSharedContextDiagnostics(deps) {
             return index.declsByLine.get(lineNumber);
         }
 
-        const currentArgs = index.argsByLine.get(lineNumber) || EMPTY_DECLS_FOR_LINE;
-        const currentLocals = index.localsByLine.get(lineNumber) || EMPTY_DECLS_FOR_LINE;
+        index.lookupCount++;
+        const shouldUseLineMaps = index.argsByLine ||
+            index.lookupCount >= VARIABLE_DECL_LINE_INDEX_PROMOTE_LOOKUPS;
+        if (shouldUseLineMaps) {
+            ensureVariableDeclsByLineMaps(index, parsedDecls);
+        }
+
+        const currentArgs = index.argsByLine
+            ? (index.argsByLine.get(lineNumber) || EMPTY_DECLS_FOR_LINE)
+            : collectVariableDeclsOnLine(parsedDecls.funcArgs, lineNumber);
+        const currentLocals = index.localsByLine
+            ? (index.localsByLine.get(lineNumber) || EMPTY_DECLS_FOR_LINE)
+            : collectVariableDeclsOnLine(parsedDecls.locals, lineNumber);
         const currentGlobals = (parsedDecls.depths?.[lineNumber] ?? 0) === 0
-            ? (index.globalsByLine.get(lineNumber) || EMPTY_DECLS_FOR_LINE)
+            ? (index.globalsByLine
+                ? (index.globalsByLine.get(lineNumber) || EMPTY_DECLS_FOR_LINE)
+                : collectVariableDeclsOnLine(parsedDecls.globals, lineNumber))
             : EMPTY_DECLS_FOR_LINE;
         const lineDecls = (
             currentArgs.length ||
@@ -485,7 +522,10 @@ function createSharedContextDiagnostics(deps) {
         const rangeMaps = computeFunctionRangeMaps(
             parsedDecls.functions || [],
             parsedDecls.depths || [],
-            (ctx?.rawLines || []).length
+            (ctx?.rawLines || []).length,
+            {
+                bodyRangeByFunction: parsedDecls.functionBodyRangeByFunction || null
+            }
         );
         functionRangeMapsByParsedDecls.set(parsedDecls, rangeMaps);
         return rangeMaps;

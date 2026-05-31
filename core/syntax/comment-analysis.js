@@ -36,14 +36,17 @@ function createCommentAnalysisCore(deps) {
         return spaceMaskCache[safeLength];
     };
 
-    const maskCommentRanges = (rawLine, escapeChar, initialInBlockComment) => {
+    const setMaskResult = (result, strippedLine, inBlockComment, changed) => {
+        result.strippedLine = strippedLine;
+        result.inBlockComment = inBlockComment;
+        result.changed = changed;
+        return result;
+    };
+
+    const maskCommentRanges = (rawLine, escapeChar, initialInBlockComment, result = {}) => {
         const source = String(rawLine || '');
         if (!source) {
-            return {
-                strippedLine: source,
-                inBlockComment: initialInBlockComment,
-                changed: false
-            };
+            return setMaskResult(result, source, initialInBlockComment, false);
         }
 
         let inBlockComment = initialInBlockComment;
@@ -51,7 +54,7 @@ function createCommentAnalysisCore(deps) {
         let strCh = '';
         let writeStart = 0;
         let changed = false;
-        const segments = [];
+        let segments = null;
         let firstLineCommentIndex = -1;
         let firstBlockCommentIndex = -1;
 
@@ -59,11 +62,7 @@ function createCommentAnalysisCore(deps) {
             firstLineCommentIndex = source.indexOf('//');
             firstBlockCommentIndex = source.indexOf('/*');
             if (firstLineCommentIndex < 0 && firstBlockCommentIndex < 0) {
-                return {
-                    strippedLine: source,
-                    inBlockComment: false,
-                    changed: false
-                };
+                return setMaskResult(result, source, false, false);
             }
             if (firstLineCommentIndex >= 0) {
                 const doubleQuoteIndex = source.indexOf('"');
@@ -74,16 +73,18 @@ function createCommentAnalysisCore(deps) {
                     (singleQuoteIndex >= 0 && singleQuoteIndex < firstLineCommentIndex)
                 );
                 if (!hasEarlierBlockComment && !hasEarlierString) {
-                    return {
-                        strippedLine: source.slice(0, firstLineCommentIndex) + getSpaceMask(source.length - firstLineCommentIndex),
-                        inBlockComment: false,
-                        changed: true
-                    };
+                    return setMaskResult(
+                        result,
+                        source.slice(0, firstLineCommentIndex) + getSpaceMask(source.length - firstLineCommentIndex),
+                        false,
+                        true
+                    );
                 }
             }
         }
 
         const appendMaskedRange = (start, end) => {
+            if (!segments) segments = [];
             if (start > writeStart) {
                 segments.push(source.slice(writeStart, start));
             }
@@ -123,20 +124,12 @@ function createCommentAnalysisCore(deps) {
             }
 
             if (!changed) {
-                return {
-                    strippedLine: source,
-                    inBlockComment,
-                    changed: false
-                };
+                return setMaskResult(result, source, inBlockComment, false);
             }
             if (writeStart < source.length) {
                 segments.push(source.slice(writeStart));
             }
-            return {
-                strippedLine: segments.join(''),
-                inBlockComment,
-                changed: true
-            };
+            return setMaskResult(result, segments ? segments.join('') : source, inBlockComment, true);
         }
 
         for (let i = 0; i < source.length; i++) {
@@ -185,20 +178,12 @@ function createCommentAnalysisCore(deps) {
         }
 
         if (!changed) {
-            return {
-                strippedLine: source,
-                inBlockComment,
-                changed: false
-            };
+            return setMaskResult(result, source, inBlockComment, false);
         }
         if (writeStart < source.length) {
             segments.push(source.slice(writeStart));
         }
-        return {
-            strippedLine: segments.join(''),
-            inBlockComment,
-            changed: true
-        };
+        return setMaskResult(result, segments ? segments.join('') : source, inBlockComment, true);
     };
 
     function buildCommentAnalysis(lines, lineCtrlChars = [], lineIndex = null) {
@@ -215,6 +200,7 @@ function createCommentAnalysisCore(deps) {
         let inBlockComment = false;
         let hasCommentSyntax = false;
         const defaultEscapeChar = getActiveCtrlChar();
+        const maskResult = { strippedLine: '', inBlockComment: false, changed: false };
         const relevantLines = Array.isArray(lineIndex?.commentRelevantLines)
             ? lineIndex.commentRelevantLines
             : null;
@@ -245,7 +231,7 @@ function createCommentAnalysisCore(deps) {
             }
 
             hasCommentSyntax = true;
-            const maskedLine = maskCommentRanges(rawLine, escapeChar, inBlockComment);
+            const maskedLine = maskCommentRanges(rawLine, escapeChar, inBlockComment, maskResult);
             inBlockComment = maskedLine.inBlockComment;
             if (maskedLine.changed) {
                 setStrippedLine(lineNo, maskedLine.strippedLine);

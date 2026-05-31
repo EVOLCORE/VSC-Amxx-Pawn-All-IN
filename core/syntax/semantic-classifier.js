@@ -570,11 +570,9 @@ function createSemanticSyntaxCore(deps = {}) {
         }
         const canUseCache = text.length <= PARSED_EXPRESSION_CACHE_MAX_CHARS;
         const cacheKey = canUseCache ? getParseExpressionCacheKey(text, options) : '';
-        if (canUseCache && parsedExpressionCache.has(cacheKey)) {
+        if (canUseCache) {
             const cached = parsedExpressionCache.get(cacheKey);
-            parsedExpressionCache.delete(cacheKey);
-            parsedExpressionCache.set(cacheKey, cached);
-            return cached;
+            if (cached) return cached;
         }
         const tokens = tokenizePawnExpression(text, options);
         const invalid = tokens.find(token => token.type === 'invalid');

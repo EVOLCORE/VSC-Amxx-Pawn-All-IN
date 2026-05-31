@@ -118,8 +118,7 @@ function buildCoreActivationRuntime(deps) {
     let getIncludeCompletionEntries = null;
     let parseForInit = null;
     let parseEnumBlock = null;
-    let isPotentialEnumDeclarationLine = null;
-    let isPotentialDeclarationStartLine = null;
+    let getPotentialDeclarationStartLineKind = null;
     let isExplicitDeclarationStartLine = null;
     let parseDeclLine = null;
     let parseDimsParts = null;
@@ -351,8 +350,7 @@ function buildCoreActivationRuntime(deps) {
     ({
         parseForInit,
         parseEnumBlock,
-        isPotentialEnumDeclarationLine,
-        isPotentialDeclarationStartLine,
+        getPotentialDeclarationStartLineKind,
         isExplicitDeclarationStartLine,
         parseDeclLine,
         parseDimsParts,
@@ -397,8 +395,7 @@ function buildCoreActivationRuntime(deps) {
         computeLineDepths,
         extractDocs,
         parseEnumBlock,
-        isPotentialEnumDeclarationLine,
-        isPotentialDeclarationStartLine,
+        getPotentialDeclarationStartLineKind,
         collectDeclarationText,
         collectDefineDeclarationText,
         parseDeclLine,
