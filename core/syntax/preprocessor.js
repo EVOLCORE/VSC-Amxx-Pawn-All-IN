@@ -32,6 +32,19 @@ const {
 } = require('./continuation');
 const { collectPreprocessorDirectiveLineNumbers } = require('./preprocessor-lines');
 
+const UNREADABLE_INCLUDE_REPLACEMENT_CHAR_LIMIT = 4;
+
+function isUnreadableIncludeContent(content) {
+    if (typeof content !== 'string' || !content) return false;
+    let replacementCount = 0;
+    for (let index = 0; index < content.length; index++) {
+        const code = content.charCodeAt(index);
+        if (code === 0) return true;
+        if (code === 0xFFFD && ++replacementCount >= UNREADABLE_INCLUDE_REPLACEMENT_CHAR_LIMIT) return true;
+    }
+    return false;
+}
+
 function createPreprocessorSyntaxCore(deps) {
     const {
         evaluatePawnNumericExpr,
@@ -1252,7 +1265,16 @@ function createPreprocessorSyntaxCore(deps) {
                             : null;
                         if (!nestedState) {
                             const includeContent = readNormalizedFileContent(includePath);
-                            if (includeContent == null) {
+                            if (includeContent == null || isUnreadableIncludeContent(includeContent)) {
+                                if (includeRequired) {
+                                    unresolvedIncludeEntries.push({
+                                        name: includeName,
+                                        lineNumber,
+                                        depth: includeDepth,
+                                        required: true,
+                                        unreadable: true
+                                    });
+                                }
                                 appendDirectiveRange(lineNumber, nextDirectiveLine, true);
                                 return nextDirectiveLine;
                             }

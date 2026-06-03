@@ -69,13 +69,13 @@ function createPawnDocFeature(deps) {
     async function askShouldCreateBackup() {
         const yes = t('pawndoc.backupPrompt.yes');
         const no = t('pawndoc.backupPrompt.no');
-        const cancel = t('pawndoc.backupPrompt.cancel');
+        // Modal dialogs add their own Cancel button, so we don't pass an explicit
+        // one (that produced a duplicate Cancel). Dismissing returns undefined => null.
         const choice = await showTimedInformationMessage(vscode,
             t('pawndoc.backupPrompt.message'),
             { modal: true },
             yes,
-            no,
-            cancel
+            no
         );
         if (choice === yes) return true;
         if (choice === no) return false;
@@ -88,7 +88,7 @@ function createPawnDocFeature(deps) {
             return { changed: false, count: 0, backupPath: '' };
         }
 
-        const shouldCreateBackup = await askShouldCreateBackup();
+        const shouldCreateBackup = options.promptBackup === false ? false : await askShouldCreateBackup();
         if (shouldCreateBackup === null) {
             return { changed: false, count: 0, backupPath: '' };
         }
@@ -210,7 +210,8 @@ function createPawnDocFeature(deps) {
             escapeChar: typeof getActiveCtrlChar === 'function' ? getActiveCtrlChar() : undefined
         });
         return applyPawnDocPlan(document, plan, {
-            emptyMessageKey: 'pawndoc.noTarget'
+            emptyMessageKey: 'pawndoc.noTarget',
+            promptBackup: false
         });
     }
 

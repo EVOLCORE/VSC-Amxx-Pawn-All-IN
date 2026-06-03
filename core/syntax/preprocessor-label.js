@@ -554,7 +554,9 @@ function createPreprocessorLabelSyntaxCore(deps) {
                             lineNumber,
                             includeRequest.startIndex,
                             includeRequest.length,
-                            'validation.includeNotResolved',
+                            unresolvedEntry.unreadable
+                                ? 'validation.includeUnreadable'
+                                : 'validation.includeNotResolved',
                             { name: includeRequest.name }
                         );
                     } else if (includeRequest) {

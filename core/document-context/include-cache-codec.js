@@ -275,6 +275,7 @@ function createIncludeCacheCodec({ normalizeFsPath, getDefineStateKey, getDefine
                 ];
                 if (entry.parentName) serialized[3] = String(entry.parentName || '');
                 if (Number.isInteger(entry.parentLineNumber)) serialized[4] = entry.parentLineNumber;
+                if (entry.unreadable) serialized[5] = 1;
                 return serialized;
             });
     }
@@ -289,7 +290,8 @@ function createIncludeCacheCodec({ normalizeFsPath, getDefineStateKey, getDefine
             depth,
             parentName: serialized[3] ? String(serialized[3]) : '',
             parentLineNumber: Number.isInteger(serialized[4]) ? serialized[4] : -1,
-            required: true
+            required: true,
+            unreadable: serialized[5] === 1
         };
     }
 
