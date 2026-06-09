@@ -1,6 +1,7 @@
 const {
     getCompletionControlContext,
-    getCompletionIntent
+    getCompletionIntent,
+    getTopLevelFunctionDeclarationPrefixInfo
 } = require('../../core/syntax/control-context');
 const { PAWN_IDENTIFIER_RE } = require('../../core/syntax/identifiers');
 const {
@@ -69,6 +70,7 @@ function createCompletionFeature(deps) {
         findKeywordOccurrences = null,
         skipInlineControlHeader = null,
         isCompletionEnabled = () => true,
+        shouldInsertCompletionStatementSemicolon = () => true,
         getForwardCompletionBodyStyle = () => 'same-line',
         getCompletionCallArgumentMode = () => 'required-before-default',
         getCompletionAutoHideDelayMs = () => 0,
@@ -1000,7 +1002,8 @@ function createCompletionFeature(deps) {
         item.label = { label: definition.name, description: definition.detail };
         item.labelDetails = { description: definition.detail };
         item.insertText = new vscode.SnippetString(getServiceKeywordInsertText(definition, {
-            braceStyle: options.braceStyle
+            braceStyle: options.braceStyle,
+            insertSemicolon: options.insertSemicolon
         }));
         if (replaceRange) item.range = replaceRange;
         item._pawnServiceKeywordDefinition = definition;
@@ -1073,7 +1076,8 @@ function createCompletionFeature(deps) {
             state.inLoop ? 1 : 0,
             state.inSwitch ? 1 : 0,
             state.inDirectSwitchBody ? 1 : 0,
-            options.braceStyle || ''
+            options.braceStyle || '',
+            options.insertSemicolon === false ? 0 : 1
         ].join('|');
         if (cache.has(cacheKey)) return cache.get(cacheKey);
         const items = [];
@@ -1263,7 +1267,8 @@ function createCompletionFeature(deps) {
             inDirectSwitchBody: !!controlContext?.inDirectSwitchBody
         };
         const items = getCachedServiceKeywordItems(candidates, replaceRange, state, {
-            braceStyle: options.braceStyle
+            braceStyle: options.braceStyle,
+            insertSemicolon: options.insertSemicolon
         });
         return {
             items,
@@ -1413,6 +1418,10 @@ function createCompletionFeature(deps) {
                 const replaceRange = getCompletionReplaceRange(document, position);
                 const prefix = replaceRange ? document.getText(replaceRange) : '';
                 const completionLineText = String(document.lineAt?.(line)?.text ?? '');
+                const linePrefixBeforeToken = completionLineText.slice(
+                    0,
+                    Math.max(0, Number.isInteger(replaceRange?.start?.character) ? replaceRange.start.character : character)
+                );
                 if (isNumericLiteralCompletionPosition(completionLineText, character, replaceRange)) {
                     logCompletion(() =>
                         `skip numeric-literal prefix="${prefix}" trigger="${triggerCharacter}" ` +
@@ -1434,6 +1443,12 @@ function createCompletionFeature(deps) {
                 const { globals, functions, locals, funcArgs } = parsedDecls;
                 const forwardBodyStyle = normalizeForwardCompletionBodyStyle(getForwardCompletionBodyStyle());
                 const completionIntent = getCachedCompletionIntent(document, position, ctx, replaceRange);
+                const declarationPrefixInfo = completionIntent === 'top-level-declaration'
+                    ? getTopLevelFunctionDeclarationPrefixInfo(linePrefixBeforeToken)
+                    : null;
+                const allowForwardTopLevelDeclarations = completionIntent !== 'top-level-declaration' ||
+                    !declarationPrefixInfo?.explicit ||
+                    declarationPrefixInfo.allowsForwardDeclarations;
                 if (triggerCharacter === '[' && completionIntent !== 'array-dimension') {
                     logCompletion(() =>
                         `skip array-trigger-outside-dimension trigger="${triggerCharacter}" ` +
@@ -1456,7 +1471,8 @@ function createCompletionFeature(deps) {
                 const completionItemOptions = {
                     forwardBodyStyle,
                     isForwardImplementationContext: forwardBodyStyle !== 'disabled' &&
-                        completionIntent === 'top-level-declaration',
+                        completionIntent === 'top-level-declaration' &&
+                        allowForwardTopLevelDeclarations,
                     callInsertMode: insertionContext.shouldInsertCallArguments ? 'call-with-args' : 'name-only',
                     callArgumentMode: completionCallArgumentMode,
                     existingArgumentBlock: insertionContext.existingArgumentBlock,
@@ -1464,7 +1480,10 @@ function createCompletionFeature(deps) {
                 };
 
                 const candidates = getBaseCompletionCandidates(ctx, line, completionIntent);
-                const intentCandidates = filterCompletionCandidatesForIntent(candidates, completionIntent);
+                let intentCandidates = filterCompletionCandidatesForIntent(candidates, completionIntent);
+                if (completionIntent === 'top-level-declaration' && !allowForwardTopLevelDeclarations) {
+                    intentCandidates = intentCandidates.filter(candidate => candidate?.d?.type !== 'forward');
+                }
                 const filteredCandidates = filterCompletionCandidatesForPrefix(intentCandidates, prefix);
                 const completionCandidates = completionItemOptions.isForwardImplementationContext
                     ? getForwardImplementationCandidates(filteredCandidates.candidates, incDecls)
@@ -1485,7 +1504,10 @@ function createCompletionFeature(deps) {
                         ctx,
                         prefix,
                         filteredCandidates.startsWithCount > 0,
-                        { braceStyle: forwardBodyStyle }
+                        {
+                            braceStyle: forwardBodyStyle,
+                            insertSemicolon: shouldInsertCompletionStatementSemicolon()
+                        }
                     );
                     const serviceItems = serviceCompletion.items || [];
                     const dominantServiceItems = serviceCompletion.dominantItems || [];

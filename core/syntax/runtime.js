@@ -379,6 +379,15 @@ function createSyntaxCore(deps) {
         semanticSyntaxCore.parseBraceArrayLiteralExpressionDetailed(expr, { escapeChar });
     const parseWholeCallExpression = (expr, escapeChar = getActiveCtrlChar()) =>
         semanticSyntaxCore.parseWholeCallExpression(expr, { escapeChar });
+    function parsePawnExpression(expr, options = {}) {
+        const expressionOptions = typeof options === 'string'
+            ? { escapeChar: options }
+            : { ...(options || {}) };
+        if (expressionOptions.escapeChar == null) {
+            expressionOptions.escapeChar = getActiveCtrlChar();
+        }
+        return semanticSyntaxCore.parsePawnExpression(expr, expressionOptions);
+    }
     function looksLikePawnExpressionFragment(expr, options = {}) {
         const expressionOptions = typeof options === 'string'
             ? { escapeChar: options }
@@ -434,6 +443,7 @@ function createSyntaxCore(deps) {
         parseBraceArrayLiteralExpression,
         parseBraceArrayLiteralExpressionDetailed,
         parseWholeCallExpression,
+        parsePawnExpression,
         looksLikePawnExpressionFragment,
         extractDocs,
         parseDims,

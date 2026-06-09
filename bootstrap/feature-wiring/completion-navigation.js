@@ -72,6 +72,7 @@ function buildCompletionNavigationFeatures(deps, support) {
         findKeywordOccurrences,
         skipInlineControlHeader,
         isCompletionEnabled: () => settingsService?.isCompletionEnabled?.() !== false,
+        shouldInsertCompletionStatementSemicolon: () => settingsService?.shouldInsertCompletionStatementSemicolon?.() !== false,
         getForwardCompletionBodyStyle: () => settingsService?.getCompletionForwardDeclarationStyle?.() || 'same-line',
         getCompletionCallArgumentMode: () => settingsService?.getCompletionCallArgumentMode?.() || 'required-before-default',
         getCompletionAutoHideDelayMs: () => settingsService?.getCompletionAutoHideDelayMs?.() || 0,

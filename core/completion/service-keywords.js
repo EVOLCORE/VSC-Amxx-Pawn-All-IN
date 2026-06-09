@@ -18,12 +18,12 @@ const SERVICE_KEYWORD_COMPLETIONS = [
     { name: 'switch', detail: 'switch statement', snippetKind: 'switch', context: 'statement' },
     { name: 'case', detail: 'switch label', blockHeader: 'case ${1:value}:', context: 'switch-label' },
     { name: 'default', detail: 'switch label', blockHeader: 'default:', context: 'switch-label' },
-    { name: 'break', detail: 'loop/switch control', insertText: 'break;', context: 'break' },
-    { name: 'continue', detail: 'loop control', insertText: 'continue;', context: 'loop' },
-    { name: 'return', detail: 'statement', insertText: 'return $0;', context: 'statement' },
-    { name: 'goto', detail: 'statement', insertText: 'goto ${1:label};', context: 'statement' },
-    { name: 'state', detail: 'statement', insertText: 'state ${1:name};', context: 'statement' },
-    { name: 'exit', detail: 'statement', insertText: 'exit;', context: 'statement' }
+    { name: 'break', detail: 'loop/switch control', insertText: 'break;', context: 'break', trailingSemicolon: true },
+    { name: 'continue', detail: 'loop control', insertText: 'continue;', context: 'loop', trailingSemicolon: true },
+    { name: 'return', detail: 'statement', insertText: 'return $0;', context: 'statement', trailingSemicolon: true },
+    { name: 'goto', detail: 'statement', insertText: 'goto ${1:label};', context: 'statement', trailingSemicolon: true },
+    { name: 'state', detail: 'statement', insertText: 'state ${1:name};', context: 'statement', trailingSemicolon: true },
+    { name: 'exit', detail: 'statement', insertText: 'exit;', context: 'statement', trailingSemicolon: true }
 ];
 
 function getServiceKeywordInsertText(definition, options = {}) {
@@ -37,7 +37,11 @@ function getServiceKeywordInsertText(definition, options = {}) {
     if (definition.blockHeader) {
         return buildBlockSnippet(definition.blockHeader, { braceStyle: options.braceStyle });
     }
-    return definition.insertText || definition.name || '';
+    const insertText = definition.insertText || definition.name || '';
+    if (definition.trailingSemicolon && options.insertSemicolon === false) {
+        return insertText.replace(/;$/, '');
+    }
+    return insertText;
 }
 
 function createServiceKeywordCandidateSelector() {

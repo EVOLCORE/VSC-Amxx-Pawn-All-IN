@@ -32,6 +32,7 @@ function createSettingsService(vscode) {
         externalIncludeWatchMode: `${CONFIG_NAMESPACE}.externalIncludeWatchMode`,
         debugOutput: `${CONFIG_NAMESPACE}.debugOutput`,
         completionEnabled: `${CONFIG_NAMESPACE}.completionEnabled`,
+        completionStatementSemicolon: `${CONFIG_NAMESPACE}.completionStatementSemicolon`,
         completionForwardDeclarationStyle: `${CONFIG_NAMESPACE}.completionForwardDeclarationStyle`,
         completionCallArgumentMode: `${CONFIG_NAMESPACE}.completionCallArgumentMode`,
         completionAutoHideDelayMs: `${CONFIG_NAMESPACE}.completionAutoHideDelayMs`,
@@ -62,6 +63,7 @@ function createSettingsService(vscode) {
         CONFIG_KEYS.externalIncludeWatchMode,
         CONFIG_KEYS.debugOutput,
         CONFIG_KEYS.completionEnabled,
+        CONFIG_KEYS.completionStatementSemicolon,
         CONFIG_KEYS.completionForwardDeclarationStyle,
         CONFIG_KEYS.completionCallArgumentMode,
         CONFIG_KEYS.completionAutoHideDelayMs,
@@ -132,6 +134,7 @@ function createSettingsService(vscode) {
         includeValidationMode: 'balanced',
         debugOutput: false,
         completionEnabled: true,
+        completionStatementSemicolon: true,
         completionForwardDeclarationStyle: 'same-line',
         completionCallArgumentMode: 'required-before-default',
         completionAutoHideDelayMs: 0,
@@ -215,6 +218,7 @@ function createSettingsService(vscode) {
                 : 'tracked-resolved-includes';
         settings.debugOutput = !!config.get('debugOutput', false);
         settings.completionEnabled = !!config.get('completionEnabled', true);
+        settings.completionStatementSemicolon = !!config.get('completionStatementSemicolon', true);
         const rawCompletionForwardDeclarationStyle =
             String(config.get('completionForwardDeclarationStyle', 'same-line') || 'same-line').trim().toLowerCase();
         settings.completionForwardDeclarationStyle =
@@ -298,6 +302,7 @@ function createSettingsService(vscode) {
         getExternalIncludeWatchMode: () => settings.externalIncludeWatchMode,
         isDebugOutputEnabled: () => settings.debugOutput,
         isCompletionEnabled: () => settings.completionEnabled,
+        shouldInsertCompletionStatementSemicolon: () => settings.completionStatementSemicolon,
         getCompletionForwardDeclarationStyle: () => settings.completionForwardDeclarationStyle,
         getCompletionCallArgumentMode: () => settings.completionCallArgumentMode,
         getCompletionAutoHideDelayMs: () => settings.completionAutoHideDelayMs,

@@ -2,7 +2,7 @@
   "name": "amxx-pawn-all-in",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.12.4",
+  "version": "1.12.5",
   "publisher": "Faktor",
   "icon": "resources/icon.png",
   "repository": {
@@ -111,17 +111,12 @@
         },
         {
           "command": "amxxPawnAllIn.amxxBuilderBuild",
-          "when": "editorLangId == amxxpawn && amxxPawnAllIn.amxxBuilderAvailable",
-          "group": "navigation@51"
-        },
-        {
-          "command": "amxxPawnAllIn.amxxBuilderBuild",
-          "when": "resourceFilename =~ /^amxbuild\\.ya?ml$/ || resourceFilename =~ /^ambuild\\..+\\.ya?ml$/",
+          "when": "amxxPawnAllIn.amxxBuilderAvailable",
           "group": "navigation@51"
         },
         {
           "command": "amxxPawnAllIn.amxxBuilderInstallOrUpdate",
-          "when": "editorLangId == amxxpawn && amxxPawnAllIn.amxxBuilderManifestAvailable && !amxxPawnAllIn.amxxBuilderAvailable",
+          "when": "amxxPawnAllIn.amxxBuilderManifestAvailable && !amxxPawnAllIn.amxxBuilderAvailable",
           "group": "navigation@51"
         },
         {
@@ -377,6 +372,12 @@
           "default": true,
           "order": 89.8,
           "markdownDescription": "%config.completionEnabled.markdownDescription%"
+        },
+        "amxxPawnAllIn.completionStatementSemicolon": {
+          "type": "boolean",
+          "default": true,
+          "order": 89.85,
+          "markdownDescription": "%config.completionStatementSemicolon.markdownDescription%"
         },
         "amxxPawnAllIn.completionForwardDeclarationStyle": {
           "type": "string",

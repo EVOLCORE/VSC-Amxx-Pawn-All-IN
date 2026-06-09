@@ -7,6 +7,10 @@ const TOP_LEVEL_FUNCTION_DECLARATION_PREFIX_RE = new RegExp(
     `^(?:(?:public|stock|static)\\s+)*(?:${PAWN_IDENTIFIER_SOURCE}\\s*:\\s*)?$`,
     'i'
 );
+const TOP_LEVEL_FUNCTION_DECLARATION_TAG_PREFIX_RE = new RegExp(
+    `^${PAWN_IDENTIFIER_SOURCE}\\s*:\\s*$`,
+    'i'
+);
 const {
     findNextNonEmptyLine: findNextNonEmptyLineCore,
     isDoWhileClosingLine: isDoWhileClosingLineCore
@@ -295,6 +299,37 @@ function isTopLevelFunctionDeclarationCompletionPrefix(prefixText) {
     return TOP_LEVEL_FUNCTION_DECLARATION_PREFIX_RE.test(prefix);
 }
 
+function getTopLevelFunctionDeclarationPrefixInfo(prefixText) {
+    const prefix = String(prefixText || '').trimStart();
+    const trimmed = prefix.trim();
+    const matches = isTopLevelFunctionDeclarationCompletionPrefix(prefix);
+    if (!matches) {
+        return {
+            matches: false,
+            explicit: false,
+            allowsForwardDeclarations: false
+        };
+    }
+    if (!trimmed) {
+        return {
+            matches: true,
+            explicit: false,
+            allowsForwardDeclarations: true
+        };
+    }
+
+    const hasExplicitModifier = /^(?:public|stock|static)\b/i.test(trimmed);
+    const hasExplicitTagOnly = !hasExplicitModifier &&
+        TOP_LEVEL_FUNCTION_DECLARATION_TAG_PREFIX_RE.test(trimmed);
+    const explicit = hasExplicitModifier || hasExplicitTagOnly;
+
+    return {
+        matches: true,
+        explicit,
+        allowsForwardDeclarations: !explicit || /\bpublic\b/i.test(trimmed)
+    };
+}
+
 function readVariableDeclarationCompletionPrefix(prefixText) {
     const prefix = String(prefixText || '').trimStart();
     const match = prefix.match(/^(new|const|static)\b/i);
@@ -369,7 +404,11 @@ function getCompletionLinePrefixIntent(prefixText) {
     if (isVariableDeclarationCompletionPrefix(prefixText)) {
         return 'variable-declaration';
     }
-    if (!isTopLevelFunctionDeclarationCompletionPrefix(prefixText)) {
+    const functionDeclarationPrefixInfo = getTopLevelFunctionDeclarationPrefixInfo(prefixText);
+    if (functionDeclarationPrefixInfo.explicit) {
+        return 'top-level-declaration';
+    }
+    if (!functionDeclarationPrefixInfo.matches) {
         return 'call';
     }
     return 'maybe-top-level-declaration';
@@ -472,5 +511,6 @@ module.exports = {
     createControlContextTracker,
     getCompletionLinePrefixIntent,
     getCompletionIntent,
-    getCompletionControlContext
+    getCompletionControlContext,
+    getTopLevelFunctionDeclarationPrefixInfo
 };

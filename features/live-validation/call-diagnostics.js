@@ -34,6 +34,7 @@ function createCallDiagnostics(deps) {
         isIdentifierContinueChar,
         isIdentifierStartChar,
         isIncludeDocument,
+        parsePawnExpression,
         isStrictIncludeValidationEnabled,
         splitTopLevelWithRanges,
         t
@@ -94,6 +95,46 @@ function createCallDiagnostics(deps) {
         const createCallNameRange = () => {
             const { startOffset, endOffset } = findCallNameOffsets();
             return createOffsetRange(document, startOffset, endOffset, docLength);
+        };
+        const readMalformedArgumentToken = (source, index) => {
+            const text = String(source || '');
+            if (!text) return { token: '', startIndex: 0, length: 1 };
+            const safeIndex = Math.max(0, Math.min(text.length - 1, index | 0));
+            const remainder = text.slice(safeIndex);
+            const token = remainder.match(/^[^\s,\])};]+/)?.[0] || text[safeIndex] || '';
+            return {
+                token: token || '',
+                startIndex: safeIndex,
+                length: Math.max(1, token.length || 0)
+            };
+        };
+        const getMalformedCallArgumentDiagnostic = rawArgPiece => {
+            if (!rawArgPiece || typeof parsePawnExpression !== 'function') return null;
+            const rawText = String(rawArgPiece.text || '');
+            const trimmed = rawText.trim();
+            if (!trimmed) return null;
+
+            let exprText = trimmed;
+            let exprOffsetDelta = rawText.indexOf(trimmed);
+            if (trimmed[0] === '.') {
+                const eqIndex = trimmed.indexOf('=');
+                if (eqIndex <= 1) return null;
+                const valueText = trimmed.slice(eqIndex + 1);
+                const valueTrimmed = valueText.trim();
+                if (!valueTrimmed) return null;
+                exprText = valueTrimmed;
+                exprOffsetDelta += eqIndex + 1 + valueText.indexOf(valueTrimmed);
+            }
+
+            const parsed = parsePawnExpression(exprText, { escapeChar: callEscapeChar });
+            if (parsed?.ok || parsed?.kind === 'empty') return null;
+            const malformedToken = readMalformedArgumentToken(exprText, parsed?.index ?? 0);
+            const startOffset = rawArgPiece.startOffset + exprOffsetDelta + malformedToken.startIndex;
+            const endOffset = startOffset + malformedToken.length;
+            return createLiveValidationDiagnostic(
+                createOffsetRange(document, startOffset, endOffset, docLength),
+                t('validation.unexpectedToken', { token: malformedToken.token || '' })
+            );
         };
 
         const findCallResultTagOverride = () => {
@@ -243,6 +284,13 @@ function createCallDiagnostics(deps) {
                 diagnostics.push(diagnostic);
             }
         }
+        const malformedRawArgIndexes = new Set();
+        for (let rawArgIndex = 0; rawArgIndex < rawArgPieces.length; rawArgIndex++) {
+            const malformedDiagnostic = getMalformedCallArgumentDiagnostic(rawArgPieces[rawArgIndex]);
+            if (!malformedDiagnostic) continue;
+            malformedRawArgIndexes.add(rawArgIndex);
+            diagnostics.push(malformedDiagnostic);
+        }
         const issuePlan = collectCallArgumentIssues(signatureData.args || '', callSiteArgs, analysisDecls, analysisCache, {
             includeWarnings: warningsEnabled,
             includeMissingArguments: true,
@@ -250,7 +298,14 @@ function createCallDiagnostics(deps) {
             precomputedLayout: layout,
             allowBareRationalLiteralTypeCascades: !!ctx.preprocessedState?.rationalState
         });
-        for (const issue of issuePlan.issues || []) {
+        const plannedIssues = malformedRawArgIndexes.size
+            ? (issuePlan.issues || []).filter(issue => {
+                if (malformedRawArgIndexes.has(issue.rawArgIndex)) return false;
+                if (issue.kind === 'missingArgument' || issue.kind === 'extraArgument') return false;
+                return true;
+            })
+            : (issuePlan.issues || []);
+        for (const issue of plannedIssues) {
             const rawArgIndex = Number.isInteger(issue.rawArgIndex) ? issue.rawArgIndex : -1;
             const rawArgPiece = rawArgIndex >= 0 && expandedPieces[rawArgIndex]
                 ? expandedPieces[rawArgIndex]

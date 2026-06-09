@@ -130,6 +130,7 @@ function createSharedRuntimeBundle(sources) {
         stripRootTagCasts: baseSyntaxRuntime.stripRootTagCasts,
         parseTopLevelTernaryExpression: baseSyntaxRuntime.parseTopLevelTernaryExpression,
         parseWholeCallExpression: baseSyntaxRuntime.parseWholeCallExpression,
+        parsePawnExpression: baseSyntaxRuntime.parsePawnExpression,
         looksLikePawnExpressionFragment: baseSyntaxRuntime.looksLikePawnExpressionFragment,
         parseFuncArgs: analysisRuntime.parseFuncArgs,
         collectEnumMemberSyntaxIssues: analysisRuntime.collectEnumMemberSyntaxIssues,
