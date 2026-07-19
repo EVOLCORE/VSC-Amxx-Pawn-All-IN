@@ -52,6 +52,32 @@ function createParamMetaCore(deps) {
         };
     }
 
+    function isValidPawnParamDescriptor(paramStr) {
+        const raw = String(paramStr || '').trim();
+        if (!raw) return false;
+        const defaultIndex = findTopLevelDefaultAssignmentIndex(raw);
+        if (defaultIndex >= 0) return false;
+        let source = raw;
+        if (/^const\b/.test(source)) source = source.slice(5).trimStart();
+        if (source.charCodeAt(0) === 38) source = source.slice(1).trimStart();
+        const tagM = source.match(TAG_RE);
+        if (tagM) {
+            source = source.slice(tagM[0].length);
+        }
+        const nameIdentifier = readPawnIdentifierAt(source, 0);
+        if (!nameIdentifier?.name) return false;
+        source = source.slice(nameIdentifier.end).trimStart();
+        while (source) {
+            if (source.charCodeAt(0) !== 91) return false; // [
+            const closeIndex = source.indexOf(']');
+            if (closeIndex <= 0) return false;
+            const dimBody = source.slice(1, closeIndex);
+            if (/[,\[\]]/.test(dimBody)) return false;
+            source = source.slice(closeIndex + 1).trimStart();
+        }
+        return true;
+    }
+
     function parseUnionTagOptions(tagSpec) {
         const raw = String(tagSpec || '').trim();
         if (!raw.startsWith('{') || !raw.endsWith('}')) return [];
@@ -64,6 +90,7 @@ function createParamMetaCore(deps) {
     return {
         findTopLevelDefaultAssignmentIndex,
         parseParamMeta,
+        isValidPawnParamDescriptor,
         parseUnionTagOptions
     };
 }

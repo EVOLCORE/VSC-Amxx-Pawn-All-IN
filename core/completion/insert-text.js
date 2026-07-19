@@ -14,6 +14,7 @@ function createCompletionInsertTextCore(deps = {}) {
     const {
         splitTopLevel,
         parseParamMeta = null,
+        isValidPawnParamDescriptor = null,
         isEscapedQuote = defaultIsEscapedQuote
     } = deps;
 
@@ -23,6 +24,74 @@ function createCompletionInsertTextCore(deps = {}) {
 
     function escapeSnippetPlaceholderText(value) {
         return String(value || '').replace(/[$}\\]/g, '\\$&');
+    }
+
+    function normalizeDocsText(value) {
+        return String(value || '')
+            .replace(/\r\n?/g, '\n')
+            .split('\n')
+            .map(line => String(line || '')
+                .replace(/^\s*(?:\/\/+\s*|\*+\s?)/, '')
+                .trim())
+            .join('\n');
+    }
+
+    function collectDocsArgListCandidates(docsText) {
+        const normalized = normalizeDocsText(docsText);
+        if (!normalized) return [];
+        const lines = normalized.split('\n');
+        const candidates = [];
+        const seen = new Set();
+        const pushCandidate = value => {
+            const text = String(value || '').replace(/\s+/g, ' ').trim();
+            if (!text || seen.has(text)) return;
+            seen.add(text);
+            candidates.push(text);
+        };
+        for (const line of lines) {
+            pushCandidate(line);
+        }
+        let paragraph = [];
+        for (const line of lines) {
+            if (!line.trim()) {
+                if (paragraph.length) pushCandidate(paragraph.join(' '));
+                paragraph = [];
+                continue;
+            }
+            paragraph.push(line.trim());
+        }
+        if (paragraph.length) pushCandidate(paragraph.join(' '));
+        return candidates;
+    }
+
+    function looksLikeDocsArgDescriptor(part) {
+        const raw = String(part || '').trim();
+        if (!raw) return false;
+        if (raw.indexOf('@') >= 0 || raw.indexOf('(') >= 0 || raw.indexOf(')') >= 0 || raw.indexOf('=') >= 0) return false;
+        if (/[.?!;:]$/.test(raw)) return false;
+        if (/^(?:return|returns|description|example|examples|note|notes|warning|remarks?)\b/i.test(raw)) return false;
+        if (typeof isValidPawnParamDescriptor === 'function') {
+            return isValidPawnParamDescriptor(raw);
+        }
+        if (typeof parseParamMeta === 'function') {
+            const parsed = parseParamMeta(raw);
+            return !!String(parsed?.name || '').trim();
+        }
+        return false;
+    }
+
+    function getFunctionLikeDefineDocsArgPlaceholders(decl, expectedCount = 0) {
+        if (!decl || decl.type !== 'define' || decl.macroStyle !== 'paren' || expectedCount <= 0) return null;
+        const candidates = collectDocsArgListCandidates(decl.docs || '');
+        for (const candidate of candidates) {
+            const parts = splitArgs(candidate)
+                .map(part => String(part || '').trim())
+                .filter(Boolean);
+            if (parts.length !== expectedCount) continue;
+            if (!parts.every(looksLikeDocsArgDescriptor)) continue;
+            return parts;
+        }
+        return null;
     }
 
     function getCallParamPlaceholderName(paramText, index = 0, options = {}) {
@@ -60,10 +129,16 @@ function createCompletionInsertTextCore(deps = {}) {
         return result;
     }
 
-    function buildCallArgSnippetText(argsText, options = {}) {
-        return getCallSnippetArgs(argsText, options)
+    function buildCallArgSnippetText(argsTextOrDecl, options = {}) {
+        const decl = argsTextOrDecl && typeof argsTextOrDecl === 'object'
+            ? argsTextOrDecl
+            : null;
+        const argsText = decl?.args || argsTextOrDecl || '';
+        const args = getCallSnippetArgs(argsText, options);
+        const docsPlaceholders = getFunctionLikeDefineDocsArgPlaceholders(decl, args.length);
+        return args
             .map((arg, index) => {
-                const placeholder = getCallParamPlaceholderName(arg, index, options);
+                const placeholder = docsPlaceholders?.[index] || getCallParamPlaceholderName(arg, index, options);
                 return `\${${index + 1}:${escapeSnippetPlaceholderText(placeholder)}}`;
             })
             .join(', ');

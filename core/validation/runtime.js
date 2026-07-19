@@ -684,6 +684,51 @@ function createValidationCore(deps) {
         return expandedText && expandedText !== source ? expandedText : '';
     }
 
+    function lineHasFunctionBodyHeader(rawLines = [], lineNumber = 0, headerRe = null, escapeChar = getActiveCtrlChar()) {
+        if (!headerRe || lineNumber < 0 || lineNumber >= rawLines.length) return false;
+        const lineText = String(rawLines[lineNumber] || '');
+        const headerMatch = headerRe.exec(lineText);
+        if (!headerMatch) return false;
+        const prefix = lineText.slice(0, headerMatch.index);
+        if (/[\#,(=]/.test(prefix)) return false;
+        const combined = rawLines.slice(lineNumber, Math.min(rawLines.length, lineNumber + 10)).join('\n');
+        const openParenIndex = combined.indexOf('(', headerMatch.index);
+        if (openParenIndex < 0) return false;
+        const closeParenIndex = findBalancedGroupEnd(combined, openParenIndex, '(', ')', escapeChar);
+        if (closeParenIndex < 0) return false;
+        const braceIndex = combined.indexOf('{', closeParenIndex + 1);
+        const semicolonIndex = combined.indexOf(';', closeParenIndex + 1);
+        return braceIndex >= 0 && (semicolonIndex < 0 || braceIndex < semicolonIndex);
+    }
+
+    function resolveFunctionHeaderStartOffset(text, rawLines = null, startLine = 0, headerRe = null, escapeChar = getActiveCtrlChar()) {
+        const safeStartLine = Math.max(0, Number.isInteger(startLine) ? startLine : 0);
+        if (!Array.isArray(rawLines) || !rawLines.length) {
+            return getTextLineStartOffset(text, safeStartLine);
+        }
+
+        const boundedStartLine = Math.min(rawLines.length - 1, safeStartLine);
+        for (let probe = boundedStartLine; probe < Math.min(rawLines.length, boundedStartLine + 6); probe++) {
+            if (lineHasFunctionBodyHeader(rawLines, probe, headerRe, escapeChar)) {
+                return getTextLineStartOffset(text, probe);
+            }
+        }
+
+        let bestLine = -1;
+        let bestDistance = Number.POSITIVE_INFINITY;
+        for (let probe = 0; probe < rawLines.length; probe++) {
+            if (!lineHasFunctionBodyHeader(rawLines, probe, headerRe, escapeChar)) continue;
+            const distance = Math.abs(probe - boundedStartLine);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestLine = probe;
+                if (distance === 0) break;
+            }
+        }
+
+        return getTextLineStartOffset(text, bestLine >= 0 ? bestLine : boundedStartLine);
+    }
+
     function inferFunctionDeclReturnType(decl, allDecls, analysisCache = null) {
         if (!decl?.filePath || !Number.isInteger(decl.lineNumber) || !fs?.readFileSync) {
             return { tag: '', dims: '' };
@@ -728,33 +773,14 @@ function createValidationCore(deps) {
             if (!text) return cacheFunctionReturnTypeResult(fallback);
             const headerRe = new RegExp(`\\b${escapeRegExp(decl.name)}\\s*\\(`);
             const startLine = Math.max(0, Number.isInteger(decl.lineNumber) ? decl.lineNumber : 0);
-            let headerStartOffset = getTextLineStartOffset(text, startLine);
-            if (cachedRawLines?.length) {
-                const safeStartLine = Math.min(cachedRawLines.length - 1, startLine);
-                let headerLine = safeStartLine;
-                for (let probe = safeStartLine; probe < Math.min(cachedRawLines.length, safeStartLine + 6); probe++) {
-                    if (headerRe.test(String(cachedRawLines[probe] || ''))) {
-                        headerLine = probe;
-                        break;
-                    }
-                }
-                headerStartOffset = getTextLineStartOffset(text, headerLine);
-            } else {
-                let probeOffset = headerStartOffset;
-                for (let probe = 0; probe < 6 && probeOffset <= text.length; probe++) {
-                    const newlineIndex = text.indexOf('\n', probeOffset);
-                    const lineEnd = newlineIndex >= 0
-                        ? (newlineIndex > probeOffset && text.charCodeAt(newlineIndex - 1) === 13 ? newlineIndex - 1 : newlineIndex)
-                        : text.length;
-                    const lineText = text.slice(probeOffset, lineEnd);
-                    if (headerRe.test(lineText)) {
-                        headerStartOffset = probeOffset;
-                        break;
-                    }
-                    if (newlineIndex < 0) break;
-                    probeOffset = newlineIndex + 1;
-                }
-            }
+            const rawLines = cachedRawLines?.length ? cachedRawLines : text.split(/\r?\n/);
+            const headerStartOffset = resolveFunctionHeaderStartOffset(
+                text,
+                rawLines,
+                startLine,
+                headerRe,
+                getActiveCtrlChar()
+            );
 
             const sourceFromHeader = text.slice(headerStartOffset);
             const bodyOpenRelative = sourceFromHeader.indexOf('{');
@@ -1023,6 +1049,26 @@ function createValidationCore(deps) {
             const whenFalse = inferArgType(ternaryExpr.whenFalse, allDecls, analysisCache);
             if (whenTrue.tag === whenFalse.tag && whenTrue.dims === whenFalse.dims) {
                 return finish(whenTrue);
+            }
+            if (whenTrue.dims && whenFalse.dims) {
+                const trueDepth = (whenTrue.dims.match(/\[/g) || []).length;
+                const falseDepth = (whenFalse.dims.match(/\[/g) || []).length;
+                if (trueDepth === falseDepth) {
+                    return finish({
+                        tag: whenTrue.tag === whenFalse.tag
+                            ? whenTrue.tag
+                            : (
+                                (whenTrue.tag === '_' && !whenFalse.tag) ||
+                                (whenFalse.tag === '_' && !whenTrue.tag)
+                            )
+                                ? '_'
+                                : '',
+                        dims: '[]'.repeat(trueDepth),
+                        elementTag: whenTrue.elementTag === whenFalse.elementTag
+                            ? (whenTrue.elementTag || '')
+                            : ''
+                    });
+                }
             }
             if (whenTrue.dims && whenTrue.dims === whenFalse.dims) {
                 return finish({
@@ -1683,7 +1729,28 @@ function createValidationCore(deps) {
     }
 
     function parseWholeCallExpression(expr, escapeChar = getActiveCtrlChar()) {
-        return semanticSyntaxCore.parseWholeCallExpression(expr, { escapeChar });
+        const parsed = semanticSyntaxCore.parseWholeCallExpression(expr, { escapeChar });
+        if (parsed) return parsed;
+
+        const text = String(expr || '').trim();
+        if (!text || text.indexOf('(') < 0) return null;
+        const openIndex = text.indexOf('(');
+        const closeIndex = findBalancedGroupEnd(text, openIndex, '(', ')', escapeChar);
+        if (openIndex <= 0 || closeIndex !== text.length - 1) return null;
+
+        const name = text.slice(0, openIndex).trim();
+        if (!/^(?:@?[A-Za-z_][A-Za-z0-9_]*|operator(?:<<=|>>=|==|!=|<=|>=|\+\+|--|&&|\|\||<<|>>|[%*/+\-<>=!&|^~]+))$/.test(name)) {
+            return null;
+        }
+
+        const argsText = text.slice(openIndex + 1, closeIndex);
+        return {
+            name,
+            openIndex,
+            closeIndex,
+            argsText,
+            args: splitTopLevel(argsText, escapeChar)
+        };
     }
 
     function isIgnoredReferenceName(name) {

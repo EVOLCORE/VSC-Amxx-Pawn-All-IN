@@ -416,6 +416,29 @@ function createStructuralDiagnostics(deps) {
             if (directKind && /;\s*$/.test(String(trimmedLine || ''))) return directKind;
             return getMultilineTerminalKindEndingAt(lineNumber, scanBounds.start, currentDepth);
         };
+        const getSingleStatementControlBodyStart = (lineText, lineNumber) => {
+            const statement = classifyPawnStatementLine(lineText);
+            let keyword = statement.firstKeyword;
+            let keywordStart = statement.firstKeywordStart;
+            if (keyword === 'else') {
+                const afterElseStart = skipInlineControlHeader(lineText, keywordStart, 'else');
+                const afterElse = afterElseStart >= 0 ? lineText.slice(afterElseStart).trimStart() : '';
+                if (lineStartsWithKeyword(afterElse, 'if')) {
+                    keyword = 'if';
+                    keywordStart = lineText.indexOf('if', afterElseStart);
+                }
+            }
+            if (
+                keyword !== 'if' &&
+                keyword !== 'for' &&
+                keyword !== 'else' &&
+                keyword !== 'do' &&
+                (keyword !== 'while' || isDoWhileClosingLine(lineNumber))
+            ) {
+                return -1;
+            }
+            return skipInlineControlHeader(lineText, keywordStart, keyword);
+        };
         const isSingleStatementControlledBodyLine = lineNumber => {
             const previousBodyLine = getPreviousNonEmptyLine(lineNumber - 1);
             if (previousBodyLine >= 0) {
@@ -426,29 +449,8 @@ function createStructuralDiagnostics(deps) {
                     !/\{\s*$/.test(previousTrimmed) &&
                     !/^\}/.test(previousTrimmed)
                 ) {
-                    let previousStatement = classifyPawnStatementLine(previousTrimmed);
-                    let keyword = previousStatement.firstKeyword;
-                    let keywordStart = previousStatement.firstKeywordStart;
-                    if (keyword === 'else') {
-                        const afterElseStart = skipInlineControlHeader(previousTrimmed, keywordStart, 'else');
-                        const afterElse = afterElseStart >= 0 ? previousTrimmed.slice(afterElseStart).trimStart() : '';
-                        if (lineStartsWithKeyword(afterElse, 'if')) {
-                            keyword = 'if';
-                            keywordStart = previousTrimmed.indexOf('if', afterElseStart);
-                        }
-                    }
-                    if (
-                        keyword === 'if' ||
-                        keyword === 'for' ||
-                        (keyword === 'while' && !isDoWhileClosingLine(previousBodyLine)) ||
-                        keyword === 'else' ||
-                        keyword === 'do'
-                    ) {
-                        const bodyStart = skipInlineControlHeader(previousTrimmed, keywordStart, keyword);
-                        if (bodyStart >= 0 && !previousTrimmed.slice(bodyStart).trim()) {
-                            return true;
-                        }
-                    }
+                    const bodyStart = getSingleStatementControlBodyStart(previousTrimmed, previousBodyLine);
+                    if (bodyStart >= 0 && !previousTrimmed.slice(bodyStart).trim()) return true;
                 }
             }
             let combined = '';
@@ -457,16 +459,8 @@ function createStructuralDiagnostics(deps) {
                 if (!trimmed) continue;
                 combined = combined ? `${trimmed} ${combined}` : trimmed;
                 if (/;\s*$/.test(trimmed) || /\{\s*$/.test(trimmed) || /^\}/.test(trimmed)) return false;
-                const statement = classifyPawnStatementLine(combined);
-                if (
-                    statement.firstKeyword === 'if' ||
-                    statement.firstKeyword === 'for' ||
-                    (statement.firstKeyword === 'while' && !isDoWhileClosingLine(probeLine)) ||
-                    statement.firstKeyword === 'else' ||
-                    statement.firstKeyword === 'do'
-                ) {
-                    return true;
-                }
+                const bodyStart = getSingleStatementControlBodyStart(combined, probeLine);
+                if (bodyStart >= 0) return !combined.slice(bodyStart).trim();
                 const previousLine = getPreviousNonEmptyLine(probeLine - 1);
                 const previousTrimmed = previousLine >= 0
                     ? getTrimmedStructuralLine(previousLine)
@@ -502,30 +496,34 @@ function createStructuralDiagnostics(deps) {
         };
         const isInsideLineStartGroupContext = lineNumber =>
             !!getLineStartGroupContextFlags()[lineNumber];
-        let topLevelDeclarationContinuationLines = null;
-        const getTopLevelDeclarationContinuationLines = () => {
-            if (topLevelDeclarationContinuationLines) return topLevelDeclarationContinuationLines;
+        let declarationContinuationLines = null;
+        const getDeclarationContinuationLines = () => {
+            if (declarationContinuationLines) return declarationContinuationLines;
             const lines = new Set();
             const lineCtrlChars = rootCtx.lineCtrlChars || [];
-            for (const decl of rootCtx.parsedDecls.globals || []) {
-                if (!decl || (decl.type !== 'variable' && decl.type !== 'constant')) continue;
-                const declarationLine = decl.lineNumber ?? -1;
-                if (declarationLine < 0) continue;
-                const parsedNextLine = Number.isInteger(decl.declarationNextLine)
-                    ? decl.declarationNextLine
-                    : -1;
-                const nextLine = parsedNextLine > declarationLine
-                    ? parsedNextLine
-                    : (collectDeclarationText(rawLines, declarationLine, lineCtrlChars, strippedLines)?.nextLine ?? (declarationLine + 1));
-                for (let coveredLine = declarationLine + 1; coveredLine < nextLine; coveredLine++) {
-                    lines.add(coveredLine);
+            const addDeclLines = decls => {
+                for (const decl of decls || []) {
+                    if (!decl || (decl.type !== 'variable' && decl.type !== 'constant')) continue;
+                    const declarationLine = decl.lineNumber ?? -1;
+                    if (declarationLine < 0) continue;
+                    const parsedNextLine = Number.isInteger(decl.declarationNextLine)
+                        ? decl.declarationNextLine
+                        : -1;
+                    const nextLine = parsedNextLine > declarationLine
+                        ? parsedNextLine
+                        : (collectDeclarationText(rawLines, declarationLine, lineCtrlChars, strippedLines)?.nextLine ?? (declarationLine + 1));
+                    for (let coveredLine = declarationLine + 1; coveredLine < nextLine; coveredLine++) {
+                        lines.add(coveredLine);
+                    }
                 }
-            }
-            topLevelDeclarationContinuationLines = lines;
+            };
+            addDeclLines(rootCtx.parsedDecls.globals);
+            addDeclLines(rootCtx.parsedDecls.locals);
+            declarationContinuationLines = lines;
             return lines;
         };
-        const isTopLevelDeclarationContinuationLine = lineNumber =>
-            getTopLevelDeclarationContinuationLines().has(lineNumber);
+        const isDeclarationContinuationLine = lineNumber =>
+            getDeclarationContinuationLines().has(lineNumber);
         const structuralTrimmedLineCache = new Array(strippedLines.length);
         const getTrimmedStructuralLine = lineNumber => {
             if (!Number.isInteger(lineNumber) || lineNumber < 0 || lineNumber >= strippedLines.length) return '';
@@ -913,7 +911,7 @@ function createStructuralDiagnostics(deps) {
                     );
                     continue;
                 }
-                if (isTopLevelDeclarationContinuationLine(lineNumber)) {
+                if (isDeclarationContinuationLine(lineNumber)) {
                     continue;
                 }
                 const invalidOutsideKeyword = (
@@ -983,7 +981,7 @@ function createStructuralDiagnostics(deps) {
                     continue;
                 }
 
-                const noEffectConstantIssue = isInsideLineStartGroupContext(lineNumber)
+                const noEffectConstantIssue = isInsideLineStartGroupContext(lineNumber) || isDeclarationContinuationLine(lineNumber)
                     ? null
                     : getNoEffectConstantStatementIssue(structuralLine);
                 if (includeTargetLine && noEffectConstantIssue) {

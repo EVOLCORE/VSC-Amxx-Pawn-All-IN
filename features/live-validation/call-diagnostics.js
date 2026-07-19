@@ -34,7 +34,7 @@ function createCallDiagnostics(deps) {
         isIdentifierContinueChar,
         isIdentifierStartChar,
         isIncludeDocument,
-        parsePawnExpression,
+        parseTopLevelTernaryExpression,
         isStrictIncludeValidationEnabled,
         splitTopLevelWithRanges,
         t
@@ -44,6 +44,8 @@ function createCallDiagnostics(deps) {
         isIdentifierStartChar,
         isIdentifierContinueChar
     });
+    const SIMPLE_EXPR_ATOM_SOURCE = String.raw`(?:@?[A-Za-z_][A-Za-z0-9_]*(?:\s*\[[^\]]+\])*(?:::[A-Za-z_][A-Za-z0-9_]*)?|0[xX][0-9A-Fa-f]+|\d+(?:\.\d+)?|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')`;
+    const SIMPLE_ADJACENT_EXPR_RE = new RegExp(`^(${SIMPLE_EXPR_ATOM_SOURCE})(\\s+)(${SIMPLE_EXPR_ATOM_SOURCE}(?:\\s+${SIMPLE_EXPR_ATOM_SOURCE})*)$`);
 
     function collectCallLiveDiagnostics(document, ctx, callCtx, analysisCache, docLength, callLineNumber = null) {
         const diagnostics = [];
@@ -109,7 +111,7 @@ function createCallDiagnostics(deps) {
             };
         };
         const getMalformedCallArgumentDiagnostic = rawArgPiece => {
-            if (!rawArgPiece || typeof parsePawnExpression !== 'function') return null;
+            if (!rawArgPiece) return null;
             const rawText = String(rawArgPiece.text || '');
             const trimmed = rawText.trim();
             if (!trimmed) return null;
@@ -126,9 +128,16 @@ function createCallDiagnostics(deps) {
                 exprOffsetDelta += eqIndex + 1 + valueText.indexOf(valueTrimmed);
             }
 
-            const parsed = parsePawnExpression(exprText, { escapeChar: callEscapeChar });
-            if (parsed?.ok || parsed?.kind === 'empty') return null;
-            const malformedToken = readMalformedArgumentToken(exprText, parsed?.index ?? 0);
+            if (typeof parseTopLevelTernaryExpression === 'function' && parseTopLevelTernaryExpression(exprText, { escapeChar: callEscapeChar })) {
+                return null;
+            }
+            if (/^(?:sizeof|tagof|defined|char)\b/.test(exprText)) {
+                return null;
+            }
+
+            const adjacencyMatch = exprText.match(SIMPLE_ADJACENT_EXPR_RE);
+            if (!adjacencyMatch) return null;
+            const malformedToken = readMalformedArgumentToken(exprText, adjacencyMatch[1].length + adjacencyMatch[2].length);
             const startOffset = rawArgPiece.startOffset + exprOffsetDelta + malformedToken.startIndex;
             const endOffset = startOffset + malformedToken.length;
             return createLiveValidationDiagnostic(

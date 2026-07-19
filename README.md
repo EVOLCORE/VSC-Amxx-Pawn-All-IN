@@ -31,12 +31,13 @@ Recommended AMX Mod X version: 1.9.0 or newer.
 3. Context-aware filtering: top-level function declarations prefer forwards, function-call contexts hide declaration-only forwards, and declaration keywords avoid noisy duplicate suggestions.
 4. Completion ordering prefers active micro-scope locals from nested blocks, branches, and `for` declarations, then regular function locals, function arguments, globals, and include declarations.
 5. Function-call completion avoids duplicating an already typed argument block, does not expand call snippets inside strings, and uses clean parameter-name placeholders for calls.
-6. Configurable call snippet argument mode: insert all arguments or only required arguments before the first default value.
-7. Forward completion can generate a new implementation body while preserving the full forward signature for declarations.
-8. Deprecated declarations are marked in completion items when source metadata exposes them.
-9. Fuzzy/partial symbol matching helps find names even when only a compact abbreviation is typed.
-10. Array dimension completion suggests numeric defines, enum constants, and compile-time size helpers where they are valid.
-11. Optional completion auto-hide reduces UI noise after idle typing or when the typed text already resolves the only suggestion.
+6. Function-like `#define` call snippets can reuse argument descriptors from nearby docs blocks, including tagged/array forms such as `Float:origin[3]`, instead of falling back to generic `arg1`, `arg2`, `arg3` placeholders.
+7. Configurable call snippet argument mode: insert all arguments or only required arguments before the first default value.
+8. Forward completion can generate a new implementation body while preserving the full forward signature for declarations.
+9. Deprecated declarations are marked in completion items when source metadata exposes them.
+10. Fuzzy/partial symbol matching helps find names even when only a compact abbreviation is typed.
+11. Array dimension completion suggests numeric defines, enum constants, and compile-time size helpers where they are valid.
+12. Optional completion auto-hide reduces UI noise after idle typing or when the typed text already resolves the only suggestion.
 
 ### Hover & Navigation
 

@@ -905,6 +905,29 @@ public deep()
         `deep inferred sizeof should stay clean, got: ${deepSizeofDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
     );
 
+    const symbolicSizeofDocument = new MockDocument(
+        path.join(workspaceRoot, 'feature-wiring-sizeof-symbolic-dimension.sma'),
+        `
+#define SAVE_TYPE_COUNT 8
+
+new g_sUnlockTables[SAVE_TYPE_COUNT][32];
+
+public native_unlock_reg(iPluginID, iNumParams)
+{
+    if (get_param(1) < 0 || get_param(1) >= sizeof(g_sUnlockTables))
+        return;
+
+    get_string(2, g_sUnlockTables[get_param(1)], charsmax(g_sUnlockTables[]));
+}
+`.trimStart()
+    );
+    const symbolicSizeofDiagnostics = liveValidation.collectLiveValidationDiagnostics(symbolicSizeofDocument);
+    const symbolicSizeofWarning = t('validation.indeterminateArraySizeInSizeof', { name: 'g_sUnlockTables' });
+    assert(
+        !symbolicSizeofDiagnostics.some(diagnostic => diagnostic.message === symbolicSizeofWarning),
+        `sizeof should accept declared symbolic dimensions, got: ${symbolicSizeofDiagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+    );
+
     const indexedScalarAssignmentDocument = new MockDocument(
         path.join(workspaceRoot, 'feature-wiring-indexed-scalar-array-assignment.sma'),
         `

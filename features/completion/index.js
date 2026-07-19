@@ -56,6 +56,7 @@ function createCompletionFeature(deps) {
         getPawnDocumentContext,
         splitTopLevel,
         parseParamMeta,
+        isValidPawnParamDescriptor = null,
         isEscapedQuote,
         isFunctionLikeDecl,
         isFunctionLikeDefineDecl,
@@ -99,6 +100,7 @@ function createCompletionFeature(deps) {
     const completionInsertTextCore = createCompletionInsertTextCore({
         splitTopLevel,
         parseParamMeta,
+        isValidPawnParamDescriptor,
         isEscapedQuote
     });
     let completionAutoHideTimer = null;
@@ -171,7 +173,7 @@ function createCompletionFeature(deps) {
             callArgSnippetTextCache.set(data, perModeCache);
         }
         if (perModeCache.has(normalizedCallArgumentMode)) return perModeCache.get(normalizedCallArgumentMode);
-        const snippetText = completionInsertTextCore.buildCallArgSnippetText(data.args || '', {
+        const snippetText = completionInsertTextCore.buildCallArgSnippetText(data, {
             callArgumentMode: normalizedCallArgumentMode
         });
         perModeCache.set(normalizedCallArgumentMode, snippetText);

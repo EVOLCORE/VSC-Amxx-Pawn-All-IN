@@ -2,7 +2,7 @@
   "name": "amxx-pawn-all-in",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.12.5",
+  "version": "1.13.0",
   "publisher": "Faktor",
   "icon": "resources/icon.png",
   "repository": {

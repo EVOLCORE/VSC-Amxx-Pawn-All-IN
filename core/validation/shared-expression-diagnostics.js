@@ -284,9 +284,18 @@ function createSharedExpressionDiagnostics(deps) {
     function isIndeterminateSizeofDimPart(dimPart, ctx, analysisCache) {
         const raw = String(dimPart ?? '').trim();
         if (!raw) return true;
+        const sizeofMatch = raw.match(/^sizeof\s*\(\s*([A-Za-z_@]\w*)((?:\s*\[\s*\])*)\s*\)$/);
+        if (sizeofMatch) {
+            const [, name, emptyAccesses = ''] = sizeofMatch;
+            const sizeofDecl = findVariableDeclByName(ctx, analysisCache, name);
+            if (!sizeofDecl?.dims) return true;
+            const dimParts = getDeclDimPartsForSizeof(sizeofDecl);
+            const level = (String(emptyAccesses).match(/\[/g) || []).length;
+            if (level >= dimParts.length) return false;
+            return isIndeterminateSizeofDimPart(dimParts[level], ctx, analysisCache);
+        }
         const decls = getTypeAnalysisSourceDecls(ctx, analysisCache);
-        const spec = analysisCache?.getDimSpec?.(raw) ||
-            parseDimSpec(raw, decls, null, analysisCache);
+        const spec = parseDimSpec(raw, decls, null, analysisCache);
         return !!spec?.raw && spec.capacity == null;
     }
 

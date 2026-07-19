@@ -101,7 +101,7 @@ function createLiveValidationDiagnosticCore(deps) {
         inferArrayShapeActualType,
         getExpressionAssignableInfo,
         isSyntacticAssignableExpression,
-        parsePawnExpression = null,
+        parseTopLevelTernaryExpression = null,
         looksLikePawnExpressionFragment,
         findArrayMustBeIndexedIssue,
         getScalarAssignmentTagIssue,
@@ -406,7 +406,7 @@ function createLiveValidationDiagnosticCore(deps) {
         isIdentifierContinueChar,
         isIdentifierStartChar,
         isIncludeDocument,
-        parsePawnExpression,
+        parseTopLevelTernaryExpression,
         isStrictIncludeValidationEnabled,
         splitTopLevelWithRanges,
         t

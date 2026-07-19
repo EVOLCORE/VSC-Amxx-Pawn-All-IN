@@ -260,6 +260,9 @@ function createNumericDimensionValidationCore(deps) {
                 if (decl.type === 'enum-item' && /^-?\d+$/.test(String(decl.value || ''))) {
                     return String(decl.value);
                 }
+                if (decl.type === 'builtin' && /^-?\d+$/.test(String(decl.value || ''))) {
+                    return String(decl.value);
+                }
                 if (decl.type === 'define') {
                     const defineValue = String(decl.value || '').trim();
                     if (decl.args) return full;

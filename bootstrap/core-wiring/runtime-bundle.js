@@ -137,6 +137,7 @@ function createSharedRuntimeBundle(sources) {
         collectVariableDeclarationSyntaxIssuesForLine: analysisRuntime.collectVariableDeclarationSyntaxIssuesForLine,
         isExplicitDeclarationStartLine: analysisRuntime.isExplicitDeclarationStartLine,
         parseParamMeta: analysisRuntime.parseParamMeta,
+        isValidPawnParamDescriptor: analysisRuntime.isValidPawnParamDescriptor,
         parseOperatorOverloadToken: analysisRuntime.parseOperatorOverloadToken,
         parseDimsParts: analysisRuntime.parseDimsParts,
         collectOperatorOverloadPolicyIssues: analysisRuntime.collectOperatorOverloadPolicyIssues,

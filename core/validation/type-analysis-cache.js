@@ -10,6 +10,36 @@ function createTypeAnalysisCacheFactory(deps) {
     const isVariableDecl = decl => decl?.type === 'variable';
 
     const hoverTypeAnalysisCacheProto = {
+        setSourceDecls(sourceDecls = []) {
+            this.sourceDecls = Array.isArray(sourceDecls) ? sourceDecls : [];
+            this.declsByName = this.lookup?.findAnyLocalDeclByName
+                ? null
+                : (() => {
+                    if (typeof getDeclNameBuckets === 'function') {
+                        return getDeclNameBuckets(this.sourceDecls);
+                    }
+                    const buckets = new Map();
+                    for (const decl of this.sourceDecls) {
+                        if (!decl?.name) continue;
+                        if (!buckets.has(decl.name)) buckets.set(decl.name, []);
+                        buckets.get(decl.name).push(decl);
+                    }
+                    return buckets;
+                })();
+            this.defineDeclByName = null;
+            this.argTypeByExpr?.clear?.();
+            this.inferInProgressByExpr?.clear?.();
+            this.assignableInfoByExpr?.clear?.();
+            this.unresolvedRefsByExpr?.clear?.();
+            this.dimPartsByText?.clear?.();
+            this.dimSpecByText?.clear?.();
+            this.callReturnTypeByExpr?.clear?.();
+            this.numericExprByText?.clear?.();
+            this.indexedDimCompatByKey?.clear?.();
+            this.typeCompatByKey?.clear?.();
+            this.macroDefineByName?.clear?.();
+            return this;
+        },
         findDeclByName(name, predicate = null) {
             if (this.lookup?.findAnyLocalDeclByName) {
                 return this.lookup.findAnyLocalDeclByName(name, predicate);
@@ -85,22 +115,9 @@ function createTypeAnalysisCacheFactory(deps) {
     };
 
     return function createHoverTypeAnalysisCache(allDecls = [], lookup = null) {
-        const sourceDecls = Array.isArray(allDecls) ? allDecls : [];
         const cache = Object.create(hoverTypeAnalysisCacheProto);
-        cache.sourceDecls = sourceDecls;
         cache.lookup = lookup || null;
-        cache.declsByName = lookup?.findAnyLocalDeclByName ? null : (() => {
-            if (typeof getDeclNameBuckets === 'function') {
-                return getDeclNameBuckets(sourceDecls);
-            }
-            const buckets = new Map();
-            for (const decl of sourceDecls) {
-                if (!decl?.name) continue;
-                if (!buckets.has(decl.name)) buckets.set(decl.name, []);
-                buckets.get(decl.name).push(decl);
-            }
-            return buckets;
-        })();
+        cache.setSourceDecls(allDecls);
         cache.argTypeByExpr = new Map();
         cache.inferInProgressByExpr = new Set();
         cache.assignableInfoByExpr = new Map();
@@ -122,9 +139,23 @@ function createTypeAnalysisCacheFactory(deps) {
 }
 
 function getTypeAnalysisSourceDecls(ctx, analysisCache, fallbackCtx = null) {
-    if (analysisCache) return [];
-    if (Array.isArray(ctx?.allDecls)) return ctx.allDecls;
-    if (Array.isArray(fallbackCtx?.allDecls)) return fallbackCtx.allDecls;
+    if (!analysisCache) {
+        if (Array.isArray(ctx?.allDecls)) return ctx.allDecls;
+        if (Array.isArray(fallbackCtx?.allDecls)) return fallbackCtx.allDecls;
+        return [];
+    }
+    if (Array.isArray(ctx?.allDecls)) {
+        if (analysisCache.sourceDecls !== ctx.allDecls) {
+            analysisCache.setSourceDecls?.(ctx.allDecls);
+        }
+        return ctx.allDecls;
+    }
+    if (Array.isArray(fallbackCtx?.allDecls)) {
+        if (analysisCache.sourceDecls !== fallbackCtx.allDecls) {
+            analysisCache.setSourceDecls?.(fallbackCtx.allDecls);
+        }
+        return fallbackCtx.allDecls;
+    }
     return [];
 }
 
